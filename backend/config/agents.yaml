@@ -1,0 +1,61 @@
+# Agent Configuration
+# ===================
+# This file defines the available agents and their configurations.
+# Adding/removing agents is done by editing this file.
+
+agents:
+  orchestrator:
+    name: "Orchestrator"
+    description: "Supervisor that routes requests and manages flow"
+    model_env: MODEL_ORCHESTRATOR
+    system_prompt: "You are the Orchestrator for a Multi-Agent Sales Assistant..."
+    is_critical: true
+
+  tech_solution:
+    name: "Tech Solution"
+    description: "Technical recommendations and solutions"
+    model_env: MODEL_TECH_SOLUTION
+    system_prompt: "You are a Technical Solution Expert..."
+    knowledge_dir: agents/tech_solution/knowledge
+    skills_dir: agents/tech_solution/skills
+
+  market_strategy:
+    name: "Market Strategy"
+    description: "Market analysis and sales strategy"
+    model_env: MODEL_MARKET_STRATEGY
+    system_prompt: "You are a Market Strategy Expert..."
+    knowledge_dir: agents/market_strategy/knowledge
+    skills_dir: agents/market_strategy/skills
+
+  account:
+    name: "Account"
+    description: "Pricing and quotations"
+    model_env: MODEL_ACCOUNT
+    system_prompt: "You are an Account Manager..."
+    knowledge_dir: agents/account/knowledge
+    skills_dir: agents/account/skills
+    rate_card: config/rate_card.md
+
+  adtimabox:
+    name: "AdtimaBox"
+    description: "Adtima platform integration"
+    model_env: MODEL_ADTIMABOX
+    system_prompt: "You are an AdtimaBox Specialist..."
+    knowledge_dir: agents/adtimabox/knowledge
+    skills_dir: agents/adtimabox/skills
+
+  design:
+    name: "Design"
+    description: "Wireframes and visual design"
+    model_env: MODEL_DESIGN
+    system_prompt: "You are a Design Specialist..."
+    knowledge_dir: agents/design/knowledge
+    skills_dir: agents/design/skills
+    design_backend: figjam  # or figma, html
+
+# Validation agent (used for pre-pass validation)
+validation:
+  name: "Validation"
+  description: "Fast validation pre-pass"
+  model_env: MODEL_VALIDATION
+  system_prompt: "You are a Validation Agent..."
