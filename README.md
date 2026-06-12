@@ -219,6 +219,54 @@ In `.env`:
 - `ENABLE_BRAINSTORM=true` - Enable brainstorm mode
 - `ENABLE_AUTO_APPROVE_SESSION=false` - Auto-approve same action type in session
 
+### AgentBase Managed Services (optional)
+
+By default the app runs on the **local fallbacks** (SQLite for memory, LanceDB for
+the vector store) — you do **not** need any AgentBase credentials to develop or
+demo. Configure these only when you want the managed **Memory** / **MCP Gateway**
+services.
+
+> **Important — how AgentBase auth actually works.** AgentBase services do **not**
+> use a per-service URL + API key. There is **no** `AGENTBASE_MEMORY_URL` or
+> `AGENTBASE_MEMORY_API_KEY`. Instead:
+> - **Base URLs are fixed** and known by the SDK (Memory = `https://agentbase.api.vngcloud.vn/memory`) — you never set them.
+> - **Auth is IAM-based**: `GREENNODE_CLIENT_ID` + `GREENNODE_CLIENT_SECRET` (+ optional `GREENNODE_AGENT_IDENTITY`).
+>   - **On AgentBase Runtime** these are **auto-injected** into the container — leave them unset.
+>   - **For local development** provide them via a `.greennode.json` file (read by the SDK / `.claude/skills/agentbase/scripts/*`) — recommended — or as env vars.
+> - **A memory is a resource you create** and reference by its **ID** (e.g. `mem_abc123`). That ID — `AGENTBASE_MEMORY_ID` — is what the LangGraph bridge needs; it is **not** an API key.
+
+**Step 1 — create a memory** (gives you the `mem_...` ID + a strategy ID):
+
+```bash
+bash .claude/skills/agentbase/scripts/memory.sh create \
+  --name sales-assistant \
+  --description "Multi-agent sales assistant memory" \
+  --expiry-days 30 \
+  --strategy-name user-prefs \
+  --strategy-type USER_PREFERENCE \
+  --namespace-template "/strategies/{memoryStrategyId}/actors/{actorId}" \
+  --auto-generate
+# Note the returned memory id (mem_...) and strategy id (strat_...)
+```
+
+**Step 2 — put the IDs in `.env`** (auth via `.greennode.json` or IAM env vars):
+
+```env
+# IAM credentials — LOCAL DEV ONLY (auto-injected on AgentBase Runtime)
+GREENNODE_CLIENT_ID=your_iam_client_id
+GREENNODE_CLIENT_SECRET=your_iam_client_secret
+
+# The memory you created above — this was the previously-missing variable
+AGENTBASE_MEMORY_ID=mem_xxxxxxxxxxxx
+MEMORY_STRATEGY_ID=strat_xxxxxxxxxxxx
+```
+
+The LangGraph checkpointer bridge then uses it as
+`AgentBaseMemoryEvents(memory_id=AGENTBASE_MEMORY_ID)`. Requests must also carry
+the `X-GreenNode-AgentBase-User-Id` and `X-GreenNode-AgentBase-Session-Id` headers
+(mapped to `actor_id` / `thread_id`). If `AGENTBASE_MEMORY_ID` is unset, the app
+falls back to the local SQLite checkpointer automatically.
+
 ## Development
 
 ### Running Tests
@@ -242,7 +290,19 @@ yarn test
 
 ## Deployment
 
-See [AgentBase Deployment Guide](./docs/deployment.md) for production deployment instructions.
+The backend deploys on **AgentBase Runtime** as a Custom Agent container. The
+Runtime Service Contract has two **hard** requirements the container must meet:
+
+1. **Listen on port `8080`** — the platform routes all traffic there. Locally we
+   use `8000`, so the container build must set `PORT=8080` (the app already reads
+   `PORT` from the env).
+2. **Expose `GET /health` returning HTTP 200** when ready — used to mark the
+   runtime `ACTIVE`. (Already implemented in `main.py`.)
+
+On Runtime, `GREENNODE_CLIENT_ID`, `GREENNODE_CLIENT_SECRET`,
+`GREENNODE_AGENT_IDENTITY`, and `GREENNODE_ENDPOINT_URL` are **auto-injected** —
+do **not** set them in the deployed environment. See `docs/DAY_7.md` for the full
+build → Container Registry → runtime-create flow.
 
 ## License
 
