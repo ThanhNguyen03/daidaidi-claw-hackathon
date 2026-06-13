@@ -15,6 +15,7 @@ from dataclasses import dataclass
 @dataclass
 class SearchResult:
     """A single search result from the knowledge base."""
+
     content: str
     source: str
     score: float
@@ -29,19 +30,14 @@ class KBRepo(ABC):
 
     @abstractmethod
     async def add_document(
-        self,
-        content: str,
-        metadata: Optional[dict[str, Any]] = None
+        self, content: str, metadata: Optional[dict[str, Any]] = None
     ) -> str:
         """Add a document to the knowledge base. Returns document ID."""
         pass
 
     @abstractmethod
     async def search(
-        self,
-        query: str,
-        top_k: int = 5,
-        filters: Optional[dict[str, Any]] = None
+        self, query: str, top_k: int = 5, filters: Optional[dict[str, Any]] = None
     ) -> list[SearchResult]:
         """Search the knowledge base for relevant documents."""
         pass
@@ -72,6 +68,7 @@ class LanceDBKBRepo(KBRepo):
         """
         import os
         from dotenv import load_dotenv
+
         load_dotenv()
 
         self.db_path = db_path or os.getenv("LANCEDB_PATH", "./data/knowledge_base")
@@ -82,14 +79,17 @@ class LanceDBKBRepo(KBRepo):
     def _ensure_db_dir(self):
         """Ensure the database directory exists."""
         import os
-        db_dir = self.db_path if not self.db_path.endswith(". LanceDB") else os.path.dirname(self.db_path)
+
+        db_dir = (
+            self.db_path
+            if not self.db_path.endswith(". LanceDB")
+            else os.path.dirname(self.db_path)
+        )
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
 
     async def add_document(
-        self,
-        content: str,
-        metadata: Optional[dict[str, Any]] = None
+        self, content: str, metadata: Optional[dict[str, Any]] = None
     ) -> str:
         """
         Add a document to LanceDB.
@@ -97,16 +97,14 @@ class LanceDBKBRepo(KBRepo):
         This is a stub for Day 1 - will be fully implemented in Day 5.
         """
         import uuid
+
         doc_id = str(uuid.uuid4())
         # TODO: Implement with LanceDB + embedding
         # For now, return a placeholder ID
         return doc_id
 
     async def search(
-        self,
-        query: str,
-        top_k: int = 5,
-        filters: Optional[dict[str, Any]] = None
+        self, query: str, top_k: int = 5, filters: Optional[dict[str, Any]] = None
     ) -> list[SearchResult]:
         """
         Search LanceDB for relevant documents.

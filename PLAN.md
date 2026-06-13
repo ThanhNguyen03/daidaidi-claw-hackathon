@@ -2,7 +2,7 @@
 
 ## Context
 
-We are building an **AI Agent chat webapp** that supports a sales team across four jobs: **sales planning, customer service, proposal generation** (userflow / wireframe / PPTX / quotation), and **tech advisory** (bridging clients and the tech team). The system is **multi-agent**: an **Orchestrator** runs first, validates the brief, and dispatches to 6+ specialized agents (Market Insight/Sales Strategy, Tech Solution, Account, AdtimaBox, Design, + Orchestrator). Each agent maps to one of three GreenNode models to play to each model's strengths. The app has 4 modes (Chat / Planning / Execute / Brainstorm), a human-approval checkpoint before any generation, conversation memory + feedback learning, and proactive "ask-back" validation.
+We are building an **AI Agent chat webapp** that supports a sales team across four jobs: **sales planning, customer service, proposal generation** (userflow / wireframe / PPTX / quotation), and **tech advisory** (bridging clients and the tech team). The system is **multi-agent**: an **Orchestrator** runs first, validates the brief, and dispatches to a **scalable pool** of specialized agents (Market Insight/Sales Strategy, Tech Solution, Account, AdtimaBox, Design, **Compliance**, + Orchestrator). The pool is **config-driven and extensible** — agents are added/removed via `config/agents.yaml` + a folder convention with **zero orchestrator-core changes** (see B.6). Each agent maps to one of three GreenNode models to play to each model's strengths. The app has 4 modes (Chat / Planning / Execute / Brainstorm), a human-approval checkpoint before any generation, conversation memory + feedback learning, and proactive "ask-back" validation.
 
 **Locked decisions (from kickoff + Section G Q&A — FINAL):**
 - **Stack:** Python backend (LangGraph, packaged as a **GreenNodeAgentBaseApp** for Runtime deploy) + Next.js/assistant-ui frontend, over SSE/WebSocket. (Tech section also compares Next.js vs plain React per request.)
@@ -194,7 +194,7 @@ flowchart TD
 | Network / Swarm | Any agent can hand off to any agent directly. | ❌ High loop risk, hard to reason about, contradicts your central-control requirement. |
 | Static pipeline | Fixed A→B→C chain. | ❌ Too rigid; can't branch by intent or run parallel groups. |
 
-LangGraph's `create_supervisor` / `Command(goto=...)` handoff primitive implements this directly, with the durable checkpointer giving us HITL + resume for free. Adding an agent = registering a node + a routing description; removing one = deleting its registration. **Agents are config-driven** (see F).
+LangGraph's `create_supervisor` / `Command(goto=...)` handoff primitive implements this directly, with the durable checkpointer giving us HITL + resume for free. Adding an agent = registering a node + a routing description; removing one = deleting its registration. **Agents are config-driven** (see F) — the full extension contract is in **B.6**.
 
 ### B.2 State management — **single typed shared state + standardized AgentOutput contract**
 
@@ -251,6 +251,42 @@ For **brainstorm** specifically, agents share one append-only `transcript` chann
   - A **critical** agent failed (declared per-task) → surface to the user with what failed and offer retry/skip; do not silently produce a partial proposal.
   - A **non-critical** agent failed → proceed and note the gap in the output ("Market sizing unavailable; proceeding without it").
 - This gives graceful degradation without hiding failures (honest reporting requirement).
+
+### B.6 Agent pool — extension contract (scalable & maintainable)
+
+The agent pool is **open for extension, closed for modification**: adding or removing an agent must never require editing the Orchestrator, graph wiring, or any other agent. This is enforced by three things — a **registry that builds the graph from config**, a **declarative `agents.yaml` entry**, and a **fixed folder convention** per agent.
+
+**1. One declarative entry in `config/agents.yaml`:**
+```yaml
+agents:
+  compliance:
+    enabled: true
+    model: MODEL_COMPLIANCE          # env key → GreenNode model path
+    kind: reviewer                   # generator | advisory | reviewer
+    role: "Policy & compliance advisor: flags policy risks in proposals/quotes,
+           suggests compliant alternatives, warns the salesperson before delivery."
+    hooks: [pre_checkpoint_review]   # optional cross-cutting hook points (see below)
+    critical: false                  # B.5 failure policy (non-critical → degrade gracefully)
+```
+
+**2. A fixed folder, dropped in beside the others (no core edits):**
+`backend/agents/compliance/{prompt.md, schema.py, tools.py, skills/, knowledge/}`.
+The `registry.py` discovers it, binds its model + prompt + KB folder, and the graph adds one node automatically.
+
+**3. `kind` decouples *how the orchestrator uses an agent* from *which agent it is*** — so cross-cutting behavior is generic, not hard-coded to "compliance":
+| `kind` | When the orchestrator runs it | Example |
+|---|---|---|
+| `generator` | In the execution plan to **produce** an artifact (gated by a checkpoint). | Account (quote), Design (wireframe), Tech Solution. |
+| `advisory` | On intent match, to **answer/advise** (usually read-only, no checkpoint). | Compliance answering "is X allowed?"; Market insight. |
+| `reviewer` | Via a **hook** (e.g. `pre_checkpoint_review`) to **inspect another agent's output** and attach findings *before* the human checkpoint. | Compliance reviewing a quotation for policy risk. |
+
+**Hook points (generic, opt-in via `hooks:`):** the orchestrator exposes a small set of named hook points (e.g. `pre_checkpoint_review`, `post_brief_validate`). Any `reviewer` agent that subscribes runs at that point and returns an `AgentOutput` whose `payload` carries findings; the orchestrator merges findings into shared state — it does **not** special-case any agent name. New reviewer agents (legal, brand-safety, …) plug in the same way later.
+
+**Compliance Agent (the first `reviewer`/`advisory` agent):**
+- **Job:** owns policy knowledge (company policy, product policy, regulatory/industry rules) in `agents/compliance/knowledge/`. Two modes: (a) **advisory** — answer salesperson policy questions directly; (b) **reviewer** — via `pre_checkpoint_review`, scan a pending proposal/quote/plan and emit **warnings + compliant-alternative suggestions**.
+- **Output payload** (its `schema.py`): `{ findings: [{severity: "block"|"warn"|"info", policy_ref, message, suggestion}], overall: "ok"|"warn"|"block" }`. A `block` finding makes the checkpoint default to *not* auto-approvable and surfaces the reason; `warn`/`info` are shown but non-blocking.
+- **Surfacing:** findings render inside the **checkpoint card** (C.4) and in the **Context panel** active-advisories list (C.1), so the salesperson sees policy guidance exactly where they decide. Compliance never sends anything outward — it only advises.
+- **Anti-loop:** as a hook-invoked reviewer it runs once per checkpoint and is recorded in the `visited` set like any agent (B.4), so it cannot loop.
 
 ---
 
@@ -508,7 +544,7 @@ All persistence goes through a **repository interface** (`MemoryRepo`, `ProfileR
 | **Backend / runtime packaging** | **GreenNodeAgentBaseApp** (SDK web server) wrapping the LangGraph graph; **FastAPI** for any extra HTTP routes | Raw FastAPI only (self-host) | AgentBaseApp conforms to the Runtime Service Contract (port, health check, auto-injected creds) → deploys natively on AgentBase Runtime with autoscale/versioning; FastAPI alone would need us to hand-roll that contract. Still async-native; Pydantic models double as our state schemas. |
 | **Frontend framework** | **Next.js (App Router)** | Plain React (Vite SPA) | Streaming RSC + BFF route layer (keeps keys server-side) + best assistant-ui support → better perceived UX. (Full comparison in C.) Deployed separately from the agent runtime. |
 | **Chat UI library** | **assistant-ui** | CopilotKit; Vercel AI SDK `useChat` | Best custom-message rendering for **group-chat avatars/bubbles** + inline generative-UI cards (question/checkpoint). CopilotKit is strongest for out-of-box approval flows but heavier/more opinionated; we want custom brainstorm UI. Vercel AI SDK can power the streaming transport under assistant-ui. |
-| **Models (GreenNode MAAS, OpenAI-compatible, endpoint above)** | **MiniMax M2.5** → Orchestrator + Tech Solution (reasoning/agentic); **Qwen 3** → Market/Strategy/Account/AdtimaBox (balanced, reliable tool-calling); **Gemma 4** → fast validation pre-pass + Design intent (fast/vision) | swap per-agent via config (`MODEL_*` env vars) | Plays to each model's strength; per-agent mapping is config so it's trivially re-tunable. Model param = the model's `path` field. Gemma's function-calling is not first-class → keep it on classification/vision, not heavy tool loops. Exact `path` IDs pinned in `.env`. |
+| **Models (GreenNode MAAS, OpenAI-compatible, endpoint above)** | **MiniMax M2.5** → Orchestrator + Tech Solution (reasoning/agentic); **Qwen 3** → Market/Strategy/Account/AdtimaBox/**Compliance** (balanced, reliable tool-calling + grounded RAG narration); **Gemma 4** → fast validation pre-pass + Design intent (fast/vision) | swap per-agent via config (`MODEL_*` env vars, incl. `MODEL_COMPLIANCE`) | Plays to each model's strength; per-agent mapping is config so it's trivially re-tunable. Compliance → Qwen 3 because policy work is grounded retrieval + careful, reliable narration (not heavy multi-step reasoning). Model param = the model's `path` field. Gemma's function-calling is not first-class → keep it on classification/vision, not heavy tool loops. Exact `path` IDs pinned in `.env`. |
 | **Memory** | **AgentBase Managed Memory** (LangGraph `CheckpointSaver` bridge + semantic long-term store) | SQLite checkpointer + local table (fallback) | Managed, native to the platform, gives short-term resume + long-term feedback learning with little custom code; SQLite fallback keeps local dev infra-free. Both behind `MemoryRepo`. |
 | **Vector store (RAG/KB)** | **LanceDB** (local) | Chroma; pgvector | Embedded, no server, fast local similarity search for the demo KB; behind `KBRepo` so it can move to a managed/pgvector store later. |
 | **Embeddings/rerank** | **GreenNode `bge-m3` + `bge-reranker-v2-m3`** | OpenAI embeddings | Same provider/key as the LLMs; strong multilingual (incl. Vietnamese) for the KB. |
@@ -536,8 +572,9 @@ Principle: **core conversational + orchestration + validation + memory first** (
 - `backend/agents/base.py` (agent contract), `backend/agents/registry.py` (config-driven add/remove).
 - Orchestrator supervisor node + LangGraph graph wiring + checkpointer (AgentBase Memory bridge, SQLite fallback).
 - Anti-loop guard (visited-set + hop-depth).
-- Stub all 6 agents (config-driven via `config/agents.yaml` + `backend/agents/<name>/{prompt.md, skills/, knowledge/}`); each returns structured `AgentOutput`.
-- **Deliverable:** brief → orchestrator → dispatches to ≥2 stub agents → aggregated answer streamed.
+- Stub all **7 agents** (Market/Strategy, Tech Solution, Account, AdtimaBox, Design, **Compliance**) — config-driven via `config/agents.yaml` + `backend/agents/<name>/{prompt.md, skills/, knowledge/}`; each returns structured `AgentOutput`.
+- **Extension contract (B.6):** `agents.yaml` entries carry `kind` (`generator|advisory|reviewer`) + optional `hooks`; the registry builds the graph from config so add/remove an agent never touches the core. Define the `pre_checkpoint_review` hook point now (Compliance subscribes to it on Day 5).
+- **Deliverable:** brief → orchestrator → dispatches to ≥2 stub agents → aggregated answer streamed; toggling `enabled`/adding a folder changes the pool with no code edits.
 
 ### Day 3 — Validation & QuestionStack (must-have)
 - Validation pre-pass (Gemma 4) → `ValidationReport`; ambiguity + severity classification.
@@ -557,7 +594,8 @@ Principle: **core conversational + orchestration + validation + memory first** (
 - Checkpoint manager (interrupt-before-tool), state machine (Approve/Edit/Reject), inline checkpoint card + **session-scoped "don't ask again for this action type"** (re-armed next session — Claude-Code-style, Q10).
 - Flesh out agents with KB RAG (LanceDB + bge embeddings/rerank); ingest the demo `.md` knowledge per-agent (`agents/<name>/knowledge/`), with pluggable loaders (PDF/CSV/PNG = future).
 - **Account pricing = hybrid:** deterministic rate-card lookup for listed items (LLM narrates) + LLM suggestion grounded in use-case KB/search for custom features (flagged as estimate).
-- **Deliverable:** Planning/Execute flow produces a previewed plan/quotation gated by a working checkpoint; edit re-previews; reject asks-only.
+- **Compliance Agent (B.6):** ingest policy KB (`agents/compliance/knowledge/`: company/product/regulatory rules); implement both modes — **advisory** Q&A and the **`pre_checkpoint_review`** reviewer hook that scans the pending plan/quote and emits `findings` (`block|warn|info` + suggestions). Wire findings into the checkpoint card + Context-panel advisories; a `block` finding disables auto-approve and shows the reason.
+- **Deliverable:** Planning/Execute flow produces a previewed plan/quotation gated by a working checkpoint **with Compliance findings attached**; edit re-previews; reject asks-only.
 
 ### Day 6 — Generation (priority: PPTX + userflow) + modes
 - **Priority order (Q12):** (1) **PPTX deck** via python-pptx (preview-quality) behind a checkpoint; (2) **userflow** (Mermaid/FigJam flow). Then quotation export, then wireframe if time allows.

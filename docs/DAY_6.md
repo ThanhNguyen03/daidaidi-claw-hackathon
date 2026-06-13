@@ -21,7 +21,11 @@ Turn approved checkpoints into real artifacts in the **priority order from G Q12
 - [ ] `backend/generation/userflow.py` — produce a **Mermaid** flow (and/or FigJam flow); render to a preview the frontend can display.
 
 ### Backend — Design agent behind `DesignBackend` (E / G Q4)
-- [ ] `backend/design/backend.py` — `DesignBackend` interface; demo impl = **FigJam wireframe**, with an **HTML low-fi fallback** when no Figma access. Full Figma + OAuth is a deferred swap (G platform decisions).
+- [ ] `backend/design/backend.py` — `DesignBackend` interface with selectable impls:
+  - **HTML low-fi fallback** (default, no Figma access needed).
+  - **`FigmaExportBackend` (PAT / REST)** — auth via `FIGMA_ACCESS_TOKEN` (EDU PAT works). Reads a template (`FIGMA_FILE_KEY`) and **exports frames to PNG/SVG/PDF** via `GET /v1/images/:key`. **Note the hard limit:** a PAT/REST **cannot create files or new wireframe nodes** (no write-content endpoint) and cannot write variables (Enterprise only) — it is read/duplicate/**export** only. True generative wireframes need the Figma **Plugin API** (`use_figma` MCP), not a PAT.
+  - **FigJam / Figma Plugin (MCP)** — generative path for creating nodes; deferred OAuth/full-Figma swap (G platform decisions).
+- [ ] Selection precedence: if `FIGMA_ACCESS_TOKEN` set → `FigmaExportBackend`; else HTML low-fi.
 - [ ] Quotation export (priority 3) + wireframe (priority 4, if time) behind the same checkpoint pattern.
 
 ### Backend — MCP integration (E)

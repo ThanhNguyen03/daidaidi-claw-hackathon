@@ -7,6 +7,7 @@ Dual implementation: SQLite (local fallback) / AgentBase (primary).
 This enables personalization and learning from user feedback.
 """
 
+import os
 from typing import Optional
 from abc import ABC, abstractmethod
 
@@ -50,9 +51,12 @@ class SQLiteProfileRepo(ProfileRepo):
         """Initialize with database path."""
         import os
         from dotenv import load_dotenv
+
         load_dotenv()
 
-        self.db_path = db_path or os.getenv("SQLITE_DB_PATH", "./data/sales_assistant.db")
+        self.db_path = db_path or os.getenv(
+            "SQLITE_DB_PATH", "./data/sales_assistant.db"
+        )
         self._ensure_db_dir()
 
     def _ensure_db_dir(self):
@@ -64,12 +68,14 @@ class SQLiteProfileRepo(ProfileRepo):
     async def save(self, profile: SalespersonProfile) -> None:
         """Save profile to SQLite (delegates to MemoryRepo)."""
         from repos.memory_repo import get_memory_repo
+
         repo = get_memory_repo()
         await repo.save_profile(profile)
 
     async def get(self, salesperson_id: str) -> Optional[SalespersonProfile]:
         """Load profile from SQLite (delegates to MemoryRepo)."""
         from repos.memory_repo import get_memory_repo
+
         repo = get_memory_repo()
         return await repo.load_profile(salesperson_id)
 

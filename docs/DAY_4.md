@@ -15,7 +15,7 @@ The most important day for the demo's "wow": durable **short-term** session stat
 ## 3. Task checklist
 
 ### Backend — short-term memory (D.1)
-- [ ] Wire the **checkpointer** into the graph keyed by `thread_id = session_id`: AgentBase Memory bridge (`AgentBaseMemoryEvents` as a `CheckpointSaver`) **primary**, `SQLiteCheckpointSaver` **fallback** — both behind `MemoryRepo` so the app runs with or without the platform.
+- [ ] Wire the **checkpointer** into the graph keyed by `thread_id = session_id`: AgentBase Memory bridge (`AgentBaseMemoryEvents(memory_id=AGENTBASE_MEMORY_ID)` as a `CheckpointSaver`, IAM auth auto-injected on Runtime) **primary**, `SQLiteCheckpointSaver` **fallback** — both behind `MemoryRepo` so the app runs with or without the platform. Requests must carry `X-GreenNode-AgentBase-User-Id` (→ `actor_id`) + `X-GreenNode-AgentBase-Session-Id` (→ `thread_id`); error out if missing (no silent defaults).
 - [ ] Rolling **session summary** + bounded message window to keep token use bounded on long chats (D.1).
 - [ ] Persist/resume `SalesCaseState` so a pending checkpoint or open question survives a reload (durable thread state).
 

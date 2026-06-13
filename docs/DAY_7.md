@@ -30,7 +30,7 @@ Ship the last mode and make the whole thing deployable and robust: **Brainstorm*
 - [ ] Subtle **round / token meter** showing progress toward the max-round cap.
 
 ### Deploy (G Q11)
-- [ ] Backend: Docker build → push to **Container Registry** → **AgentBase Runtime** create (Custom Agent, PUBLIC or VPC). Health check + auto-injected creds per the Runtime Service Contract.
+- [ ] Backend: Docker build → push to **Container Registry** → **AgentBase Runtime** create (Custom Agent, PUBLIC or VPC). **Runtime Service Contract (hard):** container must **listen on port `8080`** (set `PORT=8080` in the image — locally we use 8000) and expose `GET /health` → 200. IAM creds (`GREENNODE_CLIENT_ID/SECRET`), `GREENNODE_AGENT_IDENTITY`, and `GREENNODE_ENDPOINT_URL` are **auto-injected** on Runtime — do not set them.
 - [ ] Frontend deployed separately (host per the non-blocking G confirmation).
 - [ ] Smoke-test via `/agentbase-monitor` (logs + metrics).
 - [ ] Seed data + a written **demo script** covering all 4 modes.

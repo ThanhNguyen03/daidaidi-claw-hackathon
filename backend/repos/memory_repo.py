@@ -10,31 +10,24 @@ The interface ensures both can be used interchangeably.
 
 import os
 import json
-import asyncio
 from typing import Optional, Any
 from datetime import datetime
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, asdict
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from schemas.state import (
     SalesCaseState,
     SalespersonProfile,
     FeedbackRule,
-    Brief,
-    Question,
-    ValidationReport,
-    ExecutionPlan,
-    AgentOutput,
-    Checkpoint,
 )
-
 
 # =============================================================================
 # Repository Interface
 # =============================================================================
+
 
 class MemoryRepo(ABC):
     """
@@ -69,9 +62,7 @@ class MemoryRepo(ABC):
 
     @abstractmethod
     async def load_feedback_rules(
-        self,
-        salesperson_id: str,
-        active_only: bool = True
+        self, salesperson_id: str, active_only: bool = True
     ) -> list[FeedbackRule]:
         """Load feedback rules for a salesperson."""
         pass
@@ -83,9 +74,7 @@ class MemoryRepo(ABC):
 
     @abstractmethod
     async def list_sessions(
-        self,
-        salesperson_id: Optional[str] = None,
-        limit: int = 10
+        self, salesperson_id: Optional[str] = None, limit: int = 10
     ) -> list[dict[str, Any]]:
         """List recent sessions."""
         pass
@@ -94,6 +83,7 @@ class MemoryRepo(ABC):
 # =============================================================================
 # SQLite Implementation (Local Fallback)
 # =============================================================================
+
 
 class SQLiteMemoryRepo(MemoryRepo):
     """
@@ -108,7 +98,9 @@ class SQLiteMemoryRepo(MemoryRepo):
         Args:
             db_path: Path to SQLite database file. Defaults to ./data/sales_assistant.db
         """
-        self.db_path = db_path or os.getenv("SQLITE_DB_PATH", "./data/sales_assistant.db")
+        self.db_path = db_path or os.getenv(
+            "SQLITE_DB_PATH", "./data/sales_assistant.db"
+        )
         self._ensure_db_dir()
         self._init_db()
 
@@ -211,17 +203,20 @@ class SQLiteMemoryRepo(MemoryRepo):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT OR REPLACE INTO sessions
             (session_id, salesperson_id, state_json, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?)
-        """, (
-            state.session_id,
-            state.salesperson_id,
-            state_json,
-            state.created_at.isoformat(),
-            state.updated_at.isoformat()
-        ))
+        """,
+            (
+                state.session_id,
+                state.salesperson_id,
+                state_json,
+                state.created_at.isoformat(),
+                state.updated_at.isoformat(),
+            ),
+        )
 
         conn.commit()
         conn.close()
@@ -233,11 +228,14 @@ class SQLiteMemoryRepo(MemoryRepo):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT session_id, salesperson_id, state_json, created_at, updated_at
             FROM sessions
             WHERE session_id = ?
-        """, (session_id,))
+        """,
+            (session_id,),
+        )
 
         row = cursor.fetchone()
         conn.close()
@@ -254,16 +252,19 @@ class SQLiteMemoryRepo(MemoryRepo):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT OR REPLACE INTO profiles
             (salesperson_id, profile_json, created_at, updated_at)
             VALUES (?, ?, ?, ?)
-        """, (
-            profile.salesperson_id,
-            profile_json,
-            profile.created_at.isoformat(),
-            profile.updated_at.isoformat()
-        ))
+        """,
+            (
+                profile.salesperson_id,
+                profile_json,
+                profile.created_at.isoformat(),
+                profile.updated_at.isoformat(),
+            ),
+        )
 
         conn.commit()
         conn.close()
@@ -275,11 +276,14 @@ class SQLiteMemoryRepo(MemoryRepo):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT salesperson_id, profile_json, created_at, updated_at
             FROM profiles
             WHERE salesperson_id = ?
-        """, (salesperson_id,))
+        """,
+            (salesperson_id,),
+        )
 
         row = cursor.fetchone()
         conn.close()
@@ -295,25 +299,26 @@ class SQLiteMemoryRepo(MemoryRepo):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT OR REPLACE INTO feedback_rules
             (rule_id, salesperson_id, rule_json, created_at, active)
             VALUES (?, ?, ?, ?, ?)
-        """, (
-            rule.rule_id,
-            rule.salesperson_id,
-            rule_json,
-            rule.created_at.isoformat(),
-            1 if rule.active else 0
-        ))
+        """,
+            (
+                rule.rule_id,
+                rule.salesperson_id,
+                rule_json,
+                rule.created_at.isoformat(),
+                1 if rule.active else 0,
+            ),
+        )
 
         conn.commit()
         conn.close()
 
     async def load_feedback_rules(
-        self,
-        salesperson_id: str,
-        active_only: bool = True
+        self, salesperson_id: str, active_only: bool = True
     ) -> list[FeedbackRule]:
         """Load feedback rules from SQLite."""
         import sqlite3
@@ -343,17 +348,18 @@ class SQLiteMemoryRepo(MemoryRepo):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             DELETE FROM feedback_rules WHERE rule_id = ?
-        """, (rule_id,))
+        """,
+            (rule_id,),
+        )
 
         conn.commit()
         conn.close()
 
     async def list_sessions(
-        self,
-        salesperson_id: Optional[str] = None,
-        limit: int = 10
+        self, salesperson_id: Optional[str] = None, limit: int = 10
     ) -> list[dict[str, Any]]:
         """List recent sessions from SQLite."""
         import sqlite3
@@ -362,20 +368,26 @@ class SQLiteMemoryRepo(MemoryRepo):
         cursor = conn.cursor()
 
         if salesperson_id:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT session_id, salesperson_id, state_json, created_at, updated_at
                 FROM sessions
                 WHERE salesperson_id = ?
                 ORDER BY updated_at DESC
                 LIMIT ?
-            """, (salesperson_id, limit))
+            """,
+                (salesperson_id, limit),
+            )
         else:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT session_id, salesperson_id, state_json, created_at, updated_at
                 FROM sessions
                 ORDER BY updated_at DESC
                 LIMIT ?
-            """, (limit,))
+            """,
+                (limit,),
+            )
 
         rows = cursor.fetchall()
         conn.close()
@@ -384,14 +396,16 @@ class SQLiteMemoryRepo(MemoryRepo):
         for row in rows:
             session_id, salesperson_id, state_json, created_at, updated_at = row
             state = json.loads(state_json)
-            result.append({
-                "session_id": session_id,
-                "salesperson_id": salesperson_id,
-                "mode": state.get("mode", "chat"),
-                "summary": state.get("summary", ""),
-                "created_at": created_at,
-                "updated_at": updated_at
-            })
+            result.append(
+                {
+                    "session_id": session_id,
+                    "salesperson_id": salesperson_id,
+                    "mode": state.get("mode", "chat"),
+                    "summary": state.get("summary", ""),
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                }
+            )
 
         return result
 
@@ -399,6 +413,7 @@ class SQLiteMemoryRepo(MemoryRepo):
 # =============================================================================
 # AgentBase Memory Implementation (Primary)
 # =============================================================================
+
 
 class AgentBaseMemoryRepo(MemoryRepo):
     """
@@ -412,26 +427,36 @@ class AgentBaseMemoryRepo(MemoryRepo):
 
     def __init__(
         self,
-        memory_url: Optional[str] = None,
-        memory_api_key: Optional[str] = None
+        memory_id: Optional[str] = None,
+        strategy_id: Optional[str] = None,
     ):
         """
         Initialize AgentBase memory repository.
 
-        Args:
-            memory_url: AgentBase Memory service URL
-            memory_api_key: AgentBase API key
-        """
-        self.memory_url = memory_url or os.getenv("AGENTBASE_MEMORY_URL")
-        self.memory_api_key = memory_api_key or os.getenv("AGENTBASE_MEMORY_API_KEY")
+        AgentBase Memory does NOT use a per-service URL/API key. The base URL is
+        fixed (https://agentbase.api.vngcloud.vn/memory) and auth is IAM-based:
+        GREENNODE_CLIENT_ID / GREENNODE_CLIENT_SECRET (auto-injected on AgentBase
+        Runtime; from .greennode.json or env vars for local dev). The SDK picks
+        those up automatically.
 
-        if not self.memory_url or not self.memory_api_key:
+        Args:
+            memory_id: The memory container id created via the Memory API
+                       (e.g. "mem_abc123"). Defaults to env AGENTBASE_MEMORY_ID.
+            strategy_id: The long-term-memory strategy id used for remember/recall.
+                         Defaults to env MEMORY_STRATEGY_ID.
+        """
+        self.memory_id = memory_id or os.getenv("AGENTBASE_MEMORY_ID")
+        self.strategy_id = strategy_id or os.getenv("MEMORY_STRATEGY_ID")
+
+        if not self.memory_id:
             raise ValueError(
-                "AgentBase Memory requires AGENTBASE_MEMORY_URL and AGENTBASE_MEMORY_API_KEY. "
+                "AgentBase Memory requires AGENTBASE_MEMORY_ID (the memory you "
+                "created, e.g. mem_abc123). IAM auth comes from GREENNODE_CLIENT_ID/"
+                "GREENNODE_CLIENT_SECRET (auto-injected on Runtime). "
                 "Use SQLite fallback instead: SQLiteMemoryRepo()"
             )
 
-        self._client = None  # Would be AgentBase Memory client
+        self._client = None  # Would be greennode_agentbase.memory.MemoryClient()
 
     def _ensure_client(self):
         """Ensure the AgentBase client is initialized."""
@@ -463,9 +488,7 @@ class AgentBaseMemoryRepo(MemoryRepo):
         self._ensure_client()
 
     async def load_feedback_rules(
-        self,
-        salesperson_id: str,
-        active_only: bool = True
+        self, salesperson_id: str, active_only: bool = True
     ) -> list[FeedbackRule]:
         """Load feedback rules from AgentBase Memory."""
         self._ensure_client()
@@ -475,9 +498,7 @@ class AgentBaseMemoryRepo(MemoryRepo):
         self._ensure_client()
 
     async def list_sessions(
-        self,
-        salesperson_id: Optional[str] = None,
-        limit: int = 10
+        self, salesperson_id: Optional[str] = None, limit: int = 10
     ) -> list[dict[str, Any]]:
         """List recent sessions from AgentBase Memory."""
         self._ensure_client()
@@ -486,6 +507,7 @@ class AgentBaseMemoryRepo(MemoryRepo):
 # =============================================================================
 # Repository Factory
 # =============================================================================
+
 
 def create_memory_repo(use_agentbase: bool = False) -> MemoryRepo:
     """
@@ -512,6 +534,7 @@ def create_memory_repo(use_agentbase: bool = False) -> MemoryRepo:
 # =============================================================================
 # Checkpoint Saver for LangGraph
 # =============================================================================
+
 
 class SQLiteCheckpointSaver:
     """

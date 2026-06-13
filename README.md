@@ -75,6 +75,7 @@ cp .env.example .env
    MODEL_ACCOUNT=Qwen3-8B
    MODEL_ADTIMABOX=Qwen3-8B
    MODEL_DESIGN=Gemma-4-2b
+   MODEL_COMPLIANCE=Qwen3-8B
    MODEL_VALIDATION=Gemma-4-2b
    ```
 
@@ -195,6 +196,9 @@ yarn dev
 4. **Account** - Pricing and quotations
 5. **AdtimaBox** - Adtima platform integration
 6. **Design** - Wireframes and visual design
+7. **Compliance** - Policy & compliance advisor: flags policy risks, suggests compliant alternatives, and warns the salesperson before delivery (advisory + pre-checkpoint reviewer)
+
+The agent pool is **config-driven and extensible** — add or remove an agent by editing `config/agents.yaml` and dropping in a `backend/agents/<name>/` folder, with no orchestrator-core changes (see PLAN.md §B.6). Each entry declares a `kind` (`generator` / `advisory` / `reviewer`) and optional `hooks`, so cross-cutting agents (like Compliance) plug in generically.
 
 ## Configuration
 
@@ -209,6 +213,7 @@ MODEL_MARKET_STRATEGY=Qwen3-8B
 MODEL_ACCOUNT=Qwen3-8B
 MODEL_ADTIMABOX=Qwen3-8B
 MODEL_DESIGN=Gemma-4-2b
+MODEL_COMPLIANCE=Qwen3-8B
 MODEL_VALIDATION=Gemma-4-2b
 ```
 
@@ -267,6 +272,35 @@ the `X-GreenNode-AgentBase-User-Id` and `X-GreenNode-AgentBase-Session-Id` heade
 (mapped to `actor_id` / `thread_id`). If `AGENTBASE_MEMORY_ID` is unset, the app
 falls back to the local SQLite checkpointer automatically.
 
+### Figma Design Output (optional)
+
+The Design agent can render design artifacts from Figma. By default it uses an
+**HTML low-fi fallback** (no Figma needed). To enable the Figma path, provide a
+**Personal Access Token (PAT)** — an **EDU / education-plan PAT works**.
+
+> **What a PAT can and cannot do.** A PAT authenticates the Figma **REST API**:
+> - ✅ **Read** files/nodes and **export/render** frames to **PNG / SVG / PDF** — this is the design *output* we use.
+> - ✅ Post comments.
+> - ❌ **It cannot create a file or draw new wireframe content from scratch** — the REST API has no write-content endpoint. Generating brand-new design nodes requires the Figma **Plugin API** (the `use_figma` MCP), not a PAT.
+> - ❌ Writing local variables is **Enterprise-plan only** (EDU is not Enterprise).
+>
+> So the PAT-backed flow is: **build a wireframe template file in Figma once → the agent fills/duplicates → exports the frames as images** for the proposal.
+
+**Setup:**
+
+1. In Figma: **Settings → Security → Personal access tokens → Generate new token**. Scopes: `files:read` (required for export), `file_comments:write` (optional).
+2. Build a template Figma file and copy its key from the URL: `https://www.figma.com/file/<FILE_KEY>/...`.
+3. Add to `.env`:
+
+```env
+FIGMA_ACCESS_TOKEN=figd_xxxxxxxxxxxxxxxxxxxxxxxx
+FIGMA_FILE_KEY=your_template_file_key
+```
+
+If `FIGMA_ACCESS_TOKEN` is unset, the Design agent automatically uses the HTML
+low-fi fallback. For true generative wireframes (creating nodes), use the
+`use_figma` MCP / Figma plugin path instead — see `docs/DAY_6.md`.
+
 ## Development
 
 ### Running Tests
@@ -281,12 +315,22 @@ cd frontend
 yarn test
 ```
 
-### Adding New Agents
+### Adding / Removing Agents
 
-1. Add agent config in `config/agents.yaml`
-2. Create agent folder in `backend/agents/<agent_name>/`
-3. Add prompt in `backend/agents/<agent_name>/prompt.md`
-4. Add knowledge files in `backend/agents/<agent_name>/knowledge/`
+The pool is **open for extension, closed for modification** — none of the steps
+below touch the orchestrator or graph code (see PLAN.md §B.6).
+
+1. Add an entry in `config/agents.yaml` with:
+   - `model` (env key, e.g. `MODEL_COMPLIANCE`), `role` (one-line routing description),
+   - `kind`: `generator` (produces an artifact, checkpoint-gated) | `advisory` (answers/advises, read-only) | `reviewer` (inspects another agent's output via a hook),
+   - optional `hooks`: e.g. `[pre_checkpoint_review]` for reviewer agents,
+   - `critical`: whether its failure should halt the pipeline, and `enabled`.
+2. Create the agent folder `backend/agents/<agent_name>/` with `prompt.md`, `schema.py` (payload shape), `tools.py`, `skills/`, `knowledge/`.
+3. Add the model path to `.env` (`MODEL_<AGENT_NAME>`).
+4. Drop knowledge `.md` files into `backend/agents/<agent_name>/knowledge/`.
+
+To **remove** an agent: set `enabled: false` (or delete the entry + folder). Reviewer
+agents un-subscribe from their hook automatically — no other agent is affected.
 
 ## Deployment
 

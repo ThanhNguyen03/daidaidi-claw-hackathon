@@ -5,9 +5,9 @@
  * Keeps LLM_API_KEY server-side (per PLAN recommendation).
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from 'next/server';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,9 +16,9 @@ export async function POST(request: NextRequest) {
 
     // Forward the request to the backend
     const response = await fetch(`${API_URL}/chat/stream`, {
-      method: "POST",
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
     });
@@ -33,10 +33,7 @@ export async function POST(request: NextRequest) {
     // Create a streaming response
     const reader = response.body?.getReader();
     if (!reader) {
-      return NextResponse.json(
-        { error: "Failed to read response stream" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: 'Failed to read response stream' }, { status: 500 });
     }
 
     const stream = new ReadableStream({
@@ -62,40 +59,34 @@ export async function POST(request: NextRequest) {
 
     return new NextResponse(stream, {
       headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
       },
     });
   } catch (error) {
-    console.error("Chat API error:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    console.error('Chat API error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
 // Handle GET for health check or other methods
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
-  const action = searchParams.get("action");
+  const action = searchParams.get('action');
 
-  if (action === "health") {
+  if (action === 'health') {
     try {
       const response = await fetch(`${API_URL}/health`);
       const data = await response.json();
       return NextResponse.json(data);
     } catch {
       return NextResponse.json(
-        { status: "unhealthy", error: "Backend unreachable" },
+        { status: 'unhealthy', error: 'Backend unreachable' },
         { status: 503 }
       );
     }
   }
 
-  return NextResponse.json(
-    { error: "Method not allowed" },
-    { status: 405 }
-  );
+  return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
 }

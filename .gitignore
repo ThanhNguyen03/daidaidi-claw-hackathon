@@ -1,1 +1,12 @@
 .claude
+.env
+.env.local
+
+# AgentBase credentials & cache (NEVER commit — contains IAM secrets / tokens)
+.greennode.json
+.agentbase/
+
+# Local fallback data stores (SQLite memory + LanceDB vector store)
+data/
+
+*/node_modules

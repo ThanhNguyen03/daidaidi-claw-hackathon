@@ -22,12 +22,16 @@ lancedb>=0.8.0
 sse-starlette>=2.0.0
 
 # Logging
-pino>=0.2.0
 python-json-logger>=2.0.0
 
 # Utilities
 httpx>=0.26.0
 tenacity>=8.2.0
+
+# Code formatting and linting
+ruff>=0.3.0
+black>=24.2.0
+isort>=5.13.0
 
 # Development
 pytest>=8.0.0

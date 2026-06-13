@@ -31,6 +31,15 @@ Make agents *real* and gate every side-effecting generation behind the **human c
 - [ ] `backend/agents/account/pricing.py` — **hybrid**: deterministic **rate-card lookup** for listed items (LLM narrates/explains) + **LLM suggestion grounded in use-case KB/search** for custom features not on the rate-card (flagged as an estimate). Both pass through the checkpoint.
 - [ ] Seed a demo `rate-card` (e.g. `backend/agents/account/knowledge/rate_card.md` or `.csv`).
 
+### Backend — Compliance agent: advisory + pre-checkpoint review (B.6)
+- [ ] Ingest policy KB into `backend/agents/compliance/knowledge/` (company policy, product policy, regulatory/industry rules as `.md`) via the same `ingest.py` loaders.
+- [ ] `backend/agents/compliance/` — implement both modes: **advisory** (answer policy questions on intent match, grounded in the policy KB) and **reviewer** (the `pre_checkpoint_review` hook defined Day 2).
+- [ ] Define the Compliance payload in `backend/agents/compliance/schema.py`: `{ findings: [{severity: "block"|"warn"|"info", policy_ref, message, suggestion}], overall: "ok"|"warn"|"block" }`.
+- [ ] Orchestrator runs subscribed `reviewer` agents at `pre_checkpoint_review` **generically** (no name special-casing): scan the pending plan/quote → attach `findings` to the `Checkpoint` before it is shown. A `block` finding disables `auto_approve_session` for that card and surfaces the reason; `warn`/`info` are shown but non-blocking. Compliance never side-effects (advisory only).
+
+### Frontend — Compliance findings surfacing
+- [ ] Render Compliance `findings` inside the **CheckpointCard** (severity-tagged) and in the **Context-panel advisories** list, so policy guidance appears exactly where the salesperson decides.
+
 ### Frontend — checkpoint card (C.4)
 - [ ] `frontend/src/components/CheckpointCard.tsx` — neutral/action style (distinct from yellow question card): human-readable **preview**, **editable inline parameters**, buttons **Approve** (primary) / **Edit** (re-previews) / **Reject** (collapses to rejected state + posts the single clarifying question). Optional "don't ask again for this action this session" checkbox.
 
@@ -39,11 +48,12 @@ Make agents *real* and gate every side-effecting generation behind the **human c
 - Checkpoint state machine + `Checkpoint.status ∈ {AWAITING, APPROVED, EDITED, REJECTED}`, `auto_approve_session`.
 - `KBRepo` (LanceDB) + `ingest()` pluggable loaders + bge embeddings/rerank.
 - `account/pricing.py` hybrid: `lookup_rate_card()` + `estimate_custom_feature()` (flagged estimate).
-- Stream events: `{type:"checkpoint_card", checkpoint:{...}}`, decision endpoint `POST /checkpoint/{id}/decision {approve|edit(params)|reject}`.
+- Compliance `findings` payload + generic `pre_checkpoint_review` hook execution; findings attached to `Checkpoint`; `block` disables auto-approve.
+- Stream events: `{type:"checkpoint_card", checkpoint:{...}}` (now includes `findings`), decision endpoint `POST /checkpoint/{id}/decision {approve|edit(params)|reject}`.
 
 ## 5. Deliverable & verification
 
-**Deliverable:** Planning/Execute flow produces a previewed plan/quotation gated by a working checkpoint; edit re-previews; reject asks-only.
+**Deliverable:** Planning/Execute flow produces a previewed plan/quotation gated by a working checkpoint **with Compliance findings attached**; edit re-previews; reject asks-only.
 
 **Verify:**
 1. Execute mode → request a quotation → a checkpoint card shows the preview (e.g. "Quotation 180M VND") with **no side effect** yet.
@@ -53,6 +63,9 @@ Make agents *real* and gate every side-effecting generation behind the **human c
 5. Check "don't ask again for quotations this session" → next quotation this session auto-approves; start a new session → it asks again. Confirm `send_external` always checkpoints regardless.
 6. Ask a question answerable from a per-agent `knowledge/*.md` → answer cites/uses the KB; ask something outside the KB → low `kb_confidence` triggers a question instead of a hallucination.
 7. Quote a listed item (rate-card hit, narrated) vs a custom feature (LLM estimate, **flagged as estimate**).
+8. **Compliance advisory:** ask "is offering a 30% discount to a competitor's client allowed?" → Compliance answers from the policy KB.
+9. **Compliance review:** generate a quote/plan that violates a seeded policy → the checkpoint card shows a `warn`/`block` finding + suggested compliant alternative; a `block` finding prevents "don't ask again" auto-approve and shows the reason.
+10. Disable `compliance` in `agents.yaml` → reviews stop with no other behavior change (proves the hook is generic, not wired into the core).
 
 ## 6. Out of scope / deferred
 

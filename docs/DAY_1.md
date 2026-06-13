@@ -36,7 +36,7 @@ Establish the skeleton everything else hangs off: a Python backend (LangGraph wr
 - [x] `SQLiteCheckpointSaver` stub conforming to the LangGraph `CheckpointSaver` shape (`get`/`put`/`list` by `thread_id`) — wired for real in Day 2/4.
 
 ### Backend — env + docs
-- [x] `.env.example` — `LLM_BASE_URL`, `LLM_API_KEY`, per-agent `MODEL_*` (orchestrator, tech_solution, market_strategy, account, adtimabox, design, validation), AgentBase IDs (optional), `FRONTEND_URL`, `SQLITE_DB_PATH`, `LANCEDB_PATH`, feature flags (`ENABLE_CHECKPOINT`, `ENABLE_BRAINSTORM`, `ENABLE_AUTO_APPROVE_SESSION`).
+- [x] `.env.example` — `LLM_BASE_URL`, `LLM_API_KEY`, per-agent `MODEL_*` (orchestrator, tech_solution, market_strategy, account, adtimabox, design, validation), **AgentBase (optional, IAM-based — no per-service URL/key):** `GREENNODE_CLIENT_ID`/`GREENNODE_CLIENT_SECRET` (auto-injected on Runtime) + `AGENTBASE_MEMORY_ID` + `MEMORY_STRATEGY_ID`, `FRONTEND_URL`, `SQLITE_DB_PATH`, `LANCEDB_PATH`, feature flags (`ENABLE_CHECKPOINT`, `ENABLE_BRAINSTORM`, `ENABLE_AUTO_APPROVE_SESSION`).
 - [x] `README.md` — quick-start + a **step-by-step "get your GreenNode key + list model `path` IDs"** guide (incl. the `curl …/v1/models | jq '.data[].path'` snippet) and the rule that the model param = the model's `path` field.
 
 ### Frontend — minimal chat

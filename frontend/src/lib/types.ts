@@ -8,7 +8,7 @@
 // Mode Types
 // =============================================================================
 
-export type ChatMode = "chat" | "planning" | "execute" | "brainstorm";
+export type ChatMode = 'chat' | 'planning' | 'execute' | 'brainstorm';
 
 // =============================================================================
 // Brief
@@ -48,7 +48,7 @@ export interface Question {
 
 export interface AgentOutput {
   agent: string;
-  status: "COMPLETE" | "NEEDS_INPUT" | "NEEDS_AGENT" | "FAILED";
+  status: 'COMPLETE' | 'NEEDS_INPUT' | 'NEEDS_AGENT' | 'FAILED';
   payload: Record<string, unknown>;
   summary: string;
   confidence: number;
@@ -73,8 +73,8 @@ export interface ValidationReport {
   }>;
   kb_confidence: number;
   out_of_scope: boolean;
-  status: "READY" | "PENDING" | "BLOCKED";
-  severity: "critical" | "major" | "minor";
+  status: 'READY' | 'PENDING' | 'BLOCKED';
+  severity: 'critical' | 'major' | 'minor';
 }
 
 // =============================================================================
@@ -82,7 +82,13 @@ export interface ValidationReport {
 // =============================================================================
 
 export interface CheckpointAction {
-  type: "generate_pptx" | "generate_wireframe" | "generate_userflow" | "generate_quote" | "send_external" | "other";
+  type:
+    | 'generate_pptx'
+    | 'generate_wireframe'
+    | 'generate_userflow'
+    | 'generate_quote'
+    | 'send_external'
+    | 'other';
   description: string;
   parameters: Record<string, unknown>;
   preview?: Record<string, unknown>;
@@ -91,7 +97,7 @@ export interface CheckpointAction {
 export interface Checkpoint {
   id: string;
   action: CheckpointAction;
-  status: "AWAITING" | "APPROVED" | "EDITED" | "REJECTED";
+  status: 'AWAITING' | 'APPROVED' | 'EDITED' | 'REJECTED';
   auto_approve_session: boolean;
   created_at: string;
   updated_at: string;
@@ -106,13 +112,13 @@ export interface ProfileHistoryItem {
   case_id: string;
   summary: string;
   chosen_solution?: string;
-  outcome?: "won" | "lost" | "pending";
+  outcome?: 'won' | 'lost' | 'pending';
 }
 
 export interface SalespersonProfile {
   salesperson_id: string;
   display_name: string;
-  style: "terse" | "balanced" | "detailed";
+  style: 'terse' | 'balanced' | 'detailed';
   question_frequency: number;
   preferences: Record<string, unknown>;
   constraints: string[];
@@ -121,14 +127,14 @@ export interface SalespersonProfile {
 
 // =============================================================================
 // Session State
-# =============================================================================
+// =============================================================================
 
 export interface SessionState {
   session_id: string;
   salesperson_id: string;
   mode: ChatMode;
   brief?: Brief;
-  validation_status: "PENDING" | "READY" | "BLOCKED";
+  validation_status: 'PENDING' | 'READY' | 'BLOCKED';
   validation_report?: ValidationReport;
   question_stack: Question[];
   outputs: Record<string, AgentOutput>;
@@ -141,7 +147,7 @@ export interface SessionState {
 }
 
 export interface Message {
-  role: "user" | "assistant" | "system";
+  role: 'user' | 'assistant' | 'system';
   content: string;
   agent?: string;
   timestamp: string;
@@ -169,17 +175,18 @@ export interface ChatResponse {
 
 // =============================================================================
 // SSE Event Types
-# =============================================================================
+// =============================================================================
 
 export type SSEEventType =
-  | "session"
-  | "user_message"
-  | "content"
-  | "error"
-  | "done"
-  | "session_updated"
-  | "question"
-  | "checkpoint";
+  | 'session'
+  | 'user_message'
+  | 'content'
+  | 'error'
+  | 'done'
+  | 'session_updated'
+  | 'question'
+  | 'question_card'
+  | 'checkpoint';
 
 export interface SSEEvent {
   type: SSEEventType;
@@ -188,7 +195,7 @@ export interface SSEEvent {
 
 // =============================================================================
 // UI State Types
-# =============================================================================
+// =============================================================================
 
 export interface UIState {
   // Identity
@@ -218,6 +225,6 @@ export interface UIState {
   // Active agents with status
   activeAgents: Array<{
     name: string;
-    status: "idle" | "thinking" | "waiting" | "failed";
+    status: 'idle' | 'thinking' | 'waiting' | 'failed';
   }>;
 }

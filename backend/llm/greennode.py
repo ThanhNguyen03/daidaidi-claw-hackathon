@@ -34,7 +34,7 @@ from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type
+    retry_if_exception_type,
 )
 
 # Load environment variables
@@ -46,7 +46,9 @@ load_dotenv()
 # =============================================================================
 
 # Required environment variables
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1")
+LLM_BASE_URL = os.getenv(
+    "LLM_BASE_URL", "https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1"
+)
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 
 # Per-agent model mapping (from environment)
@@ -65,12 +67,14 @@ MODEL_MAPPING = {
 # Client Class
 # =============================================================================
 
+
 @dataclass
 class GreenNodeClient:
     """
     OpenAI-compatible client for GreenNode MAAS.
     Wraps the OpenAI client with GreenNode-specific configuration.
     """
+
     agent_name: str
     model_path: str
     _client: OpenAI
@@ -88,7 +92,7 @@ class GreenNodeClient:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         stream: bool = False,
-        **kwargs
+        **kwargs,
     ) -> ChatCompletion | Generator[ChatCompletionChunk, None, None]:
         """
         Create a chat completion with retry logic for transient errors.
@@ -120,7 +124,7 @@ class GreenNodeClient:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=True,
-                **kwargs
+                **kwargs,
             )
 
         # Use retry wrapper for non-streaming calls
@@ -131,14 +135,16 @@ class GreenNodeClient:
             temperature=temperature,
             max_tokens=max_tokens,
             stream=False,
-            **kwargs
+            **kwargs,
         )
 
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type(TimeoutError),
-        before_sleep=lambda retry_state: print(f"Retrying... attempt {retry_state.attempt_number}")
+        before_sleep=lambda retry_state: print(
+            f"Retrying... attempt {retry_state.attempt_number}"
+        ),
     )
     def _create_completion_with_retry(
         self,
@@ -148,7 +154,7 @@ class GreenNodeClient:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         stream: bool = False,
-        **kwargs
+        **kwargs,
     ) -> ChatCompletion:
         """Internal method with retry logic."""
         return self._create_completion_no_retry(
@@ -158,7 +164,7 @@ class GreenNodeClient:
             temperature=temperature,
             max_tokens=max_tokens,
             stream=stream,
-            **kwargs
+            **kwargs,
         )
 
     def _create_completion_no_retry(
@@ -169,7 +175,7 @@ class GreenNodeClient:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         stream: bool = False,
-        **kwargs
+        **kwargs,
     ) -> ChatCompletion | Generator[ChatCompletionChunk, None, None]:
         params = {
             "model": self.model_path,
@@ -190,9 +196,7 @@ class GreenNodeClient:
         return self._client.chat.completions.create(**params)
 
     def __call__(
-        self,
-        messages: list[dict[str, Any]],
-        **kwargs
+        self, messages: list[dict[str, Any]], **kwargs
     ) -> ChatCompletion | Generator[ChatCompletionChunk, None, None]:
         """Shorthand for create_completion."""
         return self.create_completion(messages, **kwargs)
@@ -201,6 +205,7 @@ class GreenNodeClient:
 # =============================================================================
 # Client Factory
 # =============================================================================
+
 
 class GreenNodeLLM:
     """
@@ -249,14 +254,13 @@ class GreenNodeLLM:
         if agent_name not in MODEL_MAPPING:
             available = ", ".join(MODEL_MAPPING.keys())
             raise ValueError(
-                f"Unknown agent: {agent_name}. "
-                f"Available agents: {available}"
+                f"Unknown agent: {agent_name}. " f"Available agents: {available}"
             )
 
         return GreenNodeClient(
             agent_name=agent_name,
             model_path=MODEL_MAPPING[agent_name],
-            _client=self.client
+            _client=self.client,
         )
 
     def list_available_models(self) -> list[str]:
@@ -316,15 +320,14 @@ def get_llm_client(agent_name: str) -> GreenNodeClient:
     """
     llm = get_llm()
     if llm is None:
-        raise ValueError(
-            "LLM not configured. Please set LLM_API_KEY in .env file."
-        )
+        raise ValueError("LLM not configured. Please set LLM_API_KEY in .env file.")
     return llm.get_client(agent_name)
 
 
 # =============================================================================
 # Tool Calling Utilities
 # =============================================================================
+
 
 def format_tools(tools: list[type]) -> list[dict[str, Any]]:
     """
@@ -344,21 +347,22 @@ def format_tools(tools: list[type]) -> list[dict[str, Any]]:
             raise ValueError(f"Tool must be a Pydantic model, got {tool}")
 
         schema = tool.model_json_schema()
-        result.append({
-            "type": "function",
-            "function": {
-                "name": tool.__name__.lower(),
-                "description": tool.__doc__ or f"Execute {tool.__name__}",
-                "parameters": schema
+        result.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.__name__.lower(),
+                    "description": tool.__doc__ or f"Execute {tool.__name__}",
+                    "parameters": schema,
+                },
             }
-        })
+        )
 
     return result
 
 
 def parse_tool_calls(
-    response: ChatCompletion,
-    tools: list[type]
+    response: ChatCompletion, tools: list[type]
 ) -> list[tuple[type, dict]]:
     """
     Parse tool calls from a response.
@@ -399,11 +403,12 @@ def parse_tool_calls(
 # Streaming Utilities
 # =============================================================================
 
+
 def stream_response(
     client: GreenNodeClient,
     messages: list[dict[str, Any]],
     tools: Optional[list[dict[str, Any]]] = None,
-    **kwargs
+    **kwargs,
 ) -> Generator[str, None, None]:
     """
     Stream a response and yield content chunks.
@@ -418,10 +423,7 @@ def stream_response(
         Content chunks as they arrive
     """
     stream = client.create_completion(
-        messages=messages,
-        tools=tools,
-        stream=True,
-        **kwargs
+        messages=messages, tools=tools, stream=True, **kwargs
     )
 
     for chunk in stream:
@@ -433,6 +435,7 @@ def stream_response(
 # Validation
 # =============================================================================
 
+
 def validate_environment() -> dict[str, Any]:
     """
     Validate the environment configuration.
@@ -440,12 +443,7 @@ def validate_environment() -> dict[str, Any]:
     Returns:
         Dict with validation results
     """
-    results = {
-        "valid": True,
-        "errors": [],
-        "warnings": [],
-        "config": {}
-    }
+    results = {"valid": True, "errors": [], "warnings": [], "config": {}}
 
     # Check base URL
     if not LLM_BASE_URL:
@@ -464,9 +462,13 @@ def validate_environment() -> dict[str, Any]:
         results["config"]["LLM_API_KEY"] = "***configured***"
 
     # Check model mappings
-    missing_models = [k for k, v in MODEL_MAPPING.items() if not v or v.startswith("your_")]
+    missing_models = [
+        k for k, v in MODEL_MAPPING.items() if not v or v.startswith("your_")
+    ]
     if missing_models:
-        results["warnings"].append(f"Missing model config for agents: {', '.join(missing_models)}")
+        results["warnings"].append(
+            f"Missing model config for agents: {', '.join(missing_models)}"
+        )
 
     results["config"]["MODEL_MAPPING"] = MODEL_MAPPING
 
