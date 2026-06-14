@@ -9,6 +9,7 @@
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { ChatWindow } from '../components/ChatWindow';
+import { ContextPanel } from '../components/ContextPanel';
 import { useChat } from '../hooks/useChat';
 import type { ChatMode, Brief } from '../lib/types';
 
@@ -19,6 +20,9 @@ export default function Home() {
 
   // Mode state
   const [mode, setMode] = useState<ChatMode>('chat');
+
+  // Context panel state (Day 4)
+  const [contextPanelOpen, setContextPanelOpen] = useState(true);
 
   // KB connection status
   const [isConnected, setIsConnected] = useState(false);
@@ -33,10 +37,16 @@ export default function Home() {
     pendingQuestions,
     activeCheckpoint,
     activeAgents,
+    constraints,
+    profile,
+    brief,
     sendMessage,
     answerQuestion,
     skipQuestion,
     freeTextAnswer,
+    revokeConstraint,
+    loadConstraints,
+    loadProfile,
     approveCheckpoint,
     rejectCheckpoint,
     editCheckpoint,
@@ -47,7 +57,7 @@ export default function Home() {
     mode,
   });
 
-  // Check backend connection on mount
+  // Check backend connection on mount and load constraints/profile (Day 4)
   useEffect(() => {
     const checkConnection = async () => {
       try {
@@ -66,6 +76,14 @@ export default function Home() {
     const interval = setInterval(checkConnection, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  // Load constraints and profile when identified (Day 4)
+  useEffect(() => {
+    if (isIdentified && salespersonName) {
+      loadConstraints();
+      loadProfile();
+    }
+  }, [isIdentified, salespersonName, loadConstraints, loadProfile]);
 
   // Handle identity submission
   const handleIdentify = (e: React.FormEvent) => {
@@ -211,6 +229,15 @@ export default function Home() {
         onRejectCheckpoint={rejectCheckpoint}
         onEditCheckpoint={editCheckpoint}
         onClearError={clearError}
+      />
+
+      {/* Context Panel - Day 4 */}
+      <ContextPanel
+        isOpen={contextPanelOpen}
+        onToggle={() => setContextPanelOpen(!contextPanelOpen)}
+        brief={brief}
+        constraints={constraints}
+        onRevokeConstraint={revokeConstraint}
       />
     </div>
   );

@@ -289,10 +289,19 @@ class FeedbackRule(BaseModel):
 
 
 class ProfileHistoryItem(BaseModel):
-    """A past case in the salesperson's history."""
+    """
+    A past case in the salesperson's history.
+    Extended for Day 4 to include question/answer tracking.
+    """
 
     case_id: str = Field(..., description="Unique case identifier")
     summary: str = Field(..., description="Brief summary of the case")
+    # Day 4: Extended fields for learning
+    question: Optional[str] = Field(None, description="Question that was asked")
+    answer: Optional[str] = Field(None, description="User's answer")
+    helpful: Optional[bool] = Field(None, description="Was the answer helpful")
+    timestamp: Optional[str] = Field(None, description="ISO timestamp of the interaction")
+    # Legacy fields
     chosen_solution: Optional[str] = Field(None, description="Solution that was chosen")
     outcome: Optional[Literal["won", "lost", "pending"]] = Field(
         None, description="Case outcome"

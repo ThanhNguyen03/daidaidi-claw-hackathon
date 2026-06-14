@@ -12,6 +12,7 @@ This implements the Supervisor/Router pattern (B.1) with:
 """
 
 from typing import Optional, Callable
+import os
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -67,8 +68,24 @@ async def agent_node(agent_name: str, agent: BaseAgent) -> Callable:
     """
 
     async def node(state: SalesCaseState) -> dict:
-        # Execute the agent
-        result = await agent.run(state)
+        # Day 4: Inject constraints if available in state
+        constraints = getattr(state, "constraints", []) or []
+
+        # Get constraints relevant to this agent
+        from memory.constraint_injection import get_constraints_for_agent
+        agent_constraints = get_constraints_for_agent(constraints, agent_name)
+
+        # Store original prompt and inject constraints
+        original_prompt = agent._base_prompt
+        injected_prompt = agent.get_prompt_with_constraints(agent_constraints)
+        agent._base_prompt = injected_prompt
+
+        try:
+            # Execute the agent
+            result = await agent.run(state)
+        finally:
+            # Restore original prompt
+            agent._base_prompt = original_prompt
 
         # Update outputs (use agent_name as key, not literal string)
         outputs = {**state.outputs, **{agent_name: result}}
@@ -125,7 +142,12 @@ class AgentGraph:
 
     def __init__(self):
         self.graph: Optional[StateGraph] = None
-        self.checkpointer = MemorySaver()  # Day 1-2 fallback; AgentBase in Day 4
+
+        # Day 4: Use in-memory checkpointer for now (SQLite interface has issues)
+        # The session persistence happens via memory_repo.save_session() in main.py
+        # This enables graph checkpointing for anti-loop within a session
+        self.checkpointer = MemorySaver()
+
         self._build_graph()
 
     def _build_graph(self) -> None:
@@ -280,6 +302,8 @@ class SimpleAgentRunner:
 
     This provides the core orchestration logic without the full
     LangGraph state machine. Will be replaced by AgentGraph in later days.
+
+    Day 4: Loads constraints and injects them into agent prompts.
     """
 
     def __init__(self):
@@ -297,6 +321,16 @@ class SimpleAgentRunner:
         """
         stream_events = []
         state.outputs = {}
+
+        # Day 4: Load active constraints and inject into state
+        from repos.memory_repo import get_memory_repo
+        from memory.constraint_injection import get_constraints_for_agent
+
+        memory_repo = get_memory_repo()
+        constraints = await memory_repo.load_feedback_rules(
+            state.salesperson_id, active_only=True
+        )
+        state.constraints = constraints  # Populate constraints in state
 
         # Initial status
         stream_events.append(
@@ -349,8 +383,23 @@ class SimpleAgentRunner:
                 )
                 break
 
-            # Run the agent
-            agent_result = await agent.run(state)
+            # Day 4: Get constraints for this specific agent
+            agent_constraints = get_constraints_for_agent(constraints, target_agent)
+
+            # Run the agent with constraint-injected prompt
+            # Store the original prompt, inject constraints, run, restore
+            original_prompt = agent._base_prompt
+            injected_prompt = agent.get_prompt_with_constraints(agent_constraints)
+
+            # Temporarily set the injected prompt
+            agent._base_prompt = injected_prompt
+
+            try:
+                agent_result = await agent.run(state)
+            finally:
+                # Restore original prompt
+                agent._base_prompt = original_prompt
+
             state.outputs[target_agent] = agent_result
 
             stream_events.append(

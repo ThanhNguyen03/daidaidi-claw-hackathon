@@ -105,8 +105,24 @@ export interface Checkpoint {
 }
 
 // =============================================================================
-// Profile
+// Feedback Rule (Day 4)
+# =============================================================================
+
+export interface FeedbackRule {
+  rule_id: string;
+  salesperson_id: string;
+  type: 'NEGATIVE_CONSTRAINT' | 'POSITIVE_CONSTRAINT' | 'PREFERENCE' | 'FACT';
+  scope: string[];
+  rule: string;
+  source_quote: string;
+  active: boolean;
+  created_at: string;
+  updated_at?: string;
+}
+
 // =============================================================================
+# Profile
+# =============================================================================
 
 export interface ProfileHistoryItem {
   case_id: string;

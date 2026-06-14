@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { ChatRequest, Message, Brief, ChatMode, Question, Checkpoint } from '../lib/types';
+import type { ChatRequest, Message, Brief, ChatMode, Question, Checkpoint, FeedbackRule, SalespersonProfile } from '../lib/types';
 
 // Use BFF route ( Next.js API route) to keep API key server-side
 // Fall back to direct backend call if BFF is not available
@@ -16,6 +16,7 @@ interface UseChatOptions {
   salespersonId: string;
   displayName: string;
   mode?: ChatMode;
+  onBriefChange?: (brief: Brief | null) => void;
 }
 
 interface AgentStatus {
@@ -32,12 +33,18 @@ interface UseChatReturn {
   pendingQuestions: Question[];
   activeCheckpoint: Checkpoint | null;
   activeAgents: AgentStatus[];
+  constraints: FeedbackRule[];  // Day 4: Active constraints
+  profile: SalespersonProfile | null;  // Day 4: User profile
+  brief: Brief | null;  // Day 4: Current brief
 
   // Actions
   sendMessage: (message: string, brief?: Brief) => Promise<void>;
   answerQuestion: (questionId: string, answer: string) => Promise<void>;
   skipQuestion: (questionId: string) => Promise<void>;
   freeTextAnswer: (freeText: string) => Promise<void>;  // Day 3: C.5 §5
+  revokeConstraint: (ruleId: string) => Promise<void>;  // Day 4: Revoke constraint
+  loadConstraints: () => Promise<void>;  // Day 4: Load constraints
+  loadProfile: () => Promise<void>;  // Day 4: Load profile
   approveCheckpoint: () => Promise<void>;
   rejectCheckpoint: () => Promise<void>;
   editCheckpoint: (params: Record<string, unknown>) => Promise<void>;
@@ -60,6 +67,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     { name: 'market_strategy', status: 'idle' },
     { name: 'account', status: 'idle' },
   ]);
+
+  // Day 4: Constraints and profile state
+  const [constraints, setConstraints] = useState<FeedbackRule[]>([]);
+  const [profile, setProfile] = useState<SalespersonProfile | null>(null);
+  const [brief, setBrief] = useState<Brief | null>(null);
 
   // Ref for aborting requests
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -228,6 +240,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           if (data.session_id) {
             setSessionId(data.session_id as string);
           }
+          // Update brief if provided
+          if (data.brief) {
+            setBrief(data.brief as Brief);
+          }
           break;
 
         case 'question':
@@ -277,6 +293,16 @@ export function useChat(options: UseChatOptions): UseChatReturn {
                 }
                 return [...prev, newAgent];
               });
+            }
+          }
+          break;
+
+        case 'constraint_added':
+          // Day 4: New constraint added from feedback
+          {
+            const constraint = data.constraint as FeedbackRule;
+            if (constraint) {
+              setConstraints((prev) => [...prev, constraint]);
             }
           }
           break;
@@ -395,6 +421,54 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     [sessionId, salespersonId, mode, sendMessage]
   );
 
+  // Day 4: Load constraints from backend
+  const loadConstraints = useCallback(async () => {
+    if (!salespersonId) return;
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/memory/constraints/${salespersonId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setConstraints(data.constraints || []);
+      }
+    } catch (e) {
+      console.error('Failed to load constraints:', e);
+    }
+  }, [salespersonId]);
+
+  // Day 4: Revoke a constraint
+  const revokeConstraint = useCallback(async (ruleId: string) => {
+    if (!salespersonId) return;
+
+    try {
+      const response = await fetch(
+        `${BACKEND_URL}/memory/constraints/${ruleId}/toggle?active=false&salesperson_id=${salespersonId}`,
+        { method: 'POST' }
+      );
+      if (response.ok) {
+        // Remove from local state
+        setConstraints((prev) => prev.filter((c) => c.rule_id !== ruleId));
+      }
+    } catch (e) {
+      console.error('Failed to revoke constraint:', e);
+    }
+  }, [salespersonId]);
+
+  // Day 4: Load profile from backend
+  const loadProfile = useCallback(async () => {
+    if (!salespersonId) return;
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/memory/profile/${salespersonId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setProfile(data);
+      }
+    } catch (e) {
+      console.error('Failed to load profile:', e);
+    }
+  }, [salespersonId]);
+
   // Checkpoint actions
   const approveCheckpoint = useCallback(async () => {
     if (!sessionId || !activeCheckpoint) return;
@@ -482,10 +556,16 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     pendingQuestions,
     activeCheckpoint,
     activeAgents,
+    constraints,  // Day 4
+    profile,  // Day 4
+    brief,  // Day 4
     sendMessage,
     answerQuestion,
     skipQuestion,
     freeTextAnswer,
+    revokeConstraint,  // Day 4
+    loadConstraints,  // Day 4
+    loadProfile,  // Day 4
     approveCheckpoint,
     rejectCheckpoint,
     editCheckpoint,

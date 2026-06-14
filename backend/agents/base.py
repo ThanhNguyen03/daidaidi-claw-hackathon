@@ -6,10 +6,13 @@ Every agent must implement this contract to be part of the agent workflow.
 """
 
 from abc import ABC
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import os
 
-from schemas.state import SalesCaseState, AgentOutput
+from schemas.state import SalesCaseState, AgentOutput, FeedbackRule
+
+if TYPE_CHECKING:
+    from memory.constraint_injection import inject_constraints
 
 
 class BaseAgent(ABC):
@@ -24,6 +27,8 @@ class BaseAgent(ABC):
 
     The run() method receives the current state and must return
     a standardized AgentOutput.
+
+    D.2: Supports constraint injection from feedback rules.
     """
 
     def __init__(
@@ -63,13 +68,37 @@ class BaseAgent(ABC):
         self.hooks = hooks or []
 
         # Load system prompt
-        self.system_prompt = self._load_prompt(
+        self._base_prompt = self._load_prompt(
             prompt_path or f"agents/{name}/prompt.md"
         )
 
         # Store paths for knowledge/skills
         self.knowledge_dir = knowledge_dir
         self.skills_dir = skills_dir
+
+    @property
+    def system_prompt(self) -> str:
+        """Get the base system prompt (without constraints)."""
+        return self._base_prompt
+
+    def get_prompt_with_constraints(
+        self,
+        constraints: list[FeedbackRule],
+    ) -> str:
+        """
+        Get system prompt with constraints injected.
+
+        D.2: Constraints are prepended to ensure they're followed.
+
+        Args:
+            constraints: Active feedback rules for this agent
+
+        Returns:
+            System prompt with constraints injected
+        """
+        from memory.constraint_injection import inject_constraints
+
+        return inject_constraints(self._base_prompt, constraints, self.name)
 
     def _load_prompt(self, path: str) -> str:
         """Load system prompt from file."""

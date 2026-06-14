@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Optional, AsyncGenerator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -25,9 +25,11 @@ load_dotenv()
 from schemas.state import (
     SalesCaseState,
     Brief,
+    FeedbackRule,
 )
 
 # Import repositories
+from repos.memory_repo import get_memory_repo, SQLiteMemoryRepo
 
 # Import LLM
 from llm.greennode import get_llm_client
@@ -40,12 +42,16 @@ from agents.orchestrator import get_orchestrator
 # Import validation (Day 3)
 from validation.question_stack import get_question_manager
 
+# Import memory (Day 4)
+from memory.feedback_extractor import get_feedback_extractor
+from memory.profile import get_profile_manager
+
 # =============================================================================
 # Configuration
 # =============================================================================
 
 APP_NAME = "Multi-Agent Sales Assistant"
-APP_VERSION = "0.2.0"  # Day 2 version
+APP_VERSION = "0.4.0"  # Day 4 version
 DEBUG = os.getenv("DEBUG", "true").lower() == "true"
 
 
@@ -112,8 +118,40 @@ def get_or_create_session(
     session_id: Optional[str], salesperson_id: str, mode: str = "chat"
 ) -> SalesCaseState:
     """Get existing session or create new one."""
+    # First check in-memory store
     if session_id and session_id in _session_store:
         return _session_store[session_id]
+
+    # Create new session (resume from DB happens via separate endpoint)
+    new_session = SalesCaseState(
+        session_id=session_id or f"sess_{uuid.uuid4().hex[:12]}",
+        salesperson_id=salesperson_id,
+        mode=mode,
+        validation_status="PENDING",
+    )
+    _session_store[new_session.session_id] = new_session
+    return new_session
+
+
+async def get_or_create_session_async(
+    session_id: Optional[str], salesperson_id: str, mode: str = "chat"
+) -> SalesCaseState:
+    """Async version: Get existing session or create new one. Tries in-memory, then database."""
+    # First check in-memory store
+    if session_id and session_id in _session_store:
+        return _session_store[session_id]
+
+    # Try loading from database (Day 4: cross-session resume)
+    if session_id:
+        try:
+            memory_repo = get_memory_repo()
+            state = await memory_repo.load_session(session_id)
+            if state:
+                # Found in database, also put in memory
+                _session_store[session_id] = state
+                return state
+        except Exception as e:
+            print(f"Warning: Failed to load session from DB: {e}")
 
     # Create new session
     new_session = SalesCaseState(
@@ -164,6 +202,17 @@ async def process_with_agents(
     # Check if we should use the full LangGraph (for checkpoint support)
     use_full_graph = os.getenv("ENABLE_CHECKPOINT", "false").lower() == "true"
 
+    # Day 4: Load active constraints into state for injection
+    try:
+        memory_repo = get_memory_repo()
+        constraints = await memory_repo.load_feedback_rules(
+            state.salesperson_id, active_only=True
+        )
+        state.constraints = constraints
+    except Exception as e:
+        print(f"Warning: Failed to load constraints: {e}")
+        state.constraints = []
+
     if use_full_graph:
         # Use full AgentGraph with LangGraph (for Day 4-5 checkpoint + resume)
         from agents.graph import get_graph
@@ -176,8 +225,14 @@ async def process_with_agents(
             stream_events.append(event)
             yield f"data: {json.dumps(event)}\n\n"
 
-        # Get final state
+        # Get final state from the graph (graph updates state in place)
+        # Copy graph outputs back to our state
         final_state = state
+        for event in stream_events:
+            if event.get("type") == "agent_status" and event.get("status") == "completed":
+                agent_name = event.get("agent")
+                # Find the output in the last event
+                pass
     else:
         # Get the simple runner (handles agent dispatch)
         runner = get_simple_runner()
@@ -189,38 +244,32 @@ async def process_with_agents(
         for event in stream_events:
             yield f"data: {json.dumps(event)}\n\n"
 
-    # NOTE: The code below is only reached when using SimpleAgentRunner
-    # When using full AgentGraph, events are streamed above
+        # Only process summaries for non-graph mode (graph mode handles internally)
+        # Add agent summary to messages
+        summary_parts = []
+        for agent_name, output in final_state.outputs.items():
+            if hasattr(output, "summary"):
+                summary_parts.append(f"{agent_name}: {output.summary}")
 
-    # Stream events to client
-    for event in stream_events:
-        yield f"data: {json.dumps(event)}\n\n"
+        if summary_parts:
+            full_summary = "\n\n".join(summary_parts)
+            final_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": full_summary,
+                    "agent": "orchestrator",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
 
-    # Add agent summary to messages
-    summary_parts = []
-    for agent_name, output in final_state.outputs.items():
-        if hasattr(output, "summary"):
-            summary_parts.append(f"{agent_name}: {output.summary}")
-
-    if summary_parts:
-        full_summary = "\n\n".join(summary_parts)
-        final_state.messages.append(
-            {
-                "role": "assistant",
-                "content": full_summary,
-                "agent": "orchestrator",
-                "timestamp": datetime.now().isoformat(),
-            }
+        # Update summary
+        final_state.summary = (
+            f"User: {message[:30]}... → Agents: {', '.join(final_state.outputs.keys())}"
         )
 
-    # Update summary
-    final_state.summary = (
-        f"User: {message[:30]}... → Agents: {', '.join(final_state.outputs.keys())}"
-    )
-
-    # Return updated state
-    state.outputs = final_state.outputs
-    state.summary = final_state.summary
+        # Return updated state
+        state.outputs = final_state.outputs
+        state.summary = final_state.summary
 
 
 # =============================================================================
@@ -422,12 +471,53 @@ async def chat_stream(request: ChatRequest):
                 # BLOCKED - send error
                 yield f"data: {json.dumps({'type': 'error', 'error': validation_output.summary})}\n\n"
 
-            # Save state
+            # Save state to in-memory store
             update_session(state)
-            yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'validation_status': state.validation_status})}\n\n"
+
+            # Day 4: Also persist to database for cross-session resume
+            try:
+                memory_repo = get_memory_repo()
+                await memory_repo.save_session(state)
+            except Exception as e:
+                print(f"Warning: Failed to persist session: {e}")
+
+            brief_data = state.brief.model_dump() if state.brief else None
+            yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'validation_status': state.validation_status, 'brief': brief_data})}\n\n"
             return
 
         # Validation passed - proceed with agent dispatch
+        # D.2: Check for feedback in the message and extract rules
+        feedback_extractor = get_feedback_extractor()
+        memory_repo = get_memory_repo()
+        profile_manager = get_profile_manager()
+
+        # Check if message contains feedback
+        if feedback_extractor.is_feedback_message(request.message):
+            rule = feedback_extractor.extract(
+                request.message,
+                {"salesperson_id": state.salesperson_id}
+            )
+            if rule:
+                # Save the feedback rule
+                await memory_repo.save_feedback_rule(rule)
+
+                # Update profile with constraint
+                profile = await memory_repo.load_profile(state.salesperson_id)
+                if not profile:
+                    profile = profile_manager.create_profile(state.salesperson_id)
+                profile = profile_manager.add_constraint(profile, rule.rule_id)
+                await memory_repo.save_profile(profile)
+
+                # Notify about new constraint
+                yield f"data: {json.dumps({'type': 'constraint_added', 'constraint': rule.model_dump()})}\n\n"
+
+        # D.3: Also check for frustration in message
+        profile = await memory_repo.load_profile(state.salesperson_id)
+        if not profile:
+            profile = profile_manager.create_profile(state.salesperson_id)
+        if profile_manager.detect_frustration(profile, request.message):
+            await memory_repo.save_profile(profile)
+
         # Process based on mode
         if use_agents:
             # Use multi-agent system
@@ -438,11 +528,18 @@ async def chat_stream(request: ChatRequest):
             async for chunk in process_simple(state, request.message):
                 yield chunk
 
-        # Save final state
+        # Save final state to in-memory store
         update_session(state)
 
+        # Day 4: Also persist to database for cross-session resume
+        try:
+            memory_repo = get_memory_repo()
+            await memory_repo.save_session(state)
+        except Exception as e:
+            print(f"Warning: Failed to persist session: {e}")
+
         # Send session update
-        yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id})}\n\n"
+        yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'brief': state.brief.model_dump() if state.brief else None})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -457,24 +554,48 @@ async def chat_stream(request: ChatRequest):
 
 @app.get("/sessions/{session_id}")
 async def get_session(session_id: str):
-    """Get session by ID."""
-    if session_id not in _session_store:
-        raise HTTPException(status_code=404, detail="Session not found")
+    """Get session by ID. Checks in-memory store first, then database."""
+    # First check in-memory
+    if session_id in _session_store:
+        state = _session_store[session_id]
+        return {
+            "session_id": state.session_id,
+            "salesperson_id": state.salesperson_id,
+            "mode": state.mode,
+            "brief": state.brief.model_dump() if state.brief else None,
+            "summary": state.summary,
+            "outputs": {k: v.model_dump() for k, v in state.outputs.items()},
+            "visited": state.visited,
+            "hop_depth": state.hop_depth,
+            "message_count": len(state.messages),
+            "created_at": state.created_at.isoformat(),
+            "updated_at": state.updated_at.isoformat(),
+        }
 
-    state = _session_store[session_id]
-    return {
-        "session_id": state.session_id,
-        "salesperson_id": state.salesperson_id,
-        "mode": state.mode,
-        "brief": state.brief.model_dump() if state.brief else None,
-        "summary": state.summary,
-        "outputs": {k: v.model_dump() for k, v in state.outputs.items()},
-        "visited": state.visited,
-        "hop_depth": state.hop_depth,
-        "message_count": len(state.messages),
-        "created_at": state.created_at.isoformat(),
-        "updated_at": state.updated_at.isoformat(),
-    }
+    # Try database
+    try:
+        repo = get_memory_repo()
+        state = await repo.load_session(session_id)
+        if state:
+            # Put in memory
+            _session_store[session_id] = state
+            return {
+                "session_id": state.session_id,
+                "salesperson_id": state.salesperson_id,
+                "mode": state.mode,
+                "brief": state.brief.model_dump() if state.brief else None,
+                "summary": state.summary,
+                "outputs": {k: v.model_dump() for k, v in state.outputs.items()},
+                "visited": state.visited,
+                "hop_depth": state.hop_depth,
+                "message_count": len(state.messages),
+                "created_at": state.created_at.isoformat(),
+                "updated_at": state.updated_at.isoformat(),
+            }
+    except Exception as e:
+        print(f"Warning: Failed to load session from DB: {e}")
+
+    raise HTTPException(status_code=404, detail="Session not found")
 
 
 @app.get("/sessions")
@@ -650,6 +771,162 @@ async def answer_free_text(request: ChatRequest):
             "questions": [q.model_dump() for q in remaining_questions],
             "validation_status": state.validation_status,
         }
+
+
+# =============================================================================
+# Memory & Learning Endpoints (Day 4)
+# =============================================================================
+
+
+@app.get("/memory/constraints/{salesperson_id}")
+async def get_constraints(salesperson_id: str):
+    """
+    D.2: Get active constraints for a salesperson.
+    Used by the Context panel.
+    """
+    repo = get_memory_repo()
+    constraints = await repo.load_feedback_rules(salesperson_id, active_only=True)
+
+    return {
+        "salesperson_id": salesperson_id,
+        "constraints": [c.model_dump() for c in constraints],
+        "count": len(constraints),
+    }
+
+
+@app.post("/memory/constraints/{rule_id}/toggle")
+async def toggle_constraint(
+    rule_id: str,
+    active: bool = True,
+    salesperson_id: Optional[str] = None,
+):
+    """
+    D.2: Toggle a constraint's active status.
+    Used by the Context panel to revoke constraints.
+    """
+    repo = get_memory_repo()
+
+    # Load the rule if we have the salesperson_id
+    if salesperson_id:
+        rules = await repo.load_feedback_rules(salesperson_id, active_only=False)
+        for rule in rules:
+            if rule.rule_id == rule_id:
+                rule.active = active
+                await repo.save_feedback_rule(rule)
+                return {
+                    "rule_id": rule_id,
+                    "active": active,
+                    "message": f"Constraint {'activated' if active else 'revoked'} successfully",
+                }
+
+    return {"error": "Rule not found", "rule_id": rule_id}
+
+
+@app.get("/memory/profile/{salesperson_id}")
+async def get_profile(salesperson_id: str):
+    """
+    D.3: Get salesperson profile.
+    """
+    repo = get_memory_repo()
+    profile = await repo.load_profile(salesperson_id)
+
+    if not profile:
+        # Create new profile
+        profile_manager = get_profile_manager()
+        profile = profile_manager.create_profile(salesperson_id)
+        await repo.save_profile(profile)
+
+    return profile.model_dump()
+
+
+@app.post("/memory/profile/{salesperson_id}/learn")
+async def learn_from_interaction(
+    salesperson_id: str,
+    question_text: Optional[str] = None,
+    answer: Optional[str] = None,
+    was_helpful: Optional[bool] = None,
+    message: Optional[str] = None,
+):
+    """
+    D.3: Learn from user interactions.
+    Updates profile with style, question_frequency, and detects frustration.
+    """
+    repo = get_memory_repo()
+    profile_manager = get_profile_manager()
+    feedback_extractor = get_feedback_extractor()
+
+    # Load or create profile
+    profile = await repo.load_profile(salesperson_id)
+    if not profile:
+        profile = profile_manager.create_profile(salesperson_id)
+
+    # Detect feedback in message
+    if message:
+        # Check for frustration
+        profile_manager.detect_frustration(profile, message)
+
+        # Try to extract feedback rule
+        if feedback_extractor.is_feedback_message(message):
+            rule = feedback_extractor.extract(message, {"salesperson_id": salesperson_id})
+            if rule:
+                await repo.save_feedback_rule(rule)
+                profile = profile_manager.add_constraint(profile, rule.rule_id)
+                await repo.save_profile(profile)
+                return {
+                    "feedback_rule": rule.model_dump(),
+                    "profile": profile.model_dump(),
+                    "message": "Feedback rule extracted and saved",
+                }
+
+    # Update from answer
+    if question_text and answer:
+        profile = profile_manager.update_from_answer(
+            profile, question_text, answer, was_helpful
+        )
+        await repo.save_profile(profile)
+
+    return {
+        "profile": profile.model_dump(),
+        "message": "Profile updated",
+    }
+
+
+@app.get("/memory/sessions/{salesperson_id}")
+async def get_sessions(salesperson_id: str, limit: int = 10):
+    """
+    D.1: List recent sessions for a salesperson.
+    """
+    repo = get_memory_repo()
+    sessions = await repo.list_sessions(salesperson_id, limit)
+    return {"sessions": sessions, "count": len(sessions)}
+
+
+@app.get("/memory/session/{session_id}")
+async def get_session(session_id: str):
+    """
+    D.1: Resume a session from checkpointer.
+    Tries in-memory first, then database.
+    """
+    # First try in-memory store
+    if session_id in _session_store:
+        return _session_store[session_id].model_dump()
+
+    # Then try database
+    repo = get_memory_repo()
+    state = await repo.load_session(session_id)
+
+    if not state:
+        # Try creating the session if it doesn't exist yet
+        # This handles edge case where DB has data but memory doesn't
+        raise HTTPException(
+            status_code=404,
+            detail="Session not found. Provide session_id in your request to resume."
+        )
+
+    # Also put in memory for future requests
+    _session_store[session_id] = state
+
+    return state.model_dump()
 
 
 # =============================================================================
