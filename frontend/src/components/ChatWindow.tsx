@@ -39,16 +39,64 @@ function CheckpointCard({
   onReject: () => void;
   onEdit: (params: Record<string, unknown>) => void;
 }) {
+  const [autoApprove, setAutoApprove] = useState(false);
+
+  // Check for blocking findings
+  const hasBlocking = checkpoint.compliance_findings?.some(f => f.severity === 'block');
+
+  // Get severity color
+  const getSeverityColor = (severity: string) => {
+    switch (severity) {
+      case 'block': return 'bg-red-50 border-red-200 text-red-800';
+      case 'warn': return 'bg-yellow-50 border-yellow-200 text-yellow-800';
+      case 'info': return 'bg-blue-50 border-blue-200 text-blue-800';
+      default: return 'bg-gray-50 border-gray-200 text-gray-800';
+    }
+  };
+
   return (
     <div
       style={{
-        border: '1px solid #3b82f6',
+        border: '2px solid #3b82f6',
         backgroundColor: '#eff6ff',
         padding: '1rem',
         borderRadius: '0.5rem',
         marginBottom: '1rem',
       }}
     >
+      {/* Compliance Findings */}
+      {checkpoint.compliance_findings && checkpoint.compliance_findings.length > 0 && (
+        <div style={{ marginBottom: '1rem' }}>
+          {checkpoint.compliance_findings.map((finding, idx) => (
+            <div
+              key={idx}
+              style={{
+                padding: '0.75rem',
+                marginBottom: '0.5rem',
+                borderRadius: '0.375rem',
+                ...(finding.severity === 'block' ? { backgroundColor: '#fef2f2', border: '1px solid #fecaca' } :
+                   finding.severity === 'warn' ? { backgroundColor: '#fefce8', border: '1px solid #fde047' } :
+                   { backgroundColor: '#eff6ff', border: '1px solid #bfdbfe' })
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                {finding.severity === 'block' && <span style={{ color: '#dc2626' }}>🔴</span>}
+                {finding.severity === 'warn' && <span style={{ color: '#ca8a04' }}>⚠️</span>}
+                {finding.severity === 'info' && <span style={{ color: '#2563eb' }}>ℹ️</span>}
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontSize: '0.875rem', fontWeight: '500' }}>{finding.message}</p>
+                  {finding.suggestion && (
+                    <p style={{ fontSize: '0.8125rem', opacity: 0.8, marginTop: '0.25rem' }}>
+                      Suggestion: {finding.suggestion}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
         <span style={{ fontSize: '1.25rem' }}>⚠️</span>
         <div style={{ flex: 1 }}>
@@ -76,19 +124,32 @@ function CheckpointCard({
             </div>
           )}
 
+          {/* Auto-approve checkbox (except for send_external) */}
+          {checkpoint.action.type !== 'send_external' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '0.8125rem', color: '#6b7280' }}>
+              <input
+                type="checkbox"
+                checked={autoApprove}
+                onChange={(e) => setAutoApprove(e.target.checked)}
+              />
+              Don't ask again for {checkpoint.action.type} this session
+            </label>
+          )}
+
           {/* Action buttons */}
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button
               onClick={onApprove}
+              disabled={hasBlocking}
               style={{
                 padding: '0.5rem 1rem',
-                backgroundColor: '#3b82f6',
+                backgroundColor: hasBlocking ? '#9ca3af' : '#3b82f6',
                 color: '#ffffff',
                 border: 'none',
                 borderRadius: '0.375rem',
                 fontSize: '0.875rem',
                 fontWeight: '500',
-                cursor: 'pointer',
+                cursor: hasBlocking ? 'not-allowed' : 'pointer',
               }}
             >
               Approve

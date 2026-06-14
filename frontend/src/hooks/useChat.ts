@@ -475,8 +475,22 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
     setIsLoading(true);
     try {
-      // In full implementation, this would call an API endpoint
-      // For now, just clear the checkpoint
+      const response = await fetch(`/checkpoint/${activeCheckpoint.id}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: 'approve' }),
+      });
+      if (!response.ok) throw new Error('Failed to approve checkpoint');
+      const data = await response.json();
+      if (data.clarifying_question) {
+        const msg: Message = {
+          role: 'assistant',
+          content: data.clarifying_question,
+          agent: 'system',
+          timestamp: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, msg]);
+      }
       setActiveCheckpoint(null);
     } catch (e) {
       setError((e as Error).message);
@@ -490,13 +504,20 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
     setIsLoading(true);
     try {
-      // In full implementation, this would call an API endpoint
+      const response = await fetch(`/checkpoint/${activeCheckpoint.id}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: 'reject' }),
+      });
+      if (!response.ok) throw new Error('Failed to reject checkpoint');
+      const data = await response.json();
       setActiveCheckpoint(null);
 
-      // Add a message asking how to adjust
+      // Add clarifying question
+      const clarifyingMsg = data.clarifying_question || 'Action rejected. How would you like to adjust?';
       const msg: Message = {
         role: 'assistant',
-        content: 'Action rejected. How would you like to adjust the parameters?',
+        content: clarifyingMsg,
         agent: 'orchestrator',
         timestamp: new Date().toISOString(),
       };
@@ -514,9 +535,20 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
       setIsLoading(true);
       try {
-        // In full implementation, this would call an API endpoint
-        // For now, just clear the checkpoint (re-preview would happen server-side)
-        setActiveCheckpoint(null);
+        const response = await fetch(`/checkpoint/${activeCheckpoint.id}/decision`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision: 'edit', params }),
+        });
+        if (!response.ok) throw new Error('Failed to edit checkpoint');
+        const data = await response.json();
+
+        // Update checkpoint with new preview
+        if (data.checkpoint) {
+          setActiveCheckpoint(data.checkpoint);
+        } else {
+          setActiveCheckpoint(null);
+        }
 
         const msg: Message = {
           role: 'assistant',

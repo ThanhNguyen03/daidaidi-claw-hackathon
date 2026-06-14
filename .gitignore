@@ -1,6 +1,10 @@
+# Claude Code
 .claude
+
+# Environment
 .env
 .env.local
+.env.example
 
 # AgentBase credentials & cache (NEVER commit — contains IAM secrets / tokens)
 .greennode.json
@@ -9,4 +13,53 @@
 # Local fallback data stores (SQLite memory + LanceDB vector store)
 data/
 
-*/node_modules
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+*.whl
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+.pnpm-store/
+
+# Frontend
+.next/
+out/
+.cache/
+
+# Build outputs
+*.tsbuildinfo
+next-env.d.ts
+
+# Test
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/

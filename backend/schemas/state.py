@@ -241,12 +241,28 @@ class Checkpoint(BaseModel):
 
     id: str = Field(..., description="Unique checkpoint ID")
     action: CheckpointAction = Field(..., description="The action requiring approval")
-    status: Literal["AWAITING", "APPROVED", "EDITED", "REJECTED"] = Field(
+    status: Literal["AWAITING", "APPROVED", "EDITED", "REJECTED", "FAILED"] = Field(
         "AWAITING", description="Current checkpoint status"
     )
     auto_approve_session: bool = Field(
         False,
         description="If true, auto-approve this action type for remainder of session",
+    )
+    # Preview data (quote, plan, etc.)
+    preview: Optional[dict[str, Any]] = Field(
+        None, description="Preview data for the checkpoint card"
+    )
+    # Result after execution
+    result: Optional[dict[str, Any]] = Field(
+        None, description="Result after action execution"
+    )
+    # Error if failed
+    error: Optional[str] = Field(
+        None, description="Error message if action failed"
+    )
+    # Compliance findings
+    compliance_findings: Optional[list[dict[str, Any]]] = Field(
+        None, description="Compliance review findings"
     )
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)

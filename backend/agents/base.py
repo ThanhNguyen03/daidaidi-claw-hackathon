@@ -121,6 +121,54 @@ Respond helpfully and professionally."""
         """Get the model path from environment."""
         return os.getenv(self.model_key, "MiniMax-M2.5")
 
+    async def retrieve_knowledge(
+        self, query: str, top_k: int = 3
+    ) -> list[Any]:
+        """
+        Retrieve relevant knowledge from the KB for this agent.
+
+        Args:
+            query: The search query
+            top_k: Number of results to retrieve
+
+        Returns:
+            List of SearchResult objects
+        """
+        from repos.kb_repo import get_kb_repo
+
+        try:
+            kb = get_kb_repo()
+            # Filter by this agent's knowledge
+            results = await kb.search(query, top_k=top_k, filters={"agent": self.name})
+            return results
+        except Exception as e:
+            print(f"Warning: KB search failed for {self.name}: {e}")
+            return []
+
+    def format_knowledge_context(
+        self, results: list[Any]
+    ) -> str:
+        """
+        Format retrieved knowledge into context for the prompt.
+
+        Args:
+            results: Search results from retrieve_knowledge
+
+        Returns:
+            Formatted context string
+        """
+        if not results:
+            return ""
+
+        context_parts = ["=" * 60, "RELEVANT KNOWLEDGE:", "=" * 60]
+
+        for i, result in enumerate(results, 1):
+            context_parts.append(f"\n--- Source {i}: {result.source} (score: {result.score:.2f}) ---")
+            context_parts.append(result.content)
+
+        context_parts.append("=" * 60)
+        return "\n".join(context_parts)
+
     async def run(self, state: SalesCaseState) -> AgentOutput:
         """
         Execute the agent's task.

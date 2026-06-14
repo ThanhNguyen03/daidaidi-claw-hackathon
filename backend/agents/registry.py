@@ -7,7 +7,7 @@ Adding/removing agents = editing the config file, never the code.
 
 import os
 import yaml
-from typing import Optional, dict, list
+from typing import Optional
 
 from agents.base import BaseAgent, create_agent
 
@@ -59,12 +59,16 @@ class AgentRegistry:
             kind = agent_config.get("kind", "generator")
             hooks = agent_config.get("hooks", [])
 
+            # Day 5: Try to use real agent implementations first, fall back to stub
             try:
+                agent = self._create_real_agent(name, model_key, role_description, is_critical, kind, hooks)
+            except Exception as e:
+                print(f"Real agent '{name}' failed to load: {e}, using stub")
                 agent = create_agent(
                     name=name,
                     model_key=model_key,
                     role_description=role_description,
-                    is_stub=True,  # Day 2: all agents are stubs
+                    is_stub=True,
                     prompt_path=f"backend/agents/{name}/prompt.md",
                     knowledge_dir=f"backend/agents/{name}/knowledge",
                     skills_dir=f"backend/agents/{name}/skills",
@@ -72,10 +76,35 @@ class AgentRegistry:
                     kind=kind,
                     hooks=hooks,
                 )
+
+            if agent:
                 self._agents[name] = agent
-                print(f"Loaded agent: {name} (kind={kind}, critical={is_critical})")
+                # Determine agent type for logging
+                stub_class = type(create_agent('temp', 'MODEL_TEMP', 'desc', is_stub=True))
+                agent_type = 'stub' if isinstance(agent, stub_class) else 'real'
+                print(f"Loaded agent: {name} (kind={kind}, critical={is_critical}, type={agent_type})")
+
+    def _create_real_agent(self, name: str, model_key: str, role_description: str, is_critical: bool, kind: str, hooks: list) -> Optional[BaseAgent]:
+        """Try to create a real agent implementation if available."""
+
+        # Map agent names to their real implementations
+        real_agent_map = {
+            "account": ("agents.account.agent", "get_account_agent"),
+            "compliance": ("agents.compliance.agent", "get_compliance_agent"),
+            # Add more agents as they're implemented
+        }
+
+        if name in real_agent_map:
+            module_path, getter_name = real_agent_map[name]
+            try:
+                module = __import__(module_path, fromlist=[getter_name])
+                getter = getattr(module, getter_name)
+                return getter()
             except Exception as e:
-                print(f"Error loading agent '{name}': {e}")
+                raise RuntimeError(f"Failed to load real agent: {e}")
+
+        # No real implementation available
+        return None
 
     def get(self, name: str) -> Optional[BaseAgent]:
         """

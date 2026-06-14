@@ -94,11 +94,23 @@ export interface CheckpointAction {
   preview?: Record<string, unknown>;
 }
 
+export interface ComplianceFinding {
+  severity: 'block' | 'warn' | 'info';
+  policy_ref: string;
+  message: string;
+  suggestion?: string;
+  details?: Record<string, unknown>;
+}
+
 export interface Checkpoint {
   id: string;
   action: CheckpointAction;
-  status: 'AWAITING' | 'APPROVED' | 'EDITED' | 'REJECTED';
+  status: 'AWAITING' | 'APPROVED' | 'EDITED' | 'REJECTED' | 'FAILED';
   auto_approve_session: boolean;
+  preview?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  error?: string;
+  compliance_findings?: ComplianceFinding[];
   created_at: string;
   updated_at: string;
   decided_at?: string;

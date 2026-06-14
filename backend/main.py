@@ -9,7 +9,7 @@ import os
 import json
 import uuid
 from datetime import datetime
-from typing import Optional, AsyncGenerator
+from typing import Optional, AsyncGenerator, Any
 
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +26,7 @@ from schemas.state import (
     SalesCaseState,
     Brief,
     FeedbackRule,
+    CheckpointAction,
 )
 
 # Import repositories
@@ -46,6 +47,9 @@ from validation.question_stack import get_question_manager
 from memory.feedback_extractor import get_feedback_extractor
 from memory.profile import get_profile_manager
 
+# Import checkpoint (Day 5)
+from checkpoint.manager import get_checkpoint_manager
+
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -59,11 +63,52 @@ DEBUG = os.getenv("DEBUG", "true").lower() == "true"
 # FastAPI App
 # =============================================================================
 
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for startup/shutdown."""
+    # Startup: ingest KB
+    print("Starting up: Ingesting knowledge base...")
+    try:
+        from kb.ingest import ingest_all_agents
+        from repos.kb_repo import get_kb_repo
+
+        kb = get_kb_repo()
+        results = await ingest_all_agents(kb)
+        print(f"KB ingestion complete: {results}")
+    except Exception as e:
+        print(f"Warning: KB ingestion failed: {e}")
+
+    # Startup: register checkpoint review hooks
+    print("Starting up: Registering checkpoint review hooks...")
+    try:
+        from checkpoint.manager import get_checkpoint_manager
+        from agents.compliance.agent import get_compliance_agent
+
+        cpm = get_checkpoint_manager()
+        compliance_agent = get_compliance_agent()
+
+        from checkpoint.manager import ComplianceReviewHook
+        hook = ComplianceReviewHook(compliance_agent)
+        cpm.register_review_hook(hook)
+        print("Checkpoint review hook registered")
+    except Exception as e:
+        print(f"Warning: Failed to register review hook: {e}")
+
+    yield  # App runs here
+
+    # Shutdown
+    print("Shutting down...")
+
+
 app = FastAPI(
     title=APP_NAME,
     version=APP_VERSION,
     description="AI-powered sales assistant with multi-agent orchestration",
     debug=DEBUG,
+    lifespan=lifespan,
 )
 
 # CORS configuration
@@ -172,6 +217,112 @@ def update_session(state: SalesCaseState) -> None:
 # =============================================================================
 # Agent-Based Processing (Day 2)
 # =============================================================================
+
+
+# Day 5: Checkpoint-triggering action types
+CHECKPOINT_TRIGGER_TYPES = {"generate_quote", "generate_pptx", "generate_wireframe", "generate_userflow"}
+
+
+async def _recompute_preview(state: SalesCaseState, params: dict) -> Optional[dict]:
+    """
+    Re-compute the preview/quote with updated parameters.
+
+    This is called when user edits checkpoint params.
+    For now, we simply update the total based on params.
+    In a full implementation, we'd re-run the Account agent.
+    """
+    # Get current payload from state
+    account_output = state.outputs.get("account")
+    if not account_output:
+        return None
+
+    payload = account_output.payload.copy() if account_output.payload else {}
+
+    # Simple re-computation: update values based on params
+    # In production, this would re-run the Account agent with new params
+    if "budget" in params:
+        # Budget was edited - update the total to be within budget
+        try:
+            budget = int(params["budget"])
+            # Estimate a new total that's slightly under budget
+            payload["total_vnd"] = int(budget * 0.9)
+        except (ValueError, TypeError):
+            pass
+
+    if "discount_percent" in params:
+        try:
+            discount = float(params["discount_percent"])
+            # Apply new discount to original total
+            original = payload.get("original_total_vnd", payload.get("total_vnd", 0))
+            payload["total_vnd"] = int(original * (1 - discount / 100))
+            payload["discount_percent"] = discount
+        except (ValueError, TypeError):
+            pass
+
+    return payload
+
+
+async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
+    """
+    Check if agent outputs contain a checkpoint-triggering action and create checkpoint.
+
+    Day 5: This creates a checkpoint when:
+    - Account agent outputs a quote
+    - Any agent outputs something that needs human approval
+    """
+    # Check for quote output from account agent
+    account_output = state.outputs.get("account")
+    if not account_output:
+        return None
+
+    # Check if we have a quote in the payload
+    payload = account_output.payload or {}
+    if "total_vnd" not in payload and "quote_id" not in payload:
+        return None
+
+    # Get checkpoint manager
+    cpm = get_checkpoint_manager()
+
+    # Register handlers for checkpoint actions
+    async def handle_generate_quote(params: dict) -> dict:
+        """Execute quote generation (stub for Day 5)."""
+        return {"status": "executed", "quote_id": payload.get("quote_id", "N/A")}
+
+    cpm.register_handler("generate_quote", handle_generate_quote)
+
+    # Create the checkpoint
+    action = CheckpointAction(
+        type="generate_quote",
+        description=f"Generate quotation for {payload.get('total_vnd', 0):,} VND",
+        parameters=payload,
+    )
+
+    # Day 5: Run compliance review BEFORE creating checkpoint
+    # Create a preliminary checkpoint for the review
+    from schemas.state import Checkpoint as CheckpointSchema
+    preliminary_checkpoint = CheckpointSchema(
+        id=f"preview_{uuid.uuid4().hex[:8]}",
+        action=action,
+        status="AWAITING",
+        preview=payload,
+    )
+
+    # Run the compliance review hooks
+    compliance_findings = await cpm.run_review_hooks(state, preliminary_checkpoint)
+
+    # Pass ComplianceFinding objects directly to create_checkpoint
+    # (it will handle serialization when storing)
+    checkpoint = await cpm.create_checkpoint(
+        session_id=state.session_id,
+        action=action,
+        preview=payload,
+        compliance_findings=compliance_findings,  # Pass objects, not dicts
+    )
+
+    # Attach to state
+    state.checkpoint = checkpoint
+
+    return checkpoint
 
 
 async def process_with_agents(
@@ -527,6 +678,18 @@ async def chat_stream(request: ChatRequest):
             # Use simple LLM call
             async for chunk in process_simple(state, request.message):
                 yield chunk
+
+        # Day 5: Check if we need to create a checkpoint
+        # This runs after agents complete, looking for quote/plan outputs
+        # Guard with try-except to prevent reviewer errors from breaking the stream
+        try:
+            checkpoint = await _maybe_create_checkpoint(state)
+        except Exception as e:
+            print(f"Warning: Failed to create checkpoint: {e}")
+            checkpoint = None
+
+        if checkpoint:
+            yield f"data: {json.dumps({'type': 'checkpoint_card', 'checkpoint': checkpoint.model_dump()})}\n\n"
 
         # Save final state to in-memory store
         update_session(state)
@@ -927,6 +1090,92 @@ async def get_session(session_id: str):
     _session_store[session_id] = state
 
     return state.model_dump()
+
+
+# =============================================================================
+# Checkpoint Endpoints (Day 5)
+# =============================================================================
+
+
+class CheckpointDecisionRequest(BaseModel):
+    """Request to decide on a checkpoint."""
+
+    decision: str = Field(..., description="Decision: approve, edit, or reject")
+    params: Optional[dict] = Field(None, description="Parameters for edit decision")
+    auto_approve: bool = Field(False, description="Enable session auto-approve")
+
+
+@app.post("/checkpoint/{checkpoint_id}/decision")
+async def checkpoint_decision(
+    checkpoint_id: str,
+    request: CheckpointDecisionRequest,
+    session_id: Optional[str] = None,
+):
+    """
+    Process a checkpoint decision.
+    - approve: Execute the action
+    - edit: Re-compute preview with new params
+    - reject: Do not execute, post clarifying question
+    """
+    # Get checkpoint from state (in production, load from store)
+    if session_id and session_id in _session_store:
+        state = _session_store[session_id]
+        checkpoint = state.checkpoint
+
+        if not checkpoint or checkpoint.id != checkpoint_id:
+            raise HTTPException(status_code=404, detail="Checkpoint not found")
+
+        # Handle session auto-approve
+        if request.auto_approve:
+            from checkpoint.manager import get_checkpoint_manager
+
+            cpm = get_checkpoint_manager()
+            cpm.set_auto_approve(session_id, checkpoint.action.type, True)
+
+        # Process the decision
+        cpm = get_checkpoint_manager()
+        updated = await cpm.process_decision(checkpoint, request.decision, request.params)
+
+        # Day 5: If edit, re-compute preview with new params
+        if request.decision == "edit" and request.params:
+            # Re-run the account agent with updated parameters
+            new_payload = await _recompute_preview(state, request.params)
+            if new_payload:
+                # Update the checkpoint preview with new values
+                updated.preview = new_payload
+                updated.action.parameters.update(request.params)
+                # Update action description with new total
+                if "total_vnd" in new_payload:
+                    updated.action.description = f"Generate quotation for {new_payload['total_vnd']:,} VND"
+
+        # Update state
+        state.checkpoint = updated
+
+        # Generate clarifying question if rejected
+        clarifying_question = None
+        if request.decision == "reject":
+            clarifying_question = cpm.get_clarifying_question(updated)
+
+        return {
+            "checkpoint": updated.model_dump(),
+            "clarifying_question": clarifying_question,
+            "auto_approve_enabled": request.auto_approve,
+        }
+
+    raise HTTPException(status_code=404, detail="Session not found")
+
+
+@app.get("/checkpoint/{checkpoint_id}")
+async def get_checkpoint(checkpoint_id: str, session_id: Optional[str] = None):
+    """Get checkpoint details."""
+    if session_id and session_id in _session_store:
+        state = _session_store[session_id]
+        checkpoint = state.checkpoint
+
+        if checkpoint and checkpoint.id == checkpoint_id:
+            return checkpoint.model_dump()
+
+    raise HTTPException(status_code=404, detail="Checkpoint not found")
 
 
 # =============================================================================
