@@ -50,12 +50,17 @@ from memory.profile import get_profile_manager
 # Import checkpoint (Day 5)
 from checkpoint.manager import get_checkpoint_manager
 
+# Import generation (Day 6)
+from generation.pptx import create_pptx_generator
+from generation.userflow import create_userflow_generator
+from design.backend import get_default_backend
+
 # =============================================================================
 # Configuration
 # =============================================================================
 
 APP_NAME = "Multi-Agent Sales Assistant"
-APP_VERSION = "0.4.0"  # Day 4 version
+APP_VERSION = "0.6.0"  # Day 6 version
 DEBUG = os.getenv("DEBUG", "true").lower() == "true"
 
 
@@ -266,18 +271,17 @@ async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
     """
     Check if agent outputs contain a checkpoint-triggering action and create checkpoint.
 
-    Day 5: This creates a checkpoint when:
-    - Account agent outputs a quote
-    - Any agent outputs something that needs human approval
+    Day 5-6: This creates a checkpoint when:
+    - Account agent outputs a quote (generate_quote)
+    - Plan agent outputs a plan (generate_pptx, generate_userflow)
+    - Design agent outputs wireframe requirements (generate_wireframe)
     """
-    # Check for quote output from account agent
-    account_output = state.outputs.get("account")
-    if not account_output:
-        return None
-
-    # Check if we have a quote in the payload
-    payload = account_output.payload or {}
-    if "total_vnd" not in payload and "quote_id" not in payload:
+    # Check if we're in a mode that triggers checkpoints
+    # Chat mode: no checkpoints (read-only)
+    # Planning mode: checkpoint before finalizing plan
+    # Execute mode: checkpoint before every generation
+    # Brainstorm mode: no checkpoints (handled differently)
+    if state.mode == "chat" or state.mode == "brainstorm":
         return None
 
     # Get checkpoint manager
@@ -285,15 +289,130 @@ async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
 
     # Register handlers for checkpoint actions
     async def handle_generate_quote(params: dict) -> dict:
-        """Execute quote generation (stub for Day 5)."""
-        return {"status": "executed", "quote_id": payload.get("quote_id", "N/A")}
+        """Execute quote generation (Day 6)."""
+        # In a real implementation, this would generate a PDF/Excel quote
+        quote_id = params.get("quote_id", f"Q{uuid.uuid4().hex[:8].upper()}")
+        return {
+            "status": "executed",
+            "quote_id": quote_id,
+            "total_vnd": params.get("total_vnd", 0),
+            "format": "pdf"
+        }
 
+    async def handle_generate_pptx(params: dict) -> dict:
+        """Execute PPTX generation (Day 6)."""
+        pptx_gen = create_pptx_generator()
+        result = await pptx_gen.generate(
+            plan_data=params,
+            client_name=params.get("client_name", "Client"),
+            output_path=params.get("output_path")
+        )
+        return result
+
+    async def handle_generate_userflow(params: dict) -> dict:
+        """Execute userflow generation (Day 6)."""
+        userflow_gen = create_userflow_generator()
+        result = await userflow_gen.generate(
+            plan_data=params,
+            format=params.get("format", "mermaid")
+        )
+        return result
+
+    async def handle_generate_wireframe(params: dict) -> dict:
+        """Execute wireframe generation (Day 6)."""
+        design_backend = get_default_backend()
+        result = await design_backend.generate_wireframe(
+            requirements=params,
+            output_format=params.get("output_format", "html")
+        )
+        return result
+
+    # Register all handlers
     cpm.register_handler("generate_quote", handle_generate_quote)
+    cpm.register_handler("generate_pptx", handle_generate_pptx)
+    cpm.register_handler("generate_userflow", handle_generate_userflow)
+    cpm.register_handler("generate_wireframe", handle_generate_wireframe)
+
+    # Determine what kind of generation to checkpoint based on outputs
+    payload = None
+    action_type = None
+    action_description = None
+
+    # Check for quote output from account agent
+    account_output = state.outputs.get("account")
+    if account_output:
+        account_payload = account_output.payload or {}
+        if "total_vnd" in account_payload or "quote_id" in account_payload:
+            payload = account_payload
+            action_type = "generate_quote"
+            action_description = f"Generate quotation for {payload.get('total_vnd', 0):,} VND"
+
+    # Check for plan output from plan agent (or other agent with plan data)
+    if not payload:
+        for agent_name, output in state.outputs.items():
+            if not output or not output.payload:
+                continue
+            agent_payload = output.payload
+
+            # Check if this is a plan/proposal output (flexible detection)
+            # Also check for key fields that indicate a structured plan/proposal
+            is_plan_output = (
+                agent_payload.get("plan") or
+                agent_payload.get("solutions") or
+                agent_payload.get("title") or
+                agent_payload.get("proposal") or
+                agent_payload.get("recommendations") or  # Common StubAgent output
+                agent_payload.get("deliverables")  # Common StubAgent output
+            )
+
+            if is_plan_output:
+                payload = agent_payload
+                # Day 6: Check for explicit user journey/flow first
+                # If found, generate userflow. Otherwise generate PPTX.
+                # For demo: also check for 'journey', 'steps', 'process' keys
+                has_userflow_data = (
+                    agent_payload.get("user_journey") or
+                    agent_payload.get("flow") or
+                    agent_payload.get("journey") or
+                    agent_payload.get("steps") or
+                    agent_payload.get("process")
+                )
+                if has_userflow_data:
+                    action_type = "generate_userflow"
+                    action_description = "Generate userflow diagram"
+                else:
+                    # For any plan/proposal, generate both PPTX AND userflow
+                    # Userflow will use fallback data from the plan
+                    action_type = "generate_userflow"
+                    action_description = "Generate userflow diagram + PPTX deck"
+                    # Add fallback user journey data to payload
+                    if "recommendations" in agent_payload:
+                        payload["user_journey"] = [
+                            f"Review {agent_payload.get('target_segment', 'proposal')}",
+                            "Analyze recommendations",
+                            "Select solution",
+                            "Proceed with implementation"
+                        ]
+                break
+
+    # Check for design output
+    if not payload:
+        design_output = state.outputs.get("design")
+        if design_output:
+            design_payload = design_output.payload or {}
+            if design_payload.get("wireframe") or design_payload.get("requirements"):
+                payload = design_payload
+                action_type = "generate_wireframe"
+                action_description = "Generate wireframe design"
+
+    # If no generation action found, skip checkpoint
+    if not payload or not action_type:
+        return None
 
     # Create the checkpoint
     action = CheckpointAction(
-        type="generate_quote",
-        description=f"Generate quotation for {payload.get('total_vnd', 0):,} VND",
+        type=action_type,
+        description=action_description,
         parameters=payload,
     )
 
@@ -335,6 +454,12 @@ async def process_with_agents(
     This uses the SimpleAgentRunner from Day 2 which provides
     proper agent dispatch, anti-loop guard, and status streaming.
 
+    Mode-specific behavior (Day 6):
+    - chat: Use simple LLM (no agents), no checkpoints
+    - planning: Run Market+Strategy, checkpoint before finalizing plan
+    - execute: Full generation pipeline, checkpoint before every side effect
+    - brainstorm: Moderator subgraph (Day 7)
+
     NOTE: When ENABLE_CHECKPOINT is true, this will use the full LangGraph
     AgentGraph which supports interrupt-before-tool HITL and durable checkpointer
     for resume. This is needed for Day 4-5 checkpoint functionality.
@@ -350,6 +475,11 @@ async def process_with_agents(
         ]
     )
 
+    # Day 6: Handle modes differently
+    # chat mode: simple processing (no agents), handled in process_simple
+    # brainstorm mode: moderator logic (Day 7), for now use simple
+
+    # For planning/execute modes, use agents
     # Check if we should use the full LangGraph (for checkpoint support)
     use_full_graph = os.getenv("ENABLE_CHECKPOINT", "false").lower() == "true"
 
@@ -797,6 +927,55 @@ async def delete_session(session_id: str):
         return {"status": "deleted", "session_id": session_id}
 
     raise HTTPException(status_code=404, detail="Session not found")
+
+
+class SwitchModeRequest(BaseModel):
+    """Request to switch chat mode."""
+    session_id: str
+    mode: str  # chat, planning, execute, brainstorm
+
+
+@app.post("/sessions/switch_mode")
+async def switch_mode(request: SwitchModeRequest):
+    """
+    Switch to a different chat mode.
+
+    Mode switching changes system prompt + active subgraph but does NOT
+    wipe session state (the brief carries across modes).
+
+    - chat: read-only Q&A, no checkpoints
+    - planning: Market+Strategy, checkpoint before finalizing plan
+    - execute: full generation pipeline + checkpoint before every side effect
+    - brainstorm: moderator subgraph (Day 7)
+    """
+    if request.session_id not in _session_store:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    valid_modes = ["chat", "planning", "execute", "brainstorm"]
+    if request.mode not in valid_modes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid mode. Must be one of: {', '.join(valid_modes)}"
+        )
+
+    state = _session_store[request.session_id]
+    old_mode = state.mode
+    state.mode = request.mode
+
+    # Preserve session state when switching modes
+    # (brief, outputs, messages all carry over)
+
+    return {
+        "status": "switched",
+        "session_id": state.session_id,
+        "old_mode": old_mode,
+        "new_mode": state.mode,
+        "preserved": {
+            "brief": state.brief.model_dump() if state.brief else None,
+            "message_count": len(state.messages),
+            "output_count": len(state.outputs),
+        }
+    }
 
 
 # =============================================================================

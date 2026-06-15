@@ -35,7 +35,7 @@ const AGENT_NAMES: Record<string, string> = {
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const agentName = message.agent ? AGENT_NAMES[message.agent] || message.agent : null;
-  const agentColor = message.agent ? AGENT_COLORS[message.agent] || '#6b7280' : null;
+  const agentColor = message.agent ? AGENT_COLORS[message.agent] || '#6b7280' : undefined;
 
   return (
     <div

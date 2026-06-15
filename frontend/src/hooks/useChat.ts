@@ -24,6 +24,15 @@ interface AgentStatus {
   status: 'idle' | 'thinking' | 'waiting' | 'completed' | 'failed';
 }
 
+// Artifact types for Day 6
+interface Artifact {
+  id: string;
+  type: 'pptx' | 'userflow' | 'quote' | 'wireframe';
+  title: string;
+  preview?: string;
+  data?: string;
+}
+
 interface UseChatReturn {
   // State
   sessionId: string | null;
@@ -36,6 +45,7 @@ interface UseChatReturn {
   constraints: FeedbackRule[];  // Day 4: Active constraints
   profile: SalespersonProfile | null;  // Day 4: User profile
   brief: Brief | null;  // Day 4: Current brief
+  artifacts: Artifact[];  // Day 6: Generated artifacts
 
   // Actions
   sendMessage: (message: string, brief?: Brief) => Promise<void>;
@@ -72,6 +82,23 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   const [constraints, setConstraints] = useState<FeedbackRule[]>([]);
   const [profile, setProfile] = useState<SalespersonProfile | null>(null);
   const [brief, setBrief] = useState<Brief | null>(null);
+
+  // Day 6: Artifacts state
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+
+  // Load artifacts from sessionStorage on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const stored = sessionStorage.getItem('artifacts');
+      if (stored) {
+        try {
+          setArtifacts(JSON.parse(stored));
+        } catch (e) {
+          console.error('Failed to parse stored artifacts:', e);
+        }
+      }
+    }
+  }, []);
 
   // Ref for aborting requests
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -469,7 +496,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     }
   }, [salespersonId]);
 
-  // Checkpoint actions
+  // Checkpoint actions - now returns result with artifacts info
   const approveCheckpoint = useCallback(async () => {
     if (!sessionId || !activeCheckpoint) return;
 
@@ -482,6 +509,27 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       });
       if (!response.ok) throw new Error('Failed to approve checkpoint');
       const data = await response.json();
+
+      // Get the checkpoint result (generated artifact info)
+      const checkpoint = data.checkpoint;
+      if (checkpoint?.result) {
+        // Create artifact from checkpoint result
+        const artifact: Artifact = {
+          id: checkpoint.id,
+          type: (checkpoint.action?.type?.replace('generate_', '') as 'pptx' | 'userflow' | 'quote' | 'wireframe') || 'pptx',
+          title: checkpoint.action?.description || 'Generated Artifact',
+          preview: checkpoint.result.preview || checkpoint.result.status || 'Artifact generated',
+          data: checkpoint.result.code || checkpoint.result.content || checkpoint.result.mermaid, // For mermaid or html
+        };
+        // Update React state (this is what page.tsx will read)
+        setArtifacts(prev => [...prev, artifact]);
+        // Also store in sessionStorage for persistence across refreshes
+        if (typeof window !== 'undefined') {
+          const existing = JSON.parse(sessionStorage.getItem('artifacts') || '[]');
+          sessionStorage.setItem('artifacts', JSON.stringify([...existing, artifact]));
+        }
+      }
+
       if (data.clarifying_question) {
         const msg: Message = {
           role: 'assistant',
@@ -591,6 +639,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     constraints,  // Day 4
     profile,  // Day 4
     brief,  // Day 4
+    artifacts,  // Day 6: Generated artifacts
     sendMessage,
     answerQuestion,
     skipQuestion,

@@ -33,6 +33,9 @@ sentence-transformers>=2.2.0
 torch>=2.0.0
 numpy>=1.24.0
 
+# PPTX Generation (Day 6)
+python-pptx>=0.6.23
+
 # Code formatting and linting
 ruff>=0.3.0
 black>=24.2.0

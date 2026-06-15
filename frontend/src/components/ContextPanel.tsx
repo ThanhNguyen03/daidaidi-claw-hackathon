@@ -6,8 +6,17 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, X, RefreshCw, Info, AlertCircle } from 'lucide-react';
-import type { Brief, FeedbackRule as FeedbackRuleType } from '../lib/types';
+import { ChevronRight, X, RefreshCw, Info, AlertCircle, Download, FileText, GitBranch, Image } from 'lucide-react';
+import type { Brief, FeedbackRule as FeedbackRuleType, Checkpoint } from '../lib/types';
+
+// Artifact types for Day 6
+interface Artifact {
+  id: string;
+  type: 'pptx' | 'userflow' | 'quote' | 'wireframe';
+  title: string;
+  preview?: string;
+  data?: string;  // For Mermaid code or download URL
+}
 
 interface ContextPanelProps {
   isOpen: boolean;
@@ -16,6 +25,9 @@ interface ContextPanelProps {
   constraints: FeedbackRuleType[];
   onRevokeConstraint: (ruleId: string) => void;
   isLoading?: boolean;
+  // Day 6: Artifacts
+  artifacts?: Artifact[];
+  onDownloadArtifact?: (artifact: Artifact) => void;
 }
 
 export function ContextPanel({
@@ -25,11 +37,15 @@ export function ContextPanel({
   constraints,
   onRevokeConstraint,
   isLoading = false,
+  // Day 6: Artifacts
+  artifacts = [],
+  onDownloadArtifact,
 }: ContextPanelProps) {
   const [expandedSections, setExpandedSections] = useState({
     brief: true,
     constraints: true,
     preferences: false,
+    artifacts: true,
   });
 
   const toggleSection = (section: keyof typeof expandedSections) => {
@@ -329,6 +345,112 @@ export function ContextPanel({
             </div>
           )}
         </div>
+
+        {/* Artifacts Section - Day 6 Key Feature */}
+        {artifacts && artifacts.length > 0 && (
+          <div style={{ marginTop: '1.5rem' }}>
+            <button
+              onClick={() => toggleSection('artifacts')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                width: '100%',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '0.5rem 0',
+              }}
+            >
+              <span style={{ fontWeight: '600', color: '#374151', fontSize: '0.875rem' }}>
+                Generated Artifacts
+              </span>
+              <ChevronRight
+                size={16}
+                style={{
+                  transform: expandedSections.artifacts ? 'rotate(90deg)' : 'rotate(0deg)',
+                  transition: 'transform 0.2s',
+                  color: '#9ca3af',
+                }}
+              />
+            </button>
+
+            {expandedSections.artifacts && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {artifacts.map((artifact) => (
+                  <div
+                    key={artifact.id}
+                    style={{
+                      padding: '0.75rem',
+                      backgroundColor: '#f0f9ff',
+                      borderRadius: '0.5rem',
+                      border: '1px solid #bae6fd',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      {artifact.type === 'pptx' && <FileText size={16} style={{ color: '#0284c7' }} />}
+                      {artifact.type === 'userflow' && <GitBranch size={16} style={{ color: '#7c3aed' }} />}
+                      {artifact.type === 'wireframe' && <Image size={16} style={{ color: '#059669' }} />}
+                      {artifact.type === 'quote' && <FileText size={16} style={{ color: '#dc2626' }} />}
+                      <span style={{ fontSize: '0.8125rem', fontWeight: '500', color: '#0c4a6e' }}>
+                        {artifact.title}
+                      </span>
+                    </div>
+
+                    {/* Preview for userflow (Mermaid) */}
+                    {artifact.type === 'userflow' && artifact.data && (
+                      <div
+                        style={{
+                          backgroundColor: '#ffffff',
+                          padding: '0.5rem',
+                          borderRadius: '0.375rem',
+                          marginBottom: '0.5rem',
+                          fontSize: '0.6875rem',
+                          fontFamily: 'monospace',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          maxHeight: '3rem',
+                          color: '#4b5563',
+                        }}
+                      >
+                        {artifact.data.substring(0, 200)}...
+                      </div>
+                    )}
+
+                    {/* Preview text for other types */}
+                    {artifact.preview && (
+                      <p style={{ fontSize: '0.75rem', color: '#0369a1', margin: '0 0 0.5rem' }}>
+                        {artifact.preview}
+                      </p>
+                    )}
+
+                    {/* Download button */}
+                    {onDownloadArtifact && (
+                    <button
+                      onClick={() => onDownloadArtifact(artifact)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        backgroundColor: '#0284c7',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '0.25rem',
+                        padding: '0.375rem 0.75rem',
+                        fontSize: '0.75rem',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <Download size={12} />
+                      Download
+                    </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

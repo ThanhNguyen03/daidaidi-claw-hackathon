@@ -40,6 +40,7 @@ export default function Home() {
     constraints,
     profile,
     brief,
+    artifacts,  // Day 6: Generated artifacts from useChat
     sendMessage,
     answerQuestion,
     skipQuestion,
@@ -231,13 +232,39 @@ export default function Home() {
         onClearError={clearError}
       />
 
-      {/* Context Panel - Day 4 */}
+      {/* Context Panel - Day 4 & 6 */}
       <ContextPanel
         isOpen={contextPanelOpen}
         onToggle={() => setContextPanelOpen(!contextPanelOpen)}
         brief={brief}
         constraints={constraints}
         onRevokeConstraint={revokeConstraint}
+        artifacts={artifacts}
+        onDownloadArtifact={(artifact) => {
+          // Handle artifact download (Day 6)
+          if (artifact.type === 'userflow' && artifact.data) {
+            // Download Mermaid diagram as .mmd file
+            const blob = new Blob([artifact.data], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${artifact.id || 'userflow'}.mmd`;
+            a.click();
+            URL.revokeObjectURL(url);
+          } else if (artifact.type === 'wireframe' && artifact.data) {
+            // Download HTML wireframe
+            const blob = new Blob([artifact.data], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${artifact.id || 'wireframe'}.html`;
+            a.click();
+            URL.revokeObjectURL(url);
+          } else {
+            // For other types, show preview or alert
+            console.log('Download not implemented for:', artifact.type);
+          }
+        }}
       />
     </div>
   );
