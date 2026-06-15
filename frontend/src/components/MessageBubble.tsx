@@ -11,54 +11,39 @@ import { Bot, User, Sparkles, FileText, Users, Target, Clock, TrendingUp } from 
 import ReactMarkdown from 'react-markdown';
 
 // Detect and fix tables that have header + data but NO delimiter row
-// Also handles text-based tables from agent output
+// Example: "| A | B |" + "| X | Y |" (missing |---|---|)
 function fixMissingDelimiterTables(content: string): string {
   const lines = content.split('\n');
   const result: string[] = [];
-  let i = 0;
+  let addedDelimiterThisBlock = false;
 
-  while (i < lines.length) {
+  for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     const pipeCount = (line.match(/\|/g) || []).length;
 
-    // Not a table row
+    // Check if this is a table row (has 3+ pipes)
     if (pipeCount < 3) {
       result.push(lines[i]);
-      i++;
+      addedDelimiterThisBlock = false;
       continue;
     }
 
-    // Is a table row - check context
-    const prevLine = i > 0 ? lines[i - 1].trim() : '';
-    const nextLine = i < lines.length - 1 ? lines[i + 1].trim() : '';
-    const prevPipeCount = (prevLine.match(/\|/g) || []).length;
-    const nextPipeCount = (nextLine.match(/\|/g) || []).length;
+    // Check if previous line was also a table row (no delimiter between them)
+    if (i > 0 && !addedDelimiterThisBlock) {
+      const prevLine = lines[i - 1].trim();
+      const prevPipeCount = (prevLine.match(/\|/g) || []).length;
 
-    // If previous line was also a table row but no delimiter
-    if (i > 0 && prevPipeCount >= 3 && !prevLine.includes('---')) {
-      // Insert delimiter before current row
-      const cols = pipeCount - 1;
-      const delimiter = '| ' + Array(cols).fill('---').join(' | ') + ' |';
-      result.push(delimiter);
+      // Previous line is table row, current is table row, no delimiter between
+      if (prevPipeCount >= 3 && !prevLine.includes('---')) {
+        // Need to insert delimiter row between them - but only once per table block
+        const cols = pipeCount - 1;
+        const delimiter = '| ' + Array(cols).fill('---').join(' | ') + ' |';
+        result.push(delimiter);
+        addedDelimiterThisBlock = true;
+      }
     }
 
     result.push(lines[i]);
-
-    // If next line is also a table row but current line doesn't have delimiter
-    if (nextPipeCount >= 3 && !line.includes('---') && !nextLine.includes('---')) {
-      // Insert delimiter after current row
-      const cols = pipeCount - 1;
-      const delimiter = '| ' + Array(cols).fill('---').join(' | ') + ' |';
-      result.push(delimiter);
-      i++;
-      // Skip the redundant delimiter if the next line would also create one
-      if (i < lines.length && lines[i].trim() === delimiter) {
-        // Already handled
-      }
-      continue;
-    }
-
-    i++;
   }
 
   return result.join('\n');
