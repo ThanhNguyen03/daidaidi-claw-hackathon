@@ -196,7 +196,7 @@ export default function Home() {
 
   // Main app layout
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-dvh overflow-hidden">
       {/* Mobile Navigation - visible on mobile only */}
       <MobileNav
         currentMode={mode}
@@ -208,7 +208,7 @@ export default function Home() {
       />
 
       {/* Sidebar - hidden on mobile, shown on desktop */}
-      <div className="hidden md:block">
+      <div className="hidden md:block h-full overflow-y-auto">
         <Sidebar
           currentMode={mode}
           onModeChange={setMode}

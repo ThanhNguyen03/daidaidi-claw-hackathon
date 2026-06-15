@@ -163,7 +163,7 @@ export function Sidebar({
   return (
     <aside
       className={`
-        ${sidebarWidth} h-screen bg-surface border-r border-border
+        ${sidebarWidth} min-h-screen bg-surface border-r border-border overflow-y-auto
         flex flex-col p-4 transition-sidebar sticky top-0 z-40 shrink-0
         ${!isOpen ? 'hidden md:flex' : 'flex'}
       `}
