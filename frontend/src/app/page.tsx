@@ -10,6 +10,7 @@ import React, { useState, useEffect } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { ChatWindow } from '../components/ChatWindow';
 import { ContextPanel } from '../components/ContextPanel';
+import { BrainstormView } from '../components/BrainstormView';
 import { useChat } from '../hooks/useChat';
 import type { ChatMode, Brief } from '../lib/types';
 
@@ -41,6 +42,7 @@ export default function Home() {
     profile,
     brief,
     artifacts,  // Day 6: Generated artifacts from useChat
+    brainState,  // Day 7: Brainstorm state
     sendMessage,
     answerQuestion,
     skipQuestion,
@@ -52,6 +54,11 @@ export default function Home() {
     rejectCheckpoint,
     editCheckpoint,
     clearError,
+    // Day 7: Brainstorm actions
+    addParticipant,
+    removeParticipant,
+    requestAskLock,
+    releaseAskLock,
   } = useChat({
     salespersonId: salespersonName || 'demo_user',
     displayName: salespersonName,
@@ -215,22 +222,32 @@ export default function Home() {
       />
 
       {/* Main chat area */}
-      <ChatWindow
-        messages={messages}
-        isLoading={isLoading}
-        error={error}
-        pendingQuestions={pendingQuestions}
-        activeCheckpoint={activeCheckpoint}
-        mode={mode}
-        onSendMessage={sendMessage}
-        onAnswerQuestion={answerQuestion}
-        onSkipQuestion={skipQuestion}
-        onFreeTextAnswer={freeTextAnswer}
-        onApproveCheckpoint={approveCheckpoint}
-        onRejectCheckpoint={rejectCheckpoint}
-        onEditCheckpoint={editCheckpoint}
-        onClearError={clearError}
-      />
+      {mode === 'brainstorm' && brainState ? (
+        <BrainstormView
+          brainState={brainState}
+          onAddParticipant={addParticipant}
+          onRemoveParticipant={removeParticipant}
+          onRequestAskLock={requestAskLock}
+          onReleaseAskLock={releaseAskLock}
+        />
+      ) : (
+        <ChatWindow
+          messages={messages}
+          isLoading={isLoading}
+          error={error}
+          pendingQuestions={pendingQuestions}
+          activeCheckpoint={activeCheckpoint}
+          mode={mode}
+          onSendMessage={sendMessage}
+          onAnswerQuestion={answerQuestion}
+          onSkipQuestion={skipQuestion}
+          onFreeTextAnswer={freeTextAnswer}
+          onApproveCheckpoint={approveCheckpoint}
+          onRejectCheckpoint={rejectCheckpoint}
+          onEditCheckpoint={editCheckpoint}
+          onClearError={clearError}
+        />
+      )}
 
       {/* Context Panel - Day 4 & 6 */}
       <ContextPanel

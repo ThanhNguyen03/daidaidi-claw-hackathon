@@ -11,10 +11,13 @@ import uuid
 from datetime import datetime
 from typing import Optional, AsyncGenerator, Any
 
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import uvicorn
 
 from dotenv import load_dotenv
@@ -125,6 +128,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate limiting configuration (Day 7)
+limiter = Limiter(key_func=get_remote_address)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Please try again later."}
+    )
 
 
 # =============================================================================
@@ -475,9 +489,9 @@ async def process_with_agents(
         ]
     )
 
-    # Day 6: Handle modes differently
+    # Day 7: Handle modes differently
     # chat mode: simple processing (no agents), handled in process_simple
-    # brainstorm mode: moderator logic (Day 7), for now use simple
+    # brainstorm mode: use BrainstormManager for multi-agent discussion
 
     # For planning/execute modes, use agents
     # Check if we should use the full LangGraph (for checkpoint support)
@@ -493,6 +507,71 @@ async def process_with_agents(
     except Exception as e:
         print(f"Warning: Failed to load constraints: {e}")
         state.constraints = []
+
+    # Day 7: Handle brainstorm mode - use BrainstormManager for multi-agent discussion
+    if state.mode == "brainstorm":
+        from mode.brainstorm import get_brainstorm_manager
+
+        # Get or create brainstorm session
+        manager = get_brainstorm_manager()
+        brain_state = manager.get_session(state.session_id)
+
+        if brain_state is None:
+            # Create new session with participants from state
+            participants = state.participants if state.participants else ["orchestrator"]
+            brain_state = manager.create_session(
+                session_id=state.session_id,
+                participants=participants,
+                max_rounds=8
+            )
+            yield f"data: {json.dumps({'type': 'brainstorm_start', 'session_id': state.session_id, 'participants': participants})}\n\n"
+
+        # Add user message to brainstorm
+        brain_state.add_message(speaker="user", content=message, is_user=True)
+
+        # Run brainstorm round - select next speaker and get their response
+        next_speaker = brain_state.select_next_speaker()
+
+        if next_speaker:
+            yield f"data: {json.dumps({'type': 'speaker_turn', 'speaker': next_speaker})}\n\n"
+
+            # Get agent response for the speaker
+            runner = get_simple_runner()
+            state.messages.append({
+                "role": "user",
+                "content": f"[Brainstorm] {message}",
+                "timestamp": datetime.now().isoformat(),
+            })
+
+            # Run the agent to generate response
+            final_state, stream_events = await runner.run(state)
+
+            # Stream events and capture agent output
+            agent_output = ""
+            for event in stream_events:
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("type") == "content":
+                    agent_output += event.get("content", "")
+
+            # Add agent response to brainstorm
+            if agent_output:
+                brain_state.add_message(speaker=next_speaker, content=agent_output)
+
+        # Check for convergence or timeouts
+        should_stop, reason = brain_state.check_timeouts()
+        if not should_stop and brain_state.check_convergence():
+            should_stop = True
+            reason = "convergence"
+
+        if should_stop:
+            brain_state.is_ended = True
+            summary = brain_state.get_summary()
+            yield f"data: {json.dumps({'type': 'brainstorm_end', 'reason': reason, 'summary': summary})}\n\n"
+        else:
+            # Continue - prompt next speaker
+            yield f"data: {json.dumps({'type': 'continue', 'next_speaker': brain_state.current_speaker})}\n\n"
+
+        return
 
     if use_full_graph:
         # Use full AgentGraph with LangGraph (for Day 4-5 checkpoint + resume)
@@ -712,31 +791,32 @@ async def chat(request: ChatRequest):
 
 
 @app.post("/chat/stream")
-async def chat_stream(request: ChatRequest):
+@limiter.limit("10/minute")  # Rate limit: 10 requests per minute
+async def chat_stream(request: Request, payload: ChatRequest):
     """
     Chat endpoint - streaming via SSE.
     Uses the multi-agent system (Day 2).
     """
     # Get or create session
     state = get_or_create_session(
-        session_id=request.session_id,
-        salesperson_id=request.salesperson_id,
-        mode=request.mode,
+        session_id=payload.session_id,
+        salesperson_id=payload.salesperson_id,
+        mode=payload.mode,
     )
 
-    if request.brief:
-        state.brief = request.brief
+    if payload.brief:
+        state.brief = payload.brief
 
     # Determine processing mode based on request
     # Use agent system for planning/execute modes, simple for chat
-    use_agents = request.mode in ["planning", "execute"]
+    use_agents = payload.mode in ["planning", "execute"]
 
     async def event_generator():
         # Send session info first
         yield f"data: {json.dumps({'type': 'session', 'session_id': state.session_id})}\n\n"
 
         # Send user message event
-        yield f"data: {json.dumps({'type': 'user_message', 'content': request.message})}\n\n"
+        yield f"data: {json.dumps({'type': 'user_message', 'content': payload.message})}\n\n"
 
         # C.5 §3: Validation gate - check before any agent dispatch
         orchestrator = get_orchestrator()
@@ -933,6 +1013,7 @@ class SwitchModeRequest(BaseModel):
     """Request to switch chat mode."""
     session_id: str
     mode: str  # chat, planning, execute, brainstorm
+    participants: Optional[List[str]] = None  # For brainstorm mode
 
 
 @app.post("/sessions/switch_mode")
@@ -962,10 +1043,8 @@ async def switch_mode(request: SwitchModeRequest):
     old_mode = state.mode
     state.mode = request.mode
 
-    # Preserve session state when switching modes
-    # (brief, outputs, messages all carry over)
-
-    return {
+    # Day 7: Handle brainstorm mode setup
+    response_data = {
         "status": "switched",
         "session_id": state.session_id,
         "old_mode": old_mode,
@@ -976,6 +1055,43 @@ async def switch_mode(request: SwitchModeRequest):
             "output_count": len(state.outputs),
         }
     }
+
+    # If switching to brainstorm mode, create a brainstorm session
+    if request.mode == "brainstorm":
+        from mode.brainstorm import get_brainstorm_manager
+
+        # Get participants (default to all available agents if not specified)
+        participants = request.participants or ["market", "strategy", "tech_solution", "account"]
+        manager = get_brainstorm_manager()
+        brainstorm_state = manager.create_session(
+            session_id=request.session_id,
+            participants=participants
+        )
+
+        response_data["brainstorm"] = {
+            "status": "started",
+            "participants": participants,
+            "max_rounds": brainstorm_state.max_rounds,
+            "transcript": [
+                {"speaker": m.speaker, "content": m.content}
+                for m in brainstorm_state.transcript
+            ]
+        }
+
+    # If leaving brainstorm mode, end the session
+    if old_mode == "brainstorm" and request.mode != "brainstorm":
+        from mode.brainstorm import get_brainstorm_manager
+
+        manager = get_brainstorm_manager()
+        if manager.get_session(request.session_id):
+            summary = manager.get_session(request.session_id).get_summary()
+            manager.delete_session(request.session_id)
+            response_data["brainstorm"] = {
+                "status": "ended",
+                "summary": summary
+            }
+
+    return response_data
 
 
 # =============================================================================
@@ -999,21 +1115,22 @@ class SkipQuestionRequest(BaseModel):
 
 
 @app.post("/chat/answer")
-async def answer_question(request: AnswerQuestionRequest):
+@limiter.limit("20/minute")
+async def answer_question(request: Request, payload: AnswerQuestionRequest):
     """
     C.5 §2: Answer a question from the QuestionStack.
     Maps answer to brief field, re-validates, returns updated question list.
     """
-    if request.session_id not in _session_store:
+    if payload.session_id not in _session_store:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    state = _session_store[request.session_id]
+    state = _session_store[payload.session_id]
 
     # Get orchestrator to handle validation response
     orchestrator = get_orchestrator()
 
     # Handle the answer
-    answers = {request.question_id: request.answer}
+    answers = {payload.question_id: payload.answer}
     validation_output = await orchestrator.handle_validation_response(state, answers)
 
     # Get updated questions
@@ -1038,19 +1155,20 @@ async def answer_question(request: AnswerQuestionRequest):
 
 
 @app.post("/chat/skip_question")
-async def skip_question(request: SkipQuestionRequest):
+@limiter.limit("20/minute")
+async def skip_question(request: Request, payload: SkipQuestionRequest):
     """
     C.5 §6: Skip an optional question.
     Records the assumption as implicit approval.
     """
-    if request.session_id not in _session_store:
+    if payload.session_id not in _session_store:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    state = _session_store[request.session_id]
+    state = _session_store[payload.session_id]
 
     # Get question manager and skip
     question_manager = get_question_manager()
-    question_manager.skip_optional(request.question_id)
+    question_manager.skip_optional(payload.question_id)
 
     # Re-validate
     orchestrator = get_orchestrator()

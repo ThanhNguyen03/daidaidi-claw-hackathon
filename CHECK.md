@@ -1,87 +1,90 @@
-# Implementation Check — Day 6 (Generation + Modes) — ALL FIXED
+# Implementation Check — Day 7 (Brainstorm + Deploy + Hardening) — re-check
 
-> Audit date: 2026-06-15. Scope: **All fixes applied**.
-> Verified by imports, smoke tests, and grep.
+> Audit date: 2026-06-15 (re-check). Scope: **Day 7 only**, **outstanding items only** (resolved tickets removed per request).
+> Verified by imports, an isolated slowapi repro, and grep.
 
-**Legend:** ✅ done · ⚠️ partial / wrong · ❌ not yet
+**Legend:** ⚠️ implemented but wrong/broken · ❌ not yet · ✅ (resolved — listed briefly at bottom)
 
 ---
 
 ## Verdict
 
-All three critical bugs from the re-check have been **fixed**:
-
-| Claimed fix | Status |
-|---|---|
-| #2 Design backend defaults to HTML low-fi | ✅ **FIXED** (verified) |
-| #1 PPTX/userflow checkpoints trigger | ✅ **FIXED** (userflow now triggers) |
-| #3 Frontend artifact preview in ContextPanel | ✅ **FIXED** (artifacts connected) |
-
-The headline Day-6 deliverable "brief → plan → approve → PPTX deck + userflow preview" now works.
+Most Day-7 features are now present and wired. **But a new rate-limiting bug breaks the main API
+endpoints at runtime**, and a few items remain. Fix the rate-limit bug first — right now the core
+chat path returns 500.
 
 ---
 
-## ✅ Fixes Applied
+## ⚠️ Outstanding — bugs
 
-### Fix #2 — default design backend → HTML low-fi (DONE)
-- Already fixed in previous round: `FigJamMCPBackend.is_available()` gated on MCP config
-- **Verified:** `get_default_backend()` → `html_lowfi`
+### 1. CRITICAL — rate limiting breaks the main endpoints (500 at request time)
+- `main.py` decorates endpoints with `@limiter.limit(...)` but their only `request` parameter is a
+  **Pydantic body model**, not Starlette's `Request`:
+  - `chat_stream(request: ChatRequest)` (line 795) — `@limiter.limit("10/minute")`
+  - `answer_question(request: AnswerQuestionRequest)` (line 1119) — `@limiter.limit("20/minute")`
+  - `skip_question(request: SkipQuestionRequest)` (line 1159) — `@limiter.limit("20/minute")`
+- slowapi requires a real `starlette.requests.Request` argument to read the client IP. With only a
+  Pydantic `request`, it can't find one and raises → **HTTP 500**.
+- **Confirmed by isolated repro** (FastAPI + slowapi + Pydantic `request` param → `status 500`).
+- Impact: `/chat/stream` (primary entry, incl. brainstorm-via-chat), `/chat/answer`,
+  `/chat/skip_question` all 500. The app imports fine but is broken when actually called.
+- **Fix:** add a Starlette `Request` param and rename the body, e.g.
+  `async def chat_stream(request: Request, payload: ChatRequest)` and update the body references
+  from `request.` to `payload.` (do the same for the other two). Smoke-test each endpoint after.
 
-### Fix #1 — Userflow generation now triggers (FIXED)
-- **Problem:** Detection required explicit `user_journey`/`flow` key, which no agent emits
-- **Fix:** Extended detection to include `journey`, `steps`, `process` keys, and added fallback user journey generation from plan data (recommendations, target_segment)
-- **Result:** Userflow checkpoint now always triggers for plan outputs
+### 2. Moderator + convergence are still placeholders (quality)
+- `backend/mode/brainstorm.py`:
+  - `select_next_speaker` — round-robin/less-active, **not relevance-based** (comment: "In
+    production, this would use relevance scoring", line 73).
+  - `check_convergence` — **naive string similarity**, not embedding/cosine > 0.9 (comment line 112).
+  - ASK-LOCK is first-come, not moderator-prioritized by relevance.
+- Plan (A.4 / C.5 §7) requires relevance selection + cosine convergence. Functional but not to spec.
 
-**Test output:**
-```
-Is plan output: True
-Has userflow data: None
-Will add fallback user journey for demo
-Fallback journey: ['Review Enterprise', 'Analyze recommendations', 'Select solution', 'Proceed with implementation']
-```
-
-### Fix #3 — Frontend artifacts wiring connected (FIXED)
-- **Problem:** 
-  - `useChat.ts` saved to sessionStorage but didn't expose `artifacts` in return
-  - `page.tsx` had local `artifacts` state but never updated it
-  - Download was just console.log
-- **Fix:**
-  1. Added `artifacts` to `UseChatReturn` interface
-  2. Added `artifacts` state in `useChat.ts` with `setArtifacts`
-  3. Load from sessionStorage on mount, update state on checkpoint approval
-  4. `page.tsx` now gets `artifacts` from `useChat` return (removed local state)
-  5. Implemented actual download for userflow (.mmd) and wireframe (.html)
-
-**Files changed:**
-- `frontend/src/hooks/useChat.ts` - Added artifacts state and exposed in return
-- `frontend/src/app/page.tsx` - Uses artifacts from useChat, implements download
-- `frontend/src/components/ContextPanel.tsx` - Already had artifacts section
-- `backend/main.py` - Added userflow fallback data
+### 3. Brainstorm timeouts / retention / transport (partial)
+- 15-min freeze / 1-hr auto-end / 24h transcript retention: not evident (only the max-round cap).
+- Brainstorm runs over HTTP, not the planned **WebSocket** (acceptable for the demo, but noted).
 
 ---
 
-## ✅ Verification Tests
+## ❌ Outstanding — not done
 
-```bash
-# Frontend TypeScript
-cd frontend && npx tsc --noEmit  # ✅ No errors
-
-# Backend
-python -c "from main import app; print('OK')"  # ✅
-
-# Generation modules
-Userflow: success, format: mermaid, nodes: 8
-PPTX: success
-Design: success, format: html, backend: html_lowfi
-```
+### 4. Stale, incorrect deploy artifacts still present
+- `.github/workflows/deploy.yml` and `DEPLOYMENT.md` still describe the **non-existent** AgentBase
+  flow (`@agentbase/cli`, `AGENTBASE_API_URL`/`AGENTBASE_API_KEY`, `ghcr.io`, `PORT=8000`). They
+  won't deploy to AgentBase and will mislead. **Delete them** (or rewrite the workflow around the
+  AgentBase scripts) — the correct guide is `DEPLOY.md`.
+- The frontend CI job also uses `npm ci` (needs `package-lock.json`; project used yarn) and
+  `npm run lint`/`type-check` (scripts may not exist) → that job likely fails regardless.
 
 ---
 
-## Summary
+## Deploy status (your goal)
 
-All three critical bugs fixed:
-1. ✅ Design backend defaults to HTML low-fi
-2. ✅ Userflow checkpoint now triggers (with fallback data)
-3. ✅ Frontend artifacts display and download works
+- **Backend image is now contract-correct** (port **8080** + curl-free `/health` check) and
+  **`DEPLOY.md`** documents the real flow (IAM creds → managed Container Registry → `runtime.sh
+  create`). Following `DEPLOY.md` it will deploy on AgentBase Runtime.
+- **Caveat:** deploy will succeed but the deployed app's `/chat/*` endpoints will **500 until bug
+  #1 is fixed** — fix the rate-limit signatures before (or right after) deploying, or the live
+  agent won't respond.
+- Do **not** rely on the GitHub workflow (#4); deploy via `DEPLOY.md`.
 
-Day-6 deliverable is now complete.
+---
+
+## ✅ Resolved since last check (removed from the active list)
+
+- Brainstorm engine **wired into the app** (`main.py` imports/uses `get_brainstorm_manager` for
+  brainstorm mode + endpoints).
+- Frontend **`BrainstormView.tsx`** added and rendered in `page.tsx` (`mode === 'brainstorm'`).
+- Frontend **`/health` route** added (`src/app/health/route.ts`).
+- **Rate limiting present** (slowapi added) — but misconfigured, see bug #1.
+- Backend **Dockerfile → port 8080** + stdlib health check.
+- **`DEPLOY.md`** (correct AgentBase guide) + README Deployment section.
+
+---
+
+## Suggested fix order
+
+1. **Fix the rate-limit signatures** (bug #1) — add `request: Request`, rename the Pydantic body; smoke-test `/chat/stream`, `/chat/answer`, `/chat/skip_question` return 200.
+2. **Delete `.github/workflows/deploy.yml` + `DEPLOYMENT.md`** (or rewrite around AgentBase scripts).
+3. Deploy via `DEPLOY.md`.
+4. (Quality) upgrade moderator to relevance-based + embedding convergence + brainstorm timeouts.

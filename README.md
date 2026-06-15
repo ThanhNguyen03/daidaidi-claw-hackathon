@@ -332,21 +332,52 @@ below touch the orchestrator or graph code (see PLAN.md §B.6).
 To **remove** an agent: set `enabled: false` (or delete the entry + folder). Reviewer
 agents un-subscribe from their hook automatically — no other agent is affected.
 
-## Deployment
+## Deployment (AgentBase)
 
-The backend deploys on **AgentBase Runtime** as a Custom Agent container. The
-Runtime Service Contract has two **hard** requirements the container must meet:
+The **backend** deploys on **AgentBase Runtime** as a Custom Agent container; the
+**frontend** (Next.js) deploys separately and points at the backend endpoint.
 
-1. **Listen on port `8080`** — the platform routes all traffic there. Locally we
-   use `8000`, so the container build must set `PORT=8080` (the app already reads
-   `PORT` from the env).
-2. **Expose `GET /health` returning HTTP 200** when ready — used to mark the
-   runtime `ACTIVE`. (Already implemented in `main.py`.)
+> 📘 **Full step-by-step guide: [`DEPLOY.md`](./DEPLOY.md).** The quick version is below.
 
-On Runtime, `GREENNODE_CLIENT_ID`, `GREENNODE_CLIENT_SECRET`,
-`GREENNODE_AGENT_IDENTITY`, and `GREENNODE_ENDPOINT_URL` are **auto-injected** —
-do **not** set them in the deployed environment. See `docs/DAY_7.md` for the full
-build → Container Registry → runtime-create flow.
+**Runtime Service Contract (HARD requirements):**
+1. The container must **listen on port `8080`** — the platform routes traffic there.
+   (`backend/Dockerfile` pins `ENV PORT=8080`; `main.py` reads `PORT`.)
+2. It must expose **`GET /health` → 200**.
+
+**Auth model:** you deploy using **IAM service-account** credentials in `.greennode.json`
+(verify with `bash .claude/skills/agentbase/scripts/check_credentials.sh iam`). There is **no**
+`AGENTBASE_API_KEY`. The runtime **auto-injects** `GREENNODE_CLIENT_ID`,
+`GREENNODE_CLIENT_SECRET`, `GREENNODE_AGENT_IDENTITY`, `GREENNODE_ENDPOINT_URL` into the
+container — **do not put these in your deploy env file**.
+
+**Quick steps** (details + redeploy/rollback in `DEPLOY.md`):
+
+```bash
+# 1. Build (amd64) and push to the AgentBase managed Container Registry
+docker build --platform linux/amd64 -t sales-assistant-backend:latest ./backend
+bash .claude/skills/agentbase/scripts/cr.sh repo get
+bash .claude/skills/agentbase/scripts/cr.sh credentials docker-login
+docker tag sales-assistant-backend:latest <registryUrl>/<repoName>/sales-assistant-backend:latest
+docker push <registryUrl>/<repoName>/sales-assistant-backend:latest
+
+# 2. Create the runtime (env file must NOT contain GREENNODE_* or PORT)
+bash .claude/skills/agentbase/scripts/runtime.sh create \
+  --name sales-assistant-backend \
+  --image <registryUrl>/<repoName>/sales-assistant-backend:latest \
+  --flavor 1x1-general --env-file deploy.env --from-cr --network-mode PUBLIC
+
+# 3. Get the endpoint + health-check
+bash .claude/skills/agentbase/scripts/runtime.sh endpoints list <RUNTIME_ID>
+curl -s -o /dev/null -w "%{http_code}\n" "<endpoint-url>/health"   # expect 200
+```
+
+> ⚠️ The repo also contains `.github/workflows/deploy.yml` and `DEPLOYMENT.md` that use a
+> non-AgentBase flow (`@agentbase/cli` + `AGENTBASE_API_KEY` + `ghcr.io`). That mechanism does
+> **not** exist for AgentBase — use `DEPLOY.md` instead. See `CHECK.md`.
+
+## License
+
+MIT
 
 ## License
 

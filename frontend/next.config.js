@@ -1,6 +1,7 @@
-import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  // Enable standalone output for Docker deployment
+  output: 'standalone',
   // Enable experimental features if needed
   experimental: {
     // Enable server actions
@@ -13,6 +14,10 @@ const nextConfig: NextConfig = {
     // These will be available client-side
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
   },
+  // Images configuration for production
+  images: {
+    domains: ['localhost'],
+  },
 };
 
-export default nextConfig;
+module.exports = nextConfig;

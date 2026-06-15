@@ -63,3 +63,7 @@ next-env.d.ts
 .coverage
 htmlcov/
 .tox/
+
+# Markdown
+DEPLOY.md
+CHECK.md

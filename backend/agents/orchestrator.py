@@ -401,9 +401,19 @@ class Orchestrator:
                 )
 
         elif state.mode == "brainstorm":
-            # Brainstorm mode: invoke multiple agents
-            # Will be handled differently in Day 7
-            pass
+            # Brainstorm mode: create tasks for each participant agent
+            # Each participant gets a turn to contribute to the discussion
+            participants = state.participants if state.participants else ["orchestrator"]
+
+            for i, agent_name in enumerate(participants):
+                tasks.append(
+                    AgentTask(
+                        agent_name=agent_name,
+                        task_description=f"Brainstorm contribution {i+1}",
+                        depends_on=[] if i == 0 else [participants[i-1]],  # Sequential turns
+                        is_critical=False,
+                    )
+                )
 
         return ExecutionPlan(
             tasks=tasks,

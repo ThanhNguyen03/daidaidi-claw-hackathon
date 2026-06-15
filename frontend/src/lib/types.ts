@@ -214,7 +214,14 @@ export type SSEEventType =
   | 'session_updated'
   | 'question'
   | 'question_card'
-  | 'checkpoint';
+  | 'checkpoint'
+  // Brainstorm mode events (Day 7)
+  | 'brainstorm_start'
+  | 'speaker_turn'
+  | 'brainstorm_end'
+  | 'continue'
+  | 'ask_lock_granted'
+  | 'ask_lock_released';
 
 export interface SSEEvent {
   type: SSEEventType;

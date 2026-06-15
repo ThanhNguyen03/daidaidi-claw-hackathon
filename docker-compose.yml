@@ -1,0 +1,109 @@
+# =============================================================================
+# Docker Compose for Local Development & Testing
+# =============================================================================
+# This mirrors the production AgentBase deployment setup for local testing
+
+services:
+  # Backend service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sales-assistant-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # Core settings
+      - PORT=8000
+      - HOST=0.0.0.0
+      - DEBUG=false
+
+      # LLM Configuration
+      - LLM_BASE_URL=${LLM_BASE_URL}
+      - LLM_API_KEY=${LLM_API_KEY}
+
+      # Model paths (customize per deployment)
+      - MODEL_ORCHESTRATOR=${MODEL_ORCHESTRATOR}
+      - MODEL_MARKET=${MODEL_MARKET}
+      - MODEL_STRATEGY=${MODEL_STRATEGY}
+      - MODEL_TECH=${MODEL_TECH}
+      - MODEL_ACCOUNT=${MODEL_ACCOUNT}
+      - MODEL_DESIGN=${MODEL_DESIGN}
+      - MODEL_COMPLIANCE=${MODEL_COMPLIANCE}
+
+      # Database (SQLite for local, configure for production)
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/sales.db}
+
+      # Vector store
+      - KB_TYPE=${KB_TYPE:-lancedb}
+      - KB_PATH=${KB_PATH:-./data/kb}
+
+      # AgentBase integration (optional - for managed services)
+      - AGENTBASE_API_URL=${AGENTBASE_API_URL:-}
+      - AGENTBASE_API_KEY=${AGENTBASE_API_KEY:-}
+      - AGENTBASE_MEMORY_ID=${AGENTBASE_MEMORY_ID:-}
+
+      # CORS
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+
+    volumes:
+      - ./backend:/app
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Frontend service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sales-assistant-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # API URL - points to backend
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    depends_on:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+# Development override for hot reload
+profiles:
+  dev:
+    services:
+      backend:
+        build:
+          target: builder
+        command: python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+        volumes:
+          - ./backend:/app
+        environment:
+          - DEBUG=true
+
+      frontend:
+        build:
+          context: ./frontend
+          target: builder
+        command: npm run dev
+        volumes:
+          - ./frontend:/app
+          - /app/node_modules
+        environment:
+          - NODE_ENV=development
+
+# Database volume
+volumes:
+  data:
