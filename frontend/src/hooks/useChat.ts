@@ -31,6 +31,8 @@ interface Artifact {
   title: string;
   preview?: string;
   data?: string;
+  download_url?: string;   // backend-relative URL, e.g. /artifact/pptx_abc123
+  artifact_id?: string;    // artifact registry key
 }
 
 interface UseChatReturn {
@@ -353,7 +355,8 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           break;
 
         case 'checkpoint':
-          // Checkpoint requiring approval
+        case 'checkpoint_card':
+          // Checkpoint requiring approval (backend may emit either event name)
           {
             const checkpoint = data.checkpoint as Checkpoint;
             if (checkpoint) {
@@ -675,28 +678,41 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
     setIsLoading(true);
     try {
-      const response = await fetch(`/checkpoint/${activeCheckpoint.id}/decision`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision: 'approve' }),
-      });
+      const response = await fetch(
+        `${BACKEND_URL}/checkpoint/${activeCheckpoint.id}/decision?session_id=${sessionId}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision: 'approve' }),
+        }
+      );
       if (!response.ok) throw new Error('Failed to approve checkpoint');
       const data = await response.json();
 
       // Get the checkpoint result (generated artifact info)
       const checkpoint = data.checkpoint;
       if (checkpoint?.result) {
-        // Create artifact from checkpoint result
+        const result = checkpoint.result as Record<string, unknown>;
         const artifact: Artifact = {
           id: checkpoint.id,
-          type: (checkpoint.action?.type?.replace('generate_', '') as 'pptx' | 'userflow' | 'quote' | 'wireframe') || 'pptx',
+          type:
+            (checkpoint.action?.type?.replace('generate_', '') as
+              | 'pptx'
+              | 'userflow'
+              | 'quote'
+              | 'wireframe') || 'pptx',
           title: checkpoint.action?.description || 'Generated Artifact',
-          preview: checkpoint.result.preview || checkpoint.result.status || 'Artifact generated',
-          data: checkpoint.result.code || checkpoint.result.content || checkpoint.result.mermaid, // For mermaid or html
+          preview:
+            typeof result.preview === 'object'
+              ? JSON.stringify(result.preview)
+              : String(result.preview ?? result.status ?? 'Artifact generated'),
+          // Text content for inline render (Mermaid / HTML)
+          data: (result.code || result.content || result.mermaid) as string | undefined,
+          // Backend download URL (for PPTX and other binary files)
+          download_url: result.download_url as string | undefined,
+          artifact_id: result.artifact_id as string | undefined,
         };
-        // Update React state (this is what page.tsx will read)
-        setArtifacts(prev => [...prev, artifact]);
-        // Also store in sessionStorage for persistence across refreshes
+        setArtifacts((prev) => [...prev, artifact]);
         if (typeof window !== 'undefined') {
           const existing = JSON.parse(sessionStorage.getItem('artifacts') || '[]');
           sessionStorage.setItem('artifacts', JSON.stringify([...existing, artifact]));
@@ -725,17 +741,20 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
     setIsLoading(true);
     try {
-      const response = await fetch(`/checkpoint/${activeCheckpoint.id}/decision`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision: 'reject' }),
-      });
+      const response = await fetch(
+        `${BACKEND_URL}/checkpoint/${activeCheckpoint.id}/decision?session_id=${sessionId}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision: 'reject' }),
+        }
+      );
       if (!response.ok) throw new Error('Failed to reject checkpoint');
       const data = await response.json();
       setActiveCheckpoint(null);
 
-      // Add clarifying question
-      const clarifyingMsg = data.clarifying_question || 'Action rejected. How would you like to adjust?';
+      const clarifyingMsg =
+        data.clarifying_question || 'Action rejected. How would you like to adjust?';
       const msg: Message = {
         role: 'assistant',
         content: clarifyingMsg,
@@ -756,15 +775,17 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
       setIsLoading(true);
       try {
-        const response = await fetch(`/checkpoint/${activeCheckpoint.id}/decision`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ decision: 'edit', params }),
-        });
+        const response = await fetch(
+          `${BACKEND_URL}/checkpoint/${activeCheckpoint.id}/decision?session_id=${sessionId}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision: 'edit', params }),
+          }
+        );
         if (!response.ok) throw new Error('Failed to edit checkpoint');
         const data = await response.json();
 
-        // Update checkpoint with new preview
         if (data.checkpoint) {
           setActiveCheckpoint(data.checkpoint);
         } else {

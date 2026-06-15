@@ -56,16 +56,20 @@ async def orchestrator_node(state: SalesCaseState) -> dict:
     }
 
 
-async def agent_node(agent_name: str, agent: BaseAgent) -> Callable:
+def agent_node(agent_name: str, agent: BaseAgent) -> Callable:
     """
-    Create a node function for a specific agent.
+    Create a LangGraph node function for a specific agent.
+
+    Returns a ready-to-register async callable — NOT a coroutine.
+    Previously this was `async def` which caused callers to receive a
+    Coroutine[Callable] instead of the Callable itself.
 
     Args:
         agent_name: Name of the agent
         agent: Agent instance
 
     Returns:
-        Async function that executes the agent
+        Async function that executes the agent and returns state-update dict
     """
 
     async def node(state: SalesCaseState) -> dict:
@@ -164,15 +168,10 @@ class AgentGraph:
         all_agents = [a for a in registry.all() if a.name != "orchestrator"]
 
         # First, add all agent nodes
+        # agent_node() is a sync factory — call it immediately to capture the loop
+        # variable and register the resulting async callable with LangGraph.
         for agent in all_agents:
-            # Create agent node function - use default arg to capture loop variable
-            def make_node(a=agent):
-                async def node_inner(state: SalesCaseState) -> dict:
-                    return await agent_node(a.name, a)
-
-                return node_inner
-
-            workflow.add_node(agent.name, make_node())
+            workflow.add_node(agent.name, agent_node(agent.name, agent))
 
         # Then, add conditional edges - each needs unique routing function
         for idx, agent in enumerate(all_agents):

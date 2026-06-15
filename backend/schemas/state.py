@@ -71,6 +71,9 @@ class Question(BaseModel):
     last_asked_at: Optional[datetime] = Field(
         None, description="Last time this question was asked"
     )
+    options: Optional[list[str]] = Field(
+        None, description="Predefined choices for multi-select questions; None = free text"
+    )
     answered: bool = Field(False, description="Whether the question has been answered")
     answer: Optional[str] = Field(None, description="The user's answer")
     was_helpful: Optional[bool] = Field(

@@ -409,6 +409,12 @@ class Orchestrator:
                  "Wireframe & slide outline — deck structure, section order, visual hints",
                  group=3, critical=False)
 
+            # ── Group 4: adversarial review before AE checkpoint ─────────────
+            # A9 — Client simulator: stress-tests the proposal, flags weak points
+            _add("client_simulator",
+                 "Simulate client pushback: identify objections, weak points, and deal-kill risks in the proposal before AE review",
+                 group=4, critical=False)
+
         elif state.mode == "brainstorm":
             participants = getattr(state, "participants", []) or ["orchestrator"]
             for i, agent_name in enumerate(participants):

@@ -11,36 +11,54 @@ import { Bot, User, Sparkles, FileText, Users, Target, Clock, TrendingUp } from 
 import ReactMarkdown from 'react-markdown';
 
 // Detect and fix tables that have header + data but NO delimiter row
-// Example: "| A | B | C |" + "| X | Y | Z |" (missing |---|---|)
+// Also handles text-based tables from agent output
 function fixMissingDelimiterTables(content: string): string {
   const lines = content.split('\n');
   const result: string[] = [];
+  let i = 0;
 
-  for (let i = 0; i < lines.length; i++) {
+  while (i < lines.length) {
     const line = lines[i].trim();
-
-    // Check if this is a table row (has 3+ pipes)
     const pipeCount = (line.match(/\|/g) || []).length;
+
+    // Not a table row
     if (pipeCount < 3) {
-      result.push(line);
+      result.push(lines[i]);
+      i++;
       continue;
     }
 
-    // Check if previous line was also a table row (no delimiter between them)
-    if (i > 0) {
-      const prevLine = lines[i - 1].trim();
-      const prevPipeCount = (prevLine.match(/\|/g) || []).length;
+    // Is a table row - check context
+    const prevLine = i > 0 ? lines[i - 1].trim() : '';
+    const nextLine = i < lines.length - 1 ? lines[i + 1].trim() : '';
+    const prevPipeCount = (prevLine.match(/\|/g) || []).length;
+    const nextPipeCount = (nextLine.match(/\|/g) || []).length;
 
-      if (prevPipeCount >= 3 && !prevLine.includes('---')) {
-        // Need to insert delimiter row between them
-        // Generate |---|---|---| based on column count
-        const cols = pipeCount - 1;
-        const delimiter = '| ' + Array(cols).fill('---').join(' | ') + ' |';
-        result.push(delimiter);
-      }
+    // If previous line was also a table row but no delimiter
+    if (i > 0 && prevPipeCount >= 3 && !prevLine.includes('---')) {
+      // Insert delimiter before current row
+      const cols = pipeCount - 1;
+      const delimiter = '| ' + Array(cols).fill('---').join(' | ') + ' |';
+      result.push(delimiter);
     }
 
-    result.push(line);
+    result.push(lines[i]);
+
+    // If next line is also a table row but current line doesn't have delimiter
+    if (nextPipeCount >= 3 && !line.includes('---') && !nextLine.includes('---')) {
+      // Insert delimiter after current row
+      const cols = pipeCount - 1;
+      const delimiter = '| ' + Array(cols).fill('---').join(' | ') + ' |';
+      result.push(delimiter);
+      i++;
+      // Skip the redundant delimiter if the next line would also create one
+      if (i < lines.length && lines[i].trim() === delimiter) {
+        // Already handled
+      }
+      continue;
+    }
+
+    i++;
   }
 
   return result.join('\n');
@@ -185,6 +203,37 @@ function BriefDocument({ content }: { content: string }) {
       </div>
     </div>
   );
+}
+
+// Format structured table output from agent into proper markdown
+// Detects patterns with numbered sections, headers, and content
+function formatStructuredAgentTables(content: string): string {
+  const lines = content.split('\n');
+  const result: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Look for section headers like "1.1. Section Name" followed by table
+    const sectionMatch = trimmed.match(/^(\d+(?:\.\d+)?)\.\s+([^:]+)(?::\s*)?$/);
+    if (sectionMatch && i + 1 < lines.length) {
+      const nextLine = lines[i + 1].trim();
+      // Check if next few lines look like a table structure
+      if (nextLine.includes('|') && nextLine.includes('-')) {
+        // This is a section header before a table - add it and continue
+        result.push(line);
+        i++;
+        continue;
+      }
+    }
+
+    result.push(line);
+    i++;
+  }
+
+  return result.join('\n');
 }
 
 // Helper to fix malformed markdown tables (all on one line)
@@ -414,6 +463,7 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
         >
           {/* Preprocess content to fix malformed tables */}
           <ReactMarkdown
+            key={message.content}
             components={{
               p: ({ children }) => <p style={{ margin: '0.5rem 0', lineHeight: 1.7 }}>{children}</p>,
               h1: ({ children }) => (
@@ -447,8 +497,17 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
                 </a>
               ),
               table: ({ children }) => (
-                <div className="overflow-x-auto my-5 rounded-xl border-0 shadow-lg" style={{ backgroundColor: 'var(--color-surface)' }}>
-                  <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', fontSize: '0.875em' }}>
+                <div className="overflow-x-auto my-5 rounded-xl border-0 shadow-md" style={{ backgroundColor: 'var(--color-surface)' }}>
+                  <style>{`
+                    .agent-output-table tbody tr:nth-child(odd) {
+                      background-color: rgba(79, 70, 229, 0.03);
+                    }
+                    .agent-output-table tbody tr:hover {
+                      background-color: rgba(79, 70, 229, 0.08);
+                      transition: background-color 0.2s;
+                    }
+                  `}</style>
+                  <table className="agent-output-table" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.875em' }}>
                     {children}
                   </table>
                 </div>
@@ -466,27 +525,30 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
               ),
               th: ({ children }) => (
                 <th style={{
-                  padding: '0.875rem 1.25rem',
+                  padding: '1rem 1.25rem',
                   textAlign: 'left',
-                  fontWeight: 600,
+                  fontWeight: 700,
                   fontSize: '0.75em',
                   color: '#ffffff',
                   textTransform: 'uppercase',
-                  letterSpacing: '0.06em',
+                  letterSpacing: '0.08em',
                   backgroundColor: '#4f46e5',
-                  borderRadius: '0',
-                  whiteSpace: 'nowrap',
+                  borderBottom: '3px solid #4338ca',
+                  whiteSpace: 'normal',
+                  wordWrap: 'break-word',
                 }}>
                   {children}
                 </th>
               ),
               td: ({ children }) => (
                 <td style={{
-                  padding: '0.875rem 1.25rem',
+                  padding: '1rem 1.25rem',
                   fontSize: '0.875em',
                   color: 'var(--color-text)',
                   lineHeight: 1.6,
                   borderBottom: '1px solid var(--color-border)',
+                  wordWrap: 'break-word',
+                  maxWidth: '500px',
                 }}>
                   {children}
                 </td>
@@ -528,7 +590,7 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
               ),
             }}
           >
-            {fixMissingDelimiterTables(message.content)}
+            {fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(message.content)))}
           </ReactMarkdown>
         </div>
         )}

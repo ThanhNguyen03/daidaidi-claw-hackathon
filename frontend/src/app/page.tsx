@@ -267,6 +267,21 @@ export default function Home() {
         onRevokeConstraint={revokeConstraint}
         artifacts={artifacts}
         onDownloadArtifact={(artifact) => {
+          const backendUrl =
+            process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+          // Binary artifacts served directly by the backend (PPTX, quote, etc.)
+          if (artifact.download_url) {
+            const a = document.createElement('a');
+            a.href = `${backendUrl}${artifact.download_url}`;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            // Let the browser use the Content-Disposition filename from the server
+            a.click();
+            return;
+          }
+
+          // Text artifacts stored in-browser (fallback / Mermaid / HTML)
           if (artifact.type === 'userflow' && artifact.data) {
             const blob = new Blob([artifact.data], { type: 'text/plain' });
             const url = URL.createObjectURL(blob);
@@ -283,8 +298,8 @@ export default function Home() {
             a.download = `${artifact.id || 'wireframe'}.html`;
             a.click();
             URL.revokeObjectURL(url);
-          } else {
-            console.log('Download not implemented for:', artifact.type);
+          } else if (artifact.type === 'pptx') {
+            alert('PPTX file not available — please approve the checkpoint to generate it.');
           }
         }}
       />

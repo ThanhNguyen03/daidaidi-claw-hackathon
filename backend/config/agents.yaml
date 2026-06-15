@@ -70,6 +70,15 @@ agents:
     kind: generator
     critical: true
 
+  # A9 — Client simulator (Group 3, after account + design; per workflow diagram)
+  client_simulator:
+    name: "Client Simulator"
+    model: MODEL_CLIENT_SIMULATOR
+    role: "Simulates client pushback: identifies weak points in the proposal, flags objections and risks before AE review"
+    enabled: true
+    kind: reviewer
+    critical: false
+
   # Day 2 B.6: Compliance as the first reviewer agent
   compliance:
     name: "Compliance"

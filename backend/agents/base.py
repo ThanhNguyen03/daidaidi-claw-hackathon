@@ -325,6 +325,27 @@ class StubAgent(BaseAgent):
                     "estimated_hours": 40,
                 },
             },
+            "client_simulator": {
+                "summary": "Simulated client pushback and flagged proposal weak points",
+                "payload": {
+                    "objections": [
+                        {"text": "ROI timeline seems optimistic — show a downside scenario", "severity": "high"},
+                        {"text": "No reference customer in our industry", "severity": "medium"},
+                        {"text": "Pricing needs clearer breakdown per feature", "severity": "medium"},
+                    ],
+                    "weak_points": [
+                        "Value proposition paragraph is too generic",
+                        "Timeline milestones lack success criteria",
+                    ],
+                    "risks": ["Client may benchmark against cheaper alternatives without a competitive comparison slide"],
+                    "scores": {"clarity": 3, "credibility": 3, "value_prop": 4, "pricing": 3},
+                    "recommendations": [
+                        "Add a downside-scenario ROI table",
+                        "Include 1-2 case studies from the same industry vertical",
+                        "Rewrite the value proposition with specific measurable outcomes",
+                    ],
+                },
+            },
         }
 
     async def run(self, state: SalesCaseState) -> AgentOutput:

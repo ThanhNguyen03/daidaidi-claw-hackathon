@@ -9,7 +9,7 @@ import os
 import json
 import uuid
 from datetime import datetime
-from typing import Optional, AsyncGenerator, Any
+from typing import Optional, AsyncGenerator, Any, List
 
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -174,6 +174,13 @@ class ChatResponse(BaseModel):
 # In-memory state store
 _session_store: dict[str, SalesCaseState] = {}
 
+# =============================================================================
+# Artifact Store
+# =============================================================================
+
+_artifact_store: dict[str, dict] = {}
+ARTIFACTS_DIR = os.path.join(os.path.dirname(__file__), "data", "artifacts")
+
 
 def get_or_create_session(
     session_id: Optional[str], salesperson_id: str, mode: str = "chat"
@@ -301,41 +308,122 @@ async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
     # Register handlers for checkpoint actions
     async def handle_generate_quote(params: dict) -> dict:
         """Execute quote generation (Day 6)."""
-        # In a real implementation, this would generate a PDF/Excel quote
         quote_id = params.get("quote_id", f"Q{uuid.uuid4().hex[:8].upper()}")
+        artifact_id = f"quote_{uuid.uuid4().hex[:10]}"
+        # Build a simple text quote
+        lines = [f"QUOTATION #{quote_id}\n"]
+        for item in params.get("items", []):
+            lines.append(f"  - {item.get('name', '?')}: {item.get('price', 0):,} VND")
+        total = params.get("total_vnd", 0)
+        lines.append(f"\nTotal: {total:,} VND")
+        content = "\n".join(lines).encode("utf-8")
+
+        _artifact_store[artifact_id] = {
+            "storage": "memory",
+            "content": content,
+            "filename": f"quote_{quote_id}.txt",
+            "media_type": "text/plain",
+            "type": "quote",
+            "title": f"Quotation #{quote_id}",
+        }
         return {
             "status": "executed",
             "quote_id": quote_id,
-            "total_vnd": params.get("total_vnd", 0),
-            "format": "pdf"
+            "total_vnd": total,
+            "artifact_id": artifact_id,
+            "download_url": f"/artifact/{artifact_id}",
         }
 
     async def handle_generate_pptx(params: dict) -> dict:
-        """Execute PPTX generation (Day 6)."""
+        """Execute PPTX generation (Day 6). Saves file to disk, returns download URL."""
+        artifact_id = f"pptx_{uuid.uuid4().hex[:10]}"
+        os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+        output_path = os.path.join(ARTIFACTS_DIR, f"{artifact_id}.pptx")
+
         pptx_gen = create_pptx_generator()
         result = await pptx_gen.generate(
             plan_data=params,
             client_name=params.get("client_name", "Client"),
-            output_path=params.get("output_path")
+            output_path=output_path,
         )
+
+        if result.get("status") == "success" and result.get("file_path"):
+            client_name = params.get("client_name", "Client")
+            _artifact_store[artifact_id] = {
+                "storage": "file",
+                "path": output_path,
+                "filename": f"proposal_{client_name}.pptx",
+                "media_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "type": "pptx",
+                "title": f"PPTX Proposal — {client_name}",
+            }
+            result["artifact_id"] = artifact_id
+            result["download_url"] = f"/artifact/{artifact_id}"
+        elif result.get("fallback"):
+            # python-pptx not available — save fallback text
+            content = (result.get("preview") or "").encode("utf-8")
+            _artifact_store[artifact_id] = {
+                "storage": "memory",
+                "content": content,
+                "filename": f"proposal_{params.get('client_name', 'Client')}.md",
+                "media_type": "text/markdown",
+                "type": "pptx",
+                "title": f"Proposal (text fallback) — {params.get('client_name', 'Client')}",
+            }
+            result["artifact_id"] = artifact_id
+            result["download_url"] = f"/artifact/{artifact_id}"
+
         return result
 
     async def handle_generate_userflow(params: dict) -> dict:
-        """Execute userflow generation (Day 6)."""
+        """Execute userflow generation (Day 6). Registers Mermaid artifact."""
         userflow_gen = create_userflow_generator()
         result = await userflow_gen.generate(
             plan_data=params,
-            format=params.get("format", "mermaid")
+            format=params.get("format", "mermaid"),
         )
+
+        if result.get("status") == "success":
+            artifact_id = f"flow_{uuid.uuid4().hex[:10]}"
+            if result.get("format") == "mermaid" and result.get("code"):
+                content = result["code"].encode("utf-8")
+                _artifact_store[artifact_id] = {
+                    "storage": "memory",
+                    "content": content,
+                    "filename": "userflow.mmd",
+                    "media_type": "text/plain",
+                    "type": "userflow",
+                    "title": "Userflow Diagram (Mermaid)",
+                }
+                result["artifact_id"] = artifact_id
+                result["download_url"] = f"/artifact/{artifact_id}"
+
         return result
 
     async def handle_generate_wireframe(params: dict) -> dict:
-        """Execute wireframe generation (Day 6)."""
+        """Execute wireframe generation (Day 6). Registers HTML/FigJam artifact."""
         design_backend = get_default_backend()
         result = await design_backend.generate_wireframe(
             requirements=params,
-            output_format=params.get("output_format", "html")
+            output_format=params.get("output_format", "html"),
         )
+
+        if result.get("status") == "success" and result.get("content"):
+            artifact_id = f"wire_{uuid.uuid4().hex[:10]}"
+            content = result["content"]
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            _artifact_store[artifact_id] = {
+                "storage": "memory",
+                "content": content,
+                "filename": "wireframe.html",
+                "media_type": "text/html",
+                "type": "wireframe",
+                "title": f"Wireframe — {params.get('brand_name', 'Brand')}",
+            }
+            result["artifact_id"] = artifact_id
+            result["download_url"] = f"/artifact/{artifact_id}"
+
         return result
 
     # Register all handlers
@@ -498,6 +586,26 @@ def _extract_agent_content(agent_name: str, output) -> str:
                 else:
                     lines.append(f"- {f}")
             return "\n".join(lines)
+
+    # client_simulator: structured adversarial review
+    if "objections" in payload:
+        lines = [f"**Client Simulator Review — {agent_name}**\n"]
+        scores = payload.get("scores", {})
+        if scores:
+            score_str = " | ".join(f"{k.replace('_', ' ').title()}: {v}/5" for k, v in scores.items())
+            lines.append(f"*Scores: {score_str}*\n")
+        for obj in payload.get("objections", []):
+            if isinstance(obj, dict):
+                lines.append(f"- [{obj.get('severity','').upper()}] {obj.get('text', str(obj))}")
+        for wp in payload.get("weak_points", []):
+            lines.append(f"⚠ {wp}")
+        for risk in payload.get("risks", []):
+            lines.append(f"🚨 {risk}")
+        if payload.get("recommendations"):
+            lines.append("\n**Recommendations before AE review:**")
+            for rec in payload["recommendations"]:
+                lines.append(f"- {rec}")
+        return "\n".join(lines)
 
     # compliance: narrative field
     if "narrative" in payload:
@@ -1261,14 +1369,14 @@ async def chat_stream(request: Request, payload: ChatRequest):
 
         # Send session update
         # Serialize brief with datetime handling
-            brief_dict = None
-            if state.brief:
-                brief_dict = state.brief.model_dump()
-                # Convert any datetime fields
-                for key, value in brief_dict.items():
-                    if hasattr(value, 'isoformat'):
-                        brief_dict[key] = value.isoformat()
-            yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'brief': brief_dict})}\n\n"
+        brief_dict = None
+        if state.brief:
+            brief_dict = state.brief.model_dump()
+            # Convert any datetime fields
+            for key, value in brief_dict.items():
+                if hasattr(value, 'isoformat'):
+                    brief_dict[key] = value.isoformat()
+        yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'brief': brief_dict})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -1282,7 +1390,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
 
 
 @app.get("/sessions/{session_id}")
-async def get_session(session_id: str):
+async def get_session_by_id(session_id: str):
     """Get session by ID. Checks in-memory store first, then database."""
     # First check in-memory
     if session_id in _session_store:
@@ -1874,6 +1982,40 @@ async def debug_config():
     }
 
     return result
+
+
+@app.get("/artifact/{artifact_id}")
+async def download_artifact(artifact_id: str):
+    """
+    Download a generated artifact (PPTX, Mermaid diagram, HTML wireframe, etc.).
+    """
+    from fastapi.responses import FileResponse, Response as FastAPIResponse
+
+    entry = _artifact_store.get(artifact_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    if entry.get("storage") == "file":
+        path = entry["path"]
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Artifact file no longer available")
+        return FileResponse(
+            path=path,
+            filename=entry.get("filename", artifact_id),
+            media_type=entry.get("media_type", "application/octet-stream"),
+        )
+
+    # In-memory text artifact
+    content = entry.get("content", "")
+    if isinstance(content, str):
+        content = content.encode("utf-8")
+    return FastAPIResponse(
+        content=content,
+        media_type=entry.get("media_type", "text/plain"),
+        headers={
+            "Content-Disposition": f'attachment; filename="{entry.get("filename", artifact_id)}"'
+        },
+    )
 
 
 @app.get("/debug/agents")

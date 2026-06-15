@@ -142,11 +142,15 @@ class PPTXGenerator:
             # Save to file if path provided
             file_path = None
             if output_path:
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                dir_name = os.path.dirname(output_path)
+                if dir_name:
+                    os.makedirs(dir_name, exist_ok=True)
                 with open(output_path, 'wb') as f:
                     f.write(buffer.getvalue())
                 file_path = output_path
 
+            # Never return raw bytes — they are not JSON-serializable.
+            # Callers that need the bytes should read from file_path.
             return {
                 "status": "success",
                 "file_path": file_path,
@@ -154,9 +158,8 @@ class PPTXGenerator:
                     "slides": len(prs.slides),
                     "title": plan_data.get("title", "Sales Proposal"),
                     "has_timeline": "timeline" in plan_data,
-                    "has_pricing": "total" in plan_data
+                    "has_pricing": "total" in plan_data,
                 },
-                "buffer": buffer.getvalue() if not output_path else None
             }
 
         except ImportError:

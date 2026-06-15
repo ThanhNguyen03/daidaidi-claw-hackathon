@@ -16,6 +16,8 @@ interface Artifact {
   title: string;
   preview?: string;
   data?: string;
+  download_url?: string;   // backend-relative URL for binary file download
+  artifact_id?: string;
 }
 
 interface ContextPanelProps {
