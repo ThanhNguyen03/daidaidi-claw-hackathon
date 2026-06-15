@@ -15,6 +15,7 @@ interface QuestionCardProps {
   onSkip: (questionId: string) => void;
   onFreeTextAnswer: (freeText: string) => void;
   disabled?: boolean;
+  isSubmitting?: boolean;
 }
 
 export function QuestionCard({
@@ -23,6 +24,7 @@ export function QuestionCard({
   onSkip,
   onFreeTextAnswer,
   disabled = false,
+  isSubmitting = false,
 }: QuestionCardProps) {
   const [freeText, setFreeText] = useState('');
   const [inlineAnswers, setInlineAnswers] = useState<Record<string, string>>({});
@@ -204,16 +206,16 @@ export function QuestionCard({
                   value={inlineAnswers[question.id] || ''}
                   onChange={(e) => handleInlineAnswer(question.id, e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
+                    if (e.key === 'Enter' && !isSubmitting) {
                       submitInlineAnswer(question);
                     }
                   }}
                   placeholder="Type your answer..."
-                  disabled={disabled}
+                  disabled={isSubmitting}
                   autoComplete="off"
                   style={{
                     ...inputStyle,
-                    cursor: disabled ? 'not-allowed' : 'text',
+                    cursor: isSubmitting ? 'not-allowed' : 'text',
                     minWidth: '120px',
                     flex: '1 1 140px',
                   }}
@@ -222,29 +224,30 @@ export function QuestionCard({
                   type="button"
                   aria-label="Send answer"
                   onClick={() => submitInlineAnswer(question)}
-                  disabled={disabled || !inlineAnswers[question.id]?.trim()}
+                  disabled={isSubmitting || !inlineAnswers[question.id]?.trim()}
                   style={{
                     ...buttonStyle,
-                    opacity: (disabled || !inlineAnswers[question.id]?.trim()) ? 0.5 : 1,
-                    cursor: (disabled || !inlineAnswers[question.id]?.trim()) ? 'not-allowed' : 'pointer',
+                    opacity: (isSubmitting || !inlineAnswers[question.id]?.trim()) ? 0.5 : 1,
+                    cursor: (isSubmitting || !inlineAnswers[question.id]?.trim()) ? 'not-allowed' : 'pointer',
                   }}
                 >
                   <Check size={16} />
-                  <span className="hidden sm:inline">Send</span>
+                  <span className="hidden sm:inline">{isSubmitting ? 'Sending...' : 'Send'}</span>
                 </button>
                 {!question.is_mandatory && (
                   <button
                     type="button"
                     aria-label="Skip this question"
                     onClick={() => onSkip(question.id)}
-                    disabled={disabled}
+                    disabled={isSubmitting}
                     style={{
                       padding: '10px',
                       borderRadius: '8px',
                       backgroundColor: '#f3f4f6',
                       color: '#6b7280',
                       border: '1px solid #d1d5db',
-                      cursor: disabled ? 'not-allowed' : 'pointer',
+                      cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                      opacity: isSubmitting ? 0.5 : 1,
                     }}
                     title="Skip - use assumption"
                   >
@@ -268,25 +271,26 @@ export function QuestionCard({
               value={freeText}
               onChange={(e) => setFreeText(e.target.value)}
               placeholder="Or answer everything in one message..."
-              disabled={disabled}
+              disabled={isSubmitting}
               style={{
                 ...inputStyle,
                 flex: '1 1 180px',
                 minWidth: '150px',
+                cursor: isSubmitting ? 'not-allowed' : 'text',
               }}
             />
             <button
               type="submit"
               aria-label="Send free text answer"
-              disabled={disabled || !freeText.trim()}
+              disabled={isSubmitting || !freeText.trim()}
               style={{
                 ...buttonStyle,
-                opacity: disabled ? 0.5 : 1,
-                cursor: disabled ? 'not-allowed' : 'pointer',
+                opacity: (isSubmitting || !freeText.trim()) ? 0.5 : 1,
+                cursor: (isSubmitting || !freeText.trim()) ? 'not-allowed' : 'pointer',
               }}
             >
               <Send size={16} />
-              <span className="hidden sm:inline">Send</span>
+              <span className="hidden sm:inline">{isSubmitting ? 'Sending...' : 'Send'}</span>
             </button>
           </div>
           <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '8px' }}>

@@ -527,6 +527,16 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         });
 
         if (response.ok) {
+          // Show feedback that answer was received
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: 'system',
+              content: '✓ Answer received. Processing...',
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+
           // Reload session state
           const data = await response.json();
           if (data.questions && data.questions.length > 0) {
@@ -563,6 +573,16 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         });
 
         if (response.ok) {
+          // Show feedback that question was skipped
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: 'system',
+              content: '✓ Using assumed value. Continuing...',
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+
           const data = await response.json();
           if (data.questions && data.questions.length > 0) {
             setPendingQuestions(data.questions);
@@ -603,6 +623,16 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         });
 
         if (response.ok) {
+          // Show feedback
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: 'system',
+              content: '✓ Answer received. Processing...',
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+
           const data = await response.json();
           // Update pending questions if any remain
           if (data.questions && data.questions.length > 0) {

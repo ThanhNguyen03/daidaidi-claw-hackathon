@@ -358,7 +358,7 @@ export function ChatWindow({
             onAnswer={onAnswerQuestion}
             onSkip={onSkipQuestion || (() => {})}
             onFreeTextAnswer={onFreeTextAnswer || ((_ft: string) => {})}
-            disabled={isLoading}
+            isSubmitting={false}
           />
         )}
 
