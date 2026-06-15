@@ -158,7 +158,15 @@ class QuestionManager:
         # Sort: mandatory first
         questions.sort(key=lambda q: (not q.is_mandatory, q.priority))
 
-        return questions
+        # Deduplicate by target_field - keep first occurrence only
+        seen_fields = set()
+        unique_questions = []
+        for q in questions:
+            if q.target_field not in seen_fields:
+                seen_fields.add(q.target_field)
+                unique_questions.append(q)
+
+        return unique_questions
 
     def _create_question_for_field(
         self, field: str, is_mandatory: bool, brief: Brief, mode: str

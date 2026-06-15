@@ -194,6 +194,14 @@ class AgentTask(BaseModel):
     is_critical: bool = Field(
         True, description="Whether failure should halt the pipeline"
     )
+    parallel_group: int = Field(
+        0,
+        description=(
+            "Execution group. Tasks with the same group number run in parallel. "
+            "Groups are executed in ascending order (0 first). "
+            "Group 0 = sequential before any parallel groups."
+        ),
+    )
 
 
 class ExecutionPlan(BaseModel):
@@ -406,6 +414,13 @@ class SalesCaseState(BaseModel):
     )
     constraints: list[FeedbackRule] = Field(
         default_factory=list, description="Active feedback rules"
+    )
+
+    # Desired output formats for execute mode
+    # Set once the user answers the output-format question or specifies inline.
+    desired_outputs: list[str] = Field(
+        default_factory=list,
+        description="Output types the user wants: pptx, figma, userflow, quote",
     )
 
     # Checkpoint

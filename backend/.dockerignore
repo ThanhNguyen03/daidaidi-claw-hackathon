@@ -1,0 +1,34 @@
+# Exclude virtual environment (huge, not needed — image installs from requirements.txt)
+venv/
+.venv/
+
+# Exclude runtime data (ephemeral / machine-specific)
+data/
+*.db
+*.sqlite3
+
+# Exclude Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Exclude local caches
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Exclude secrets (NEVER bake credentials into image)
+.env
+.env.*
+.greennode.json
+
+# Exclude AgentBase temp files
+.agentbase/
+
+# Exclude dev/test artifacts
+*.log
+.DS_Store
+Thumbs.db

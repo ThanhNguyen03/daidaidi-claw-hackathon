@@ -109,12 +109,7 @@ class Orchestrator:
 
         # Handle different statuses
         if validation_report.status == "BLOCKED":
-            # Critical missing info - cannot proceed
-            missing_fields = (
-                ", ".join(validation_report.missing_required)
-                if validation_report.missing_required
-                else "unknown"
-            )
+            # Out-of-scope or truly unrecoverable — hard stop
             return (
                 AgentOutput(
                     agent="orchestrator",
@@ -123,15 +118,15 @@ class Orchestrator:
                         "validation_status": "BLOCKED",
                         "missing_required": validation_report.missing_required,
                     },
-                    summary=f"Cannot proceed - critically missing: {missing_fields}. Please provide this information.",
+                    summary="This request is out of scope. Please provide a valid sales brief.",
                     confidence=1.0,
                 ),
                 False,
             )
 
         elif validation_report.status == "PENDING":
-            # Need to ask questions
-            # Generate questions from validation report
+            # Missing some fields — generate questions but STILL allow dispatch.
+            # Agents are smart enough to work with partial info.
             question_manager = get_question_manager()
             questions = question_manager.generate_questions_from_validation(
                 brief=state.brief,
@@ -139,24 +134,21 @@ class Orchestrator:
                 validation_missing=validation_report.missing_required,
                 validation_ambiguities=validation_report.ambiguities,
             )
-
-            # Push to question stack
             question_manager.stack.push(questions)
             state.question_stack = question_manager.stack.items
-
-            # Return first batch
             batch = question_manager.stack.next_batch()
 
+            # Return NEEDS_INPUT but with should_dispatch=True so agents still run
             return (
                 AgentOutput(
                     agent="orchestrator",
                     status="NEEDS_INPUT",
                     payload={"validation_status": "PENDING"},
-                    summary="I need some additional information to proceed. Please answer these questions.",
+                    summary="Proceeding with available information. Some details can be refined later.",
                     confidence=0.8,
                     questions=batch,
                 ),
-                False,
+                True,  # still dispatch agents
             )
 
         else:
@@ -347,78 +339,92 @@ class Orchestrator:
 
     def _create_execution_plan(self, state: SalesCaseState) -> ExecutionPlan:
         """
-        Create an execution plan based on mode and brief.
+        Build the execution plan for the current mode.
 
-        Args:
-            state: Current state
+        Architecture (matches workflow diagram):
+          Group 1 (parallel)  — A3 Strategy, A4 Compliance, A5 Product-expert
+          Group 2 (sequential)— A6 Content-generator   (reads Group-1 outputs)
+          Group 3 (sequential)— A7 Budget/pricing (account), A8 Design (slide outline)
 
-        Returns:
-            ExecutionPlan
+        planning mode → Group 1 only.
+        execute mode  → Groups 1 + 2 + 3.
         """
         registry = get_registry()
-        tasks = []
+        tasks: list[AgentTask] = []
 
-        # Determine which agents to invoke based on mode
+        def _add(name: str, description: str, group: int, critical: bool = False):
+            if registry.get(name):
+                tasks.append(AgentTask(
+                    agent_name=name,
+                    task_description=description,
+                    depends_on=[],
+                    is_critical=critical,
+                    parallel_group=group,
+                ))
+
         if state.mode == "chat":
-            # In chat mode, we might need different agents based on the query
-            # For now, just the orchestrator handles it directly
+            # Chat mode: orchestrator + process_simple handles this directly
             pass
 
         elif state.mode == "planning":
-            # Planning mode: invoke market strategy + tech solution
-            if registry.get("market_strategy"):
-                tasks.append(
-                    AgentTask(
-                        agent_name="market_strategy",
-                        task_description="Analyze market and create sales strategy",
-                        depends_on=[],
-                        is_critical=True,
-                    )
-                )
-            if registry.get("tech_solution"):
-                tasks.append(
-                    AgentTask(
-                        agent_name="tech_solution",
-                        task_description="Provide technical recommendations",
-                        depends_on=[],
-                        is_critical=False,
-                    )
-                )
+            # ── Group 1: parallel analysis (tech team + business team) ───────
+            _add("market_strategy",
+                 "Industry mapping, pain point, solution package selection & case study RAG",
+                 group=1, critical=True)
+            _add("tech_solution",
+                 "Technical feasibility check: platform stack, Zalo integration options, system architecture",
+                 group=1, critical=False)
+            _add("compliance",
+                 "PDPL check, pharma ad rules, consent language, flag risks early",
+                 group=1, critical=False)
+            _add("adtimabox",
+                 "AdtimaBox features, ZNS / Mini App / OA specs, pricing tier reference",
+                 group=1, critical=False)
 
         elif state.mode == "execute":
-            # Execute mode: invoke all agents for full proposal
-            for agent_name in registry.all_names():
-                if agent_name == "orchestrator":
-                    continue
-                tasks.append(
-                    AgentTask(
-                        agent_name=agent_name,
-                        task_description=f"Execute {agent_name} task",
-                        depends_on=[],
-                        is_critical=agent_name
-                        in ["market_strategy", "tech_solution", "account"],
-                    )
-                )
+            # ── Group 1: parallel analysis (tech team + business team) ───────
+            _add("market_strategy",
+                 "Industry mapping, pain point, solution package selection & case study RAG",
+                 group=1, critical=True)
+            _add("tech_solution",
+                 "Technical feasibility check: platform stack, Zalo integration options, system architecture & workflow diagram",
+                 group=1, critical=False)
+            _add("compliance",
+                 "PDPL check, consent language, data collection rules for Zalo / offline activation",
+                 group=1, critical=False)
+            _add("adtimabox",
+                 "AdtimaBox features, ZNS / Mini App / OA specs, pricing tier reference",
+                 group=1, critical=False)
+
+            # ── Group 2: content creation (reads Group-1 outputs) ───────────
+            _add("content_generator",
+                 "Write full proposal: insight narrative, solution overview, user journey & earn/burn model",
+                 group=2, critical=True)
+
+            # ── Group 3: budget, pricing & visual design ──────────────────────
+            _add("account",
+                 "Package fee, timeline estimate, ROI projection — detailed pricing table",
+                 group=3, critical=True)
+            _add("design",
+                 "Wireframe & slide outline — deck structure, section order, visual hints",
+                 group=3, critical=False)
 
         elif state.mode == "brainstorm":
-            # Brainstorm mode: create tasks for each participant agent
-            # Each participant gets a turn to contribute to the discussion
-            participants = state.participants if state.participants else ["orchestrator"]
-
+            participants = getattr(state, "participants", []) or ["orchestrator"]
             for i, agent_name in enumerate(participants):
-                tasks.append(
-                    AgentTask(
+                if registry.get(agent_name):
+                    tasks.append(AgentTask(
                         agent_name=agent_name,
-                        task_description=f"Brainstorm contribution {i+1}",
-                        depends_on=[] if i == 0 else [participants[i-1]],  # Sequential turns
+                        task_description=f"Brainstorm contribution {i + 1}",
+                        depends_on=[] if i == 0 else [participants[i - 1]],
                         is_critical=False,
-                    )
-                )
+                        parallel_group=i,  # each turn is its own group (sequential)
+                    ))
 
         return ExecutionPlan(
             tasks=tasks,
-            execution_mode="sequential",
-            estimated_duration_minutes=len(tasks) * 5,
+            execution_mode="hybrid",
+            estimated_duration_minutes=len(tasks) * 3,
         )
 
     def _get_next_task(self, state: SalesCaseState) -> Optional[AgentTask]:

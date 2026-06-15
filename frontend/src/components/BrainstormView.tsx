@@ -100,16 +100,16 @@ function AddMemberModal({
 
   return (
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
       onClick={onClose}
     >
       <div
-        className="bg-surface rounded-lg p-6 w-full max-w-md shadow-lg border border-border"
+        className="bg-surface rounded-xl p-4 sm:p-6 w-full max-w-md shadow-lg border border-border max-h-[90vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold text-text">Add Participants</h3>
-          <button onClick={onClose} className="bg-transparent border-none cursor-pointer text-text-muted hover:text-text">
+          <h3 className="text-base sm:text-[16px] font-semibold text-text">Add Participants</h3>
+          <button onClick={onClose} className="bg-transparent border-none cursor-pointer text-text-muted hover:text-text p-1">
             <X size={20} />
           </button>
         </div>
@@ -120,19 +120,19 @@ function AddMemberModal({
           </div>
         ) : (
           <>
-            <p className="text-sm text-text-muted mb-4">Select agents to participate in the brainstorm:</p>
+            <p className="text-xs sm:text-[12px] text-text-muted mb-3 sm:mb-4">Select agents to participate in the brainstorm:</p>
 
-            <div className="mb-4 max-h-60 overflow-y-auto">
+            <div className="mb-4 max-h-48 sm:max-h-60 overflow-y-auto -mx-2 px-2">
               {availableAgents.map(agent => (
                 <label
                   key={agent.name}
                   className={`
-                    flex items-center gap-3 p-3 rounded cursor-pointer transition-all
+                    flex items-center gap-3 p-2.5 sm:p-3 rounded-lg cursor-pointer transition-all
                     ${selectedAgents.has(agent.name)
                       ? 'bg-accent-soft border-accent'
                       : 'bg-transparent border-border hover:bg-surface-hover'
                     }
-                    border mb-2
+                    border mb-1.5 sm:mb-2
                   `}
                 >
                   <input
@@ -141,25 +141,25 @@ function AddMemberModal({
                     onChange={() => toggleAgent(agent.name)}
                     className="w-4 h-4 accent-accent"
                   />
-                  <div className="flex-1">
-                    <span className="text-sm font-medium text-text block">{agent.display_name}</span>
-                    <span className="text-xs text-text-muted">{agent.name}</span>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs sm:text-[12px] font-medium text-text block truncate">{agent.display_name}</span>
+                    <span className="text-[10px] sm:text-xs text-text-muted truncate block">{agent.name}</span>
                   </div>
                 </label>
               ))}
             </div>
 
-            <div className="flex gap-2 justify-end">
+            <div className="flex gap-2 justify-end mt-auto pt-2">
               <button
                 onClick={onClose}
-                className="px-4 py-2 border border-border rounded text-sm text-text hover:bg-surface-hover"
+                className="px-4 py-2 border border-border rounded-lg text-xs sm:text-[12px] text-text hover:bg-surface-hover transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={handleAddSelected}
                 disabled={selectedAgents.size === 0}
-                className={`px-4 py-2 rounded text-sm ${
+                className={`px-4 py-2 rounded-lg text-xs sm:text-[12px] transition-all ${
                   selectedAgents.size > 0
                     ? 'bg-accent text-white hover:opacity-90'
                     : 'bg-text-muted text-white cursor-not-allowed'
@@ -208,7 +208,7 @@ function ParticipantBubble({
         {participant.agent_name.charAt(0).toUpperCase()}
       </div>
 
-      <span className="text-sm font-medium text-text">{participant.agent_name}</span>
+      <span className="text-[12px] font-medium text-text">{participant.agent_name}</span>
       <span className="text-xs text-text-muted mt-1">{participant.rounds_spoken} rounds</span>
     </div>
   );
@@ -221,8 +221,8 @@ function RoundMeter({ current, max }: { current: number; max: number }) {
   return (
     <div className="mb-4">
       <div className="flex justify-between mb-1">
-        <span className="text-sm font-medium">Round Progress</span>
-        <span className="text-sm text-text-muted">{current} / {max}</span>
+        <span className="text-[12px] font-medium">Round Progress</span>
+        <span className="text-[12px] text-text-muted">{current} / {max}</span>
       </div>
       <div className="h-2 bg-surface-2 rounded-full overflow-hidden">
         <div
@@ -259,8 +259,8 @@ function AskLockStatus({
       <div className="flex items-center gap-2">
         {hasLock ? <Lock size={18} className="text-status-thinking" /> : <Unlock size={18} className="text-text-muted" />}
         <div>
-          <span className="text-sm font-medium">ASK-LOCK: </span>
-          <span className="text-sm text-text-muted">{hasLock ? `Held by ${holder}` : 'Available'}</span>
+          <span className="text-[12px] font-medium">ASK-LOCK: </span>
+          <span className="text-[12px] text-text-muted">{hasLock ? `Held by ${holder}` : 'Available'}</span>
         </div>
       </div>
 
@@ -308,45 +308,49 @@ export function BrainstormView({
 
   if (state.is_ended) {
     return (
-      <div className="p-8 text-center bg-surface rounded-lg">
-        <AlertCircle size={48} className="text-status-completed mx-auto mb-4" />
-        <h3 className="text-xl font-semibold mb-2">Brainstorm Session Ended</h3>
-        <p className="text-sm text-text-muted">The session has reached its conclusion.</p>
-        {onEndSession && (
-          <button
-            onClick={onEndSession}
-            className="mt-4 px-4 py-2 bg-accent text-white rounded text-sm hover:opacity-90"
-          >
-            Start New Session
-          </button>
-        )}
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="text-center bg-surface rounded-lg p-8">
+          <AlertCircle size={48} className="text-status-completed mx-auto mb-4" />
+          <h3 className="text-[18px] font-semibold mb-2">Brainstorm Session Ended</h3>
+          <p className="text-[12px] text-text-muted">The session has reached its conclusion.</p>
+          {onEndSession && (
+            <button
+              onClick={onEndSession}
+              className="mt-4 px-4 py-2 bg-accent text-white rounded text-[12px] hover:opacity-90"
+            >
+              Start New Session
+            </button>
+          )}
+        </div>
       </div>
     );
   }
 
   if (state.is_frozen) {
     return (
-      <div className="p-8 text-center bg-yellow-50 rounded-lg">
-        <Clock size={48} className="text-status-thinking mx-auto mb-4" />
-        <h3 className="text-xl font-semibold mb-2">Session Frozen</h3>
-        <p className="text-sm text-yellow-800">The session has been frozen due to inactivity (15 minutes no response).</p>
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="text-center bg-yellow-50 rounded-lg p-8">
+          <Clock size={48} className="text-status-thinking mx-auto mb-4" />
+          <h3 className="text-[18px] font-semibold mb-2">Session Frozen</h3>
+          <p className="text-[12px] text-yellow-800">The session has been frozen due to inactivity (15 minutes no response).</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="p-4">
+    <div className="flex-1 flex flex-col h-full bg-bg overflow-y-auto p-3 sm:p-4">
       {/* Header */}
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 sm:gap-0 mb-3 sm:mb-4">
         <div className="flex items-center gap-2">
-          <MessageCircle size={20} className="text-accent" />
-          <h3 className="text-base font-semibold">Brainstorm Mode</h3>
+          <MessageCircle size={18} className="text-accent w-4 h-4 sm:w-5 sm:h-5" />
+          <h3 className="text-sm sm:text-base font-semibold">Brainstorm Mode</h3>
         </div>
         <button
           onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-1 px-3 py-1.5 bg-accent text-white rounded text-xs hover:opacity-90"
+          className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-accent text-white rounded-lg text-xs sm:text-sm hover:opacity-90 transition-all self-start sm:self-center"
         >
-          <Plus size={14} />
+          <Plus size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           Add Member
         </button>
       </div>
@@ -368,12 +372,12 @@ export function BrainstormView({
       <div className="mb-4">
         <div className="flex items-center gap-2 mb-3">
           <Users size={16} className="text-text-muted" />
-          <span className="text-sm font-medium text-text">Participants ({state.participants.length})</span>
+          <span className="text-[12px] font-medium text-text">Participants ({state.participants.length})</span>
         </div>
 
         {state.participants.length === 0 ? (
           <div className="p-8 text-center bg-surface-2 rounded-lg border border-dashed border-border">
-            <p className="text-sm text-text-muted">No participants yet. Click &quot;Add Member&quot; to start.</p>
+            <p className="text-[12px] text-text-muted">No participants yet. Click &quot;Add Member&quot; to start.</p>
           </div>
         ) : (
           <div className="flex flex-wrap justify-center gap-4">
@@ -392,8 +396,8 @@ export function BrainstormView({
       {/* Current Speaker */}
       {state.current_speaker && (
         <div className="p-3 bg-accent-soft rounded-lg text-center">
-          <span className="text-sm text-text-muted">Current speaker: </span>
-          <span className="text-sm font-semibold text-accent">{state.current_speaker}</span>
+          <span className="text-[12px] text-text-muted">Current speaker: </span>
+          <span className="text-[12px] font-semibold text-accent">{state.current_speaker}</span>
         </div>
       )}
 

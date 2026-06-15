@@ -455,6 +455,79 @@ async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
     return checkpoint
 
 
+def _extract_agent_content(agent_name: str, output) -> str:
+    """
+    Pull the user-facing text out of an AgentOutput.payload so it can be
+    streamed directly to the chat window.
+    """
+    payload = getattr(output, "payload", {}) or {}
+
+    # content_generator: full narrative under "content"
+    if "content" in payload:
+        return str(payload["content"])
+
+    # market_strategy: full LLM text under "strategy"
+    if "strategy" in payload:
+        return str(payload["strategy"])
+
+    # tech_solution: recommendations (string or list)
+    if "recommendations" in payload:
+        recs = payload["recommendations"]
+        if isinstance(recs, str):
+            return recs
+        if isinstance(recs, list):
+            lines = []
+            for r in recs:
+                if isinstance(r, dict):
+                    lines.append(f"- **{r.get('category', '')}**: {r.get('item', '')}")
+                else:
+                    lines.append(f"- {r}")
+            return "\n".join(lines)
+
+    # compliance agent: findings list or narrative
+    if "findings" in payload:
+        findings = payload["findings"]
+        if isinstance(findings, str):
+            return findings
+        if isinstance(findings, list):
+            lines = [f"**Compliance Review — {agent_name}**\n"]
+            for f in findings:
+                if isinstance(f, dict):
+                    severity = f.get("severity", "info").upper()
+                    lines.append(f"- [{severity}] {f.get('message', str(f))}")
+                else:
+                    lines.append(f"- {f}")
+            return "\n".join(lines)
+
+    # compliance: narrative field
+    if "narrative" in payload:
+        return str(payload["narrative"])
+
+    # adtimabox / integration: integration summary
+    if "integration" in payload:
+        return str(payload["integration"])
+
+    # account / quote: render as markdown table
+    if "quote_id" in payload:
+        lines = [f"**Báo giá #{payload['quote_id']}**\n"]
+        for item in payload.get("items", []):
+            price = item.get("price", 0)
+            lines.append(
+                f"- {item.get('name', '?')}: **{price:,.0f} VND** / {item.get('unit', '')} "
+                + ("*(ước tính)*" if item.get("is_estimate") else "")
+            )
+        total = payload.get("total_vnd", 0)
+        lines.append(f"\n**Tổng cộng: {total:,.0f} VND**")
+        if payload.get("valid_until"):
+            lines.append(f"Hiệu lực đến: {payload['valid_until']}")
+        if payload.get("payment_terms"):
+            lines.append(f"Điều khoản thanh toán: {payload['payment_terms']}")
+        return "\n".join(lines)
+
+    # fallback: use summary
+    return output.summary or ""
+
+
 async def process_with_agents(
     state: SalesCaseState,
     message: str,
@@ -491,8 +564,8 @@ async def process_with_agents(
     # brainstorm mode: use BrainstormManager for multi-agent discussion
 
     # For planning/execute modes, use agents
-    # Check if we should use the full LangGraph (for checkpoint support)
-    use_full_graph = os.getenv("ENABLE_CHECKPOINT", "false").lower() == "true"
+    # Always use SimpleAgentRunner (full LangGraph has issues with duplicate routes)
+    use_full_graph = False
 
     # Day 4: Load active constraints into state for injection
     try:
@@ -597,58 +670,147 @@ async def process_with_agents(
         # Run the agent system
         final_state, stream_events = await runner.run(state)
 
-        # Stream events to client
+        # Stream status events but hold the "done" until after content
         for event in stream_events:
-            yield f"data: {json.dumps(event)}\n\n"
+            if event.get("type") != "done":
+                yield f"data: {json.dumps(event)}\n\n"
 
-        # Only process summaries for non-graph mode (graph mode handles internally)
-        # Add agent summary to messages
-        summary_parts = []
+        # Stream each completed agent's real output as a separate agent_message
         for agent_name, output in final_state.outputs.items():
-            if hasattr(output, "summary"):
-                summary_parts.append(f"{agent_name}: {output.summary}")
+            if agent_name == "orchestrator":
+                continue
+            if not output or not hasattr(output, "status"):
+                continue
+            if output.status != "COMPLETE":
+                continue
 
-        if summary_parts:
-            full_summary = "\n\n".join(summary_parts)
-            final_state.messages.append(
+            content_text = _extract_agent_content(agent_name, output)
+            if not content_text:
+                continue
+
+            yield f"data: {json.dumps({'type': 'agent_message', 'agent': agent_name, 'content': content_text})}\n\n"
+
+            # Record in session history
+            state.messages.append(
                 {
                     "role": "assistant",
-                    "content": full_summary,
-                    "agent": "orchestrator",
+                    "content": content_text,
+                    "agent": agent_name,
                     "timestamp": datetime.now().isoformat(),
                 }
             )
 
-        # Update summary
-        final_state.summary = (
+        # Update state
+        state.outputs = final_state.outputs
+        state.summary = (
             f"User: {message[:30]}... → Agents: {', '.join(final_state.outputs.keys())}"
         )
 
-        # Return updated state
-        state.outputs = final_state.outputs
-        state.summary = final_state.summary
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
 # =============================================================================
 # Simple LLM Processing (Day 1 fallback)
 # =============================================================================
 
-ORCHESTRATOR_SYSTEM_PROMPT = """You are the Orchestrator for a Multi-Agent Sales Assistant.
+ORCHESTRATOR_SYSTEM_PROMPT = """You are a Sales AI Assistant — a knowledgeable advisor for sales teams.
 
-Your role is to:
-1. Understand the user's request and intent
-2. Determine what information is needed
-3. Respond appropriately based on the mode
+## Your Role in Chat Mode
 
-Current modes:
-- chat: Answer questions, provide information
-- planning: Create sales plans
-- execute: Generate proposals, quotes, designs
-- brainstorm: Facilitate group discussion
+You answer questions and provide advice DIRECTLY from your own knowledge.
+You do NOT "dispatch agents", "combine agents", or "hand off to specialists" —
+all of that happens only in Planning / Execute mode (different flows).
 
-You should be helpful, professional, and concise.
-Respond in the user's language (Vietnamese if they write in Vietnamese).
+In chat mode: **you ARE the answer**. Respond fully and helpfully right now.
+
+## When User Shares a Sales Brief
+
+If the brief is incomplete, ask for the missing details BEFORE giving advice.
+Key fields to check:
+- Client/company name
+- Industry / product being sold
+- Target audience
+- Budget range
+- Goals or KPIs
+- Current tech stack (CRM, Zalo OA, etc.)
+
+Once you have enough context, give a **comprehensive, direct response** — include:
+market insights, solution recommendations, rough timeline, pricing ballpark, and
+next steps. Do NOT say "I'll now create a plan" — just create it inline.
+
+## Suggesting Other Modes
+
+If the user asks for a formal proposal, multi-slide deck, or detailed quotation,
+tell them: *"For a complete multi-agent proposal with official pricing and design
+artifacts, switch to **Planning** or **Execute** mode using the sidebar."*
+
+## Response Guidelines
+
+- Be helpful, professional, and thorough — give real substance, not placeholders
+- Respond in the user's language (Vietnamese if they write in Vietnamese)
+- Use markdown headers and bullet points for readability
+- Never promise future actions you cannot take in this turn
 """
+
+
+class _ThinkFilter:
+    """Streaming filter that strips <think>...</think> blocks from LLM output.
+
+    Emits (type, content) tuples:
+      ("think_start", "")  — first <think> tag encountered
+      ("think", content)   — text inside a <think> block (caller may discard)
+      ("think_end", "")    — closing </think> tag
+      ("content", content) — regular response text to stream to the client
+    """
+
+    OPEN = "<think>"
+    CLOSE = "</think>"
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._in_think = False
+
+    def push(self, token: str) -> list[tuple[str, str]]:
+        self._buf += token
+        events: list[tuple[str, str]] = []
+        while True:
+            if self._in_think:
+                pos = self._buf.find(self.CLOSE)
+                if pos >= 0:
+                    if pos > 0:
+                        events.append(("think", self._buf[:pos]))
+                    events.append(("think_end", ""))
+                    self._buf = self._buf[pos + len(self.CLOSE):]
+                    self._in_think = False
+                else:
+                    safe = max(0, len(self._buf) - len(self.CLOSE))
+                    if safe > 0:
+                        events.append(("think", self._buf[:safe]))
+                        self._buf = self._buf[safe:]
+                    break
+            else:
+                pos = self._buf.find(self.OPEN)
+                if pos >= 0:
+                    if pos > 0:
+                        events.append(("content", self._buf[:pos]))
+                    events.append(("think_start", ""))
+                    self._buf = self._buf[pos + len(self.OPEN):]
+                    self._in_think = True
+                else:
+                    safe = max(0, len(self._buf) - len(self.OPEN))
+                    if safe > 0:
+                        events.append(("content", self._buf[:safe]))
+                        self._buf = self._buf[safe:]
+                    break
+        return events
+
+    def flush(self) -> list[tuple[str, str]]:
+        if not self._buf:
+            return []
+        kind = "think" if self._in_think else "content"
+        result = [(kind, self._buf)]
+        self._buf = ""
+        return result
 
 
 async def process_simple(
@@ -656,22 +818,33 @@ async def process_simple(
     message: str,
 ) -> AsyncGenerator[str, None]:
     """
-    Process message with simple LLM call (Day 1 fallback).
+    Process message with simple LLM call (chat mode fallback).
+    Uses orchestrator system prompt. Strips <think> reasoning blocks and
+    emits thinking_start / thinking_end SSE events instead.
     """
-    # Get orchestrator client
     try:
         client = get_llm_client("orchestrator")
     except ValueError as e:
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
         return
 
-    # Build conversation history
-    messages = [
-        {"role": msg["role"], "content": msg["content"]} for msg in state.messages[-10:]
-    ]
-    messages.append({"role": "user", "content": message})
+    # Record user message in session history before calling the LLM
+    state.messages.append(
+        {
+            "role": "user",
+            "content": message,
+            "timestamp": datetime.now().isoformat(),
+        }
+    )
 
-    # Add brief context if available
+    # Build messages: system prompt + rolling history (last 10 turns)
+    llm_messages = [{"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT}]
+    llm_messages += [
+        {"role": msg["role"], "content": msg["content"]}
+        for msg in state.messages[-10:]
+    ]
+
+    # Append brief context to the last user message when available
     if state.brief:
         context_parts = []
         if state.brief.industry:
@@ -679,33 +852,46 @@ async def process_simple(
         if state.brief.budget_vnd:
             context_parts.append(f"Budget: {state.brief.budget_vnd:,} VND")
         if context_parts:
-            messages[-1]["content"] += f"\n\nContext: {', '.join(context_parts)}"
+            llm_messages[-1]["content"] += f"\n\nContext: {', '.join(context_parts)}"
 
-    # Stream response
     try:
         stream = client.create_completion(
-            messages=messages,
+            messages=llm_messages,
             stream=True,
             temperature=0.7,
-            max_tokens=2000,
+            max_tokens=4000,
         )
 
+        tf = _ThinkFilter()
         accumulated = ""
+
         for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
-                content = chunk.choices[0].delta.content
-                accumulated += content
-                yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
+                token = chunk.choices[0].delta.content
+                for kind, text in tf.push(token):
+                    if kind == "think_start":
+                        yield f"data: {json.dumps({'type': 'thinking_start'})}\n\n"
+                    elif kind == "think_end":
+                        yield f"data: {json.dumps({'type': 'thinking_end'})}\n\n"
+                    elif kind == "content" and text:
+                        accumulated += text
+                        yield f"data: {json.dumps({'type': 'content', 'content': text})}\n\n"
+                    # "think" text is silently discarded
 
-        # Add to messages
-        state.messages.append(
-            {
-                "role": "assistant",
-                "content": accumulated,
-                "agent": "orchestrator",
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
+        for kind, text in tf.flush():
+            if kind == "content" and text:
+                accumulated += text
+                yield f"data: {json.dumps({'type': 'content', 'content': text})}\n\n"
+
+        if accumulated:
+            state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": accumulated,
+                    "agent": "orchestrator",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
 
     except Exception as e:
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
@@ -787,6 +973,95 @@ async def chat(request: ChatRequest):
     )
 
 
+# =============================================================================
+# Brief auto-detection helpers
+# =============================================================================
+
+_BRIEF_KEYWORDS = [
+    "brief", "làm brief", "objective", "target audience", "target_audience",
+    "ta:", " ta ", "brand:", "brand ", "yêu cầu", "chiến dịch", "campaign",
+    "kpi", "budget", "timeline", "insight", "proposal", "use agent",
+    "dùng agent", "dùng sales agent", "industry", "ngành", "khách hàng mục tiêu",
+    "ngân sách", "mục tiêu", "thương hiệu",
+]
+
+
+def _looks_like_brief(message: str) -> bool:
+    """Return True if the message contains enough brief-like signals."""
+    lower = message.lower()
+    hit_count = sum(1 for kw in _BRIEF_KEYWORDS if kw in lower)
+    # Long message with at least 1 keyword, or short message with 2+ keywords
+    return (len(message) > 200 and hit_count >= 1) or hit_count >= 2
+
+
+async def _extract_brief_from_text(message: str):
+    """Use LLM to extract a structured Brief from a free-text message."""
+    try:
+        from llm.greennode import get_llm_client
+        from schemas.state import Brief
+
+        client = get_llm_client("validation")
+
+        system = (
+            "You are a brief parser for a sales AI system. "
+            "Extract structured campaign/sales brief data from the user message. "
+            "Return ONLY a JSON object with these optional fields:\n"
+            '{"industry": str|null, "goal": str|null, "target_audience": str|null, '
+            '"budget_vnd": int|null, "timeline": str|null, '
+            '"specific_requirements": [str], "constraints": [str], "additional_context": str|null}\n'
+            "If a field is absent, use null or []. No markdown, no extra text."
+        )
+
+        response = client.create_completion(
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"Parse this brief:\n{message}"},
+            ],
+            stream=False,
+            max_tokens=600,
+            temperature=0.1,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        # Strip markdown code fences if present
+        if "```" in raw:
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+
+        data = json.loads(raw)
+        return Brief(
+            industry=data.get("industry"),
+            goal=data.get("goal"),
+            target_audience=data.get("target_audience"),
+            budget_vnd=data.get("budget_vnd"),
+            timeline=data.get("timeline"),
+            specific_requirements=data.get("specific_requirements") or [],
+            constraints=data.get("constraints") or [],
+            additional_context=data.get("additional_context"),
+        )
+    except Exception as exc:
+        print(f"[brief_extract] failed: {exc}")
+        # Return a minimal Brief so agents still have the raw message as context
+        from schemas.state import Brief as BriefModel
+        return BriefModel(additional_context=message[:1000])
+
+
+def _auto_detect_outputs(message: str) -> list[str]:
+    """Infer desired output types from the brief text."""
+    lower = message.lower()
+    outputs = []
+    if any(w in lower for w in ["pptx", "powerpoint", "slide", "deck", "presentation"]):
+        outputs.append("pptx")
+    if any(w in lower for w in ["figma", "figmajam", "wireframe", "mockup"]):
+        outputs.append("figma")
+    if any(w in lower for w in ["diagram", "flow", "userflow", "mermaid"]):
+        outputs.append("userflow")
+    if any(w in lower for w in ["quote", "quotation", "pricing", "price", "cost", "account"]):
+        outputs.append("quote")
+    return outputs or ["pptx", "quote"]  # sensible default for sales briefs
+
+
 @app.post("/chat/stream")
 @limiter.limit("10/minute")  # Rate limit: 10 requests per minute
 async def chat_stream(request: Request, payload: ChatRequest):
@@ -804,16 +1079,51 @@ async def chat_stream(request: Request, payload: ChatRequest):
     if payload.brief:
         state.brief = payload.brief
 
-    # Determine processing mode based on request
-    # Use agent system for planning/execute modes, simple for chat
+    # Always sync the mode on the session — user may have switched modes
+    # between requests while keeping the same session (brief/history carries over).
+    state.mode = payload.mode
+
+    # Determine processing mode based on request.
+    # planning/execute use the full multi-agent system.
+    # chat uses a direct LLM call (process_simple) — the system prompt
+    # guides the LLM to answer comprehensively without promising agent dispatch.
     use_agents = payload.mode in ["planning", "execute"]
 
+    # Reset per-request agent state so agents re-run on every new message.
+    # Without this, state.plan and state.visited accumulate across turns and
+    # _get_next_task returns None on the 2nd+ message (all agents "visited").
+    if use_agents:
+        state.plan = None
+        state.visited = []
+        state.hop_depth = 0
+
     async def event_generator():
+        nonlocal use_agents
+
         # Send session info first
         yield f"data: {json.dumps({'type': 'session', 'session_id': state.session_id})}\n\n"
 
         # Send user message event
         yield f"data: {json.dumps({'type': 'user_message', 'content': payload.message})}\n\n"
+
+        # ── Brief auto-detection: switch chat → execute when user pastes a brief ──
+        # This is the main fix for "only orchestrator responds" — when a user types
+        # a full campaign brief in chat mode, we auto-route to the multi-agent pipeline.
+        if not use_agents and _looks_like_brief(payload.message):
+            extracted = await _extract_brief_from_text(payload.message)
+            if extracted:
+                state.brief = extracted
+                state.mode = "execute"
+                use_agents = True
+                # Reset per-request agent state (not done above since was chat mode)
+                state.plan = None
+                state.visited = []
+                state.hop_depth = 0
+                # Pre-fill desired_outputs so the output-format gate doesn't fire
+                if not state.desired_outputs:
+                    state.desired_outputs = _auto_detect_outputs(payload.message)
+                # Don't show brief detected as content - just log
+# yield f"data: {json.dumps({'type': 'content', 'content': '> **Brief detected** — dispatching specialist agents in Execute mode...\\n\\n'})}\n\n"
 
         # C.5 §3: Validation gate - check before any agent dispatch
         orchestrator = get_orchestrator()
@@ -822,26 +1132,62 @@ async def chat_stream(request: Request, payload: ChatRequest):
         )
 
         if not should_dispatch:
-            # Validation failed - send question card
-            if validation_output.questions:
-                yield f"data: {json.dumps({'type': 'question_card', 'questions': [q.model_dump() for q in validation_output.questions]})}\n\n"
-            elif validation_output.status == "FAILED":
-                # BLOCKED - send error
+            # BLOCKED (out-of-scope) — hard stop
+            if validation_output.status == "FAILED":
                 yield f"data: {json.dumps({'type': 'error', 'error': validation_output.summary})}\n\n"
+                update_session(state)
+                brief_data = state.brief.model_dump() if state.brief else None
+                yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'validation_status': state.validation_status, 'brief': brief_data})}\n\n"
+                return
 
-            # Save state to in-memory store
-            update_session(state)
+        # Show question card for PENDING (missing optional fields) but still proceed with agents
+        if validation_output.questions:
+            # Convert questions to dict, handling datetime serialization
+            def question_to_dict(q):
+                d = q.model_dump()
+                # Convert datetime to ISO string
+                if d.get('last_asked_at') and hasattr(d['last_asked_at'], 'isoformat'):
+                    d['last_asked_at'] = d['last_asked_at'].isoformat()
+                return d
+            yield f"data: {json.dumps({'type': 'question_card', 'questions': [question_to_dict(q) for q in validation_output.questions]})}\n\n"
 
-            # Day 4: Also persist to database for cross-session resume
-            try:
-                memory_repo = get_memory_repo()
-                await memory_repo.save_session(state)
-            except Exception as e:
-                print(f"Warning: Failed to persist session: {e}")
+        # Execute mode: ask what output format the user wants if not yet specified
+        if payload.mode == "execute" and not state.desired_outputs:
+            msg_lower = payload.message.lower()
+            # Try to detect output intent from the message first
+            detected_outputs = []
+            if any(w in msg_lower for w in ["pptx", "powerpoint", "slide", "deck", "presentation"]):
+                detected_outputs.append("pptx")
+            if any(w in msg_lower for w in ["figma", "figmajam", "wireframe", "design", "mockup", "ui"]):
+                detected_outputs.append("figma")
+            if any(w in msg_lower for w in ["diagram", "flow", "userflow", "mermaid", "journey"]):
+                detected_outputs.append("userflow")
+            if any(w in msg_lower for w in ["quote", "quotation", "pricing", "invoice", "proposal"]):
+                detected_outputs.append("quote")
 
-            brief_data = state.brief.model_dump() if state.brief else None
-            yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'validation_status': state.validation_status, 'brief': brief_data})}\n\n"
-            return
+            if detected_outputs:
+                state.desired_outputs = detected_outputs
+            else:
+                # Ask which output format the user wants
+                from schemas.state import Question as QuestionSchema
+                output_question = QuestionSchema(
+                    id="desired_output",
+                    text="What output would you like me to generate?",
+                    priority=1,
+                    is_mandatory=True,
+                    assumption=None,
+                    target_field="desired_outputs",
+                    options=[
+                        "PPTX Presentation (PowerPoint slide deck)",
+                        "FigmaJam / Wireframe (UI design)",
+                        "Userflow Diagram (Mermaid / process flow)",
+                        "Quotation / Pricing Proposal",
+                    ],
+                )
+                yield f"data: {json.dumps({'type': 'question_card', 'questions': [output_question.model_dump()]})}\n\n"
+                update_session(state)
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
 
         # Validation passed - proceed with agent dispatch
         # D.2: Check for feedback in the message and extract rules
@@ -850,9 +1196,9 @@ async def chat_stream(request: Request, payload: ChatRequest):
         profile_manager = get_profile_manager()
 
         # Check if message contains feedback
-        if feedback_extractor.is_feedback_message(request.message):
+        if feedback_extractor.is_feedback_message(payload.message):
             rule = feedback_extractor.extract(
-                request.message,
+                payload.message,
                 {"salesperson_id": state.salesperson_id}
             )
             if rule:
@@ -873,17 +1219,17 @@ async def chat_stream(request: Request, payload: ChatRequest):
         profile = await memory_repo.load_profile(state.salesperson_id)
         if not profile:
             profile = profile_manager.create_profile(state.salesperson_id)
-        if profile_manager.detect_frustration(profile, request.message):
+        if profile_manager.detect_frustration(profile, payload.message):
             await memory_repo.save_profile(profile)
 
         # Process based on mode
         if use_agents:
             # Use multi-agent system
-            async for chunk in process_with_agents(state, request.message):
+            async for chunk in process_with_agents(state, payload.message):
                 yield chunk
         else:
             # Use simple LLM call
-            async for chunk in process_simple(state, request.message):
+            async for chunk in process_simple(state, payload.message):
                 yield chunk
 
         # Day 5: Check if we need to create a checkpoint
@@ -896,7 +1242,12 @@ async def chat_stream(request: Request, payload: ChatRequest):
             checkpoint = None
 
         if checkpoint:
-            yield f"data: {json.dumps({'type': 'checkpoint_card', 'checkpoint': checkpoint.model_dump()})}\n\n"
+            # Convert checkpoint to dict with datetime serialization
+            checkpoint_dict = checkpoint.model_dump()
+            for dt_field in ['created_at', 'updated_at', 'decided_at']:
+                if checkpoint_dict.get(dt_field) and hasattr(checkpoint_dict[dt_field], 'isoformat'):
+                    checkpoint_dict[dt_field] = checkpoint_dict[dt_field].isoformat()
+            yield f"data: {json.dumps({'type': 'checkpoint_card', 'checkpoint': checkpoint_dict})}\n\n"
 
         # Save final state to in-memory store
         update_session(state)
@@ -909,7 +1260,15 @@ async def chat_stream(request: Request, payload: ChatRequest):
             print(f"Warning: Failed to persist session: {e}")
 
         # Send session update
-        yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'brief': state.brief.model_dump() if state.brief else None})}\n\n"
+        # Serialize brief with datetime handling
+            brief_dict = None
+            if state.brief:
+                brief_dict = state.brief.model_dump()
+                # Convert any datetime fields
+                for key, value in brief_dict.items():
+                    if hasattr(value, 'isoformat'):
+                        brief_dict[key] = value.isoformat()
+            yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'brief': brief_dict})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -1125,6 +1484,29 @@ async def answer_question(request: Request, payload: AnswerQuestionRequest):
 
     # Get orchestrator to handle validation response
     orchestrator = get_orchestrator()
+
+    # Special case: desired_output question routes to state.desired_outputs, not the brief
+    if payload.question_id == "desired_output":
+        answer_lower = payload.answer.lower()
+        outputs = []
+        if "pptx" in answer_lower or "powerpoint" in answer_lower or "slide" in answer_lower or "presentation" in answer_lower:
+            outputs.append("pptx")
+        if "figma" in answer_lower or "wireframe" in answer_lower or "design" in answer_lower or "ui" in answer_lower:
+            outputs.append("figma")
+        if "userflow" in answer_lower or "diagram" in answer_lower or "flow" in answer_lower or "mermaid" in answer_lower:
+            outputs.append("userflow")
+        if "quote" in answer_lower or "pricing" in answer_lower or "quotation" in answer_lower or "proposal" in answer_lower:
+            outputs.append("quote")
+        if not outputs:
+            outputs = ["pptx"]  # default fallback
+        state.desired_outputs = outputs
+        update_session(state)
+        return {
+            "status": "ready",
+            "message": f"Got it — will generate: {', '.join(outputs)}. Send your next message to proceed.",
+            "questions": [],
+            "validation_status": state.validation_status,
+        }
 
     # Handle the answer
     answers = {payload.question_id: payload.answer}

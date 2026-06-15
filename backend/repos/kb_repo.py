@@ -153,24 +153,21 @@ class LanceDBKBRepo(KBRepo):
         if self._table is None:
             client = self._get_client()
 
-            # Define schema with vector column
-            schema = {
-                "vector": "float32",  # Will be 1024-dim for bge-m3
-                "text": "string",
-                "source": "string",
-                "doc_id": "string",
-                "metadata": "string",  # JSON string
-            }
-
-            # Try to open existing table or create new
+            # Try to open existing table first
             try:
                 self._table = client.open_table("knowledge")
             except Exception:
-                # Table doesn't exist, will be created on first add
                 self._table = None
 
             if self._table is None:
-                # Create new table with schema
+                import pyarrow as pa
+                schema = pa.schema([
+                    pa.field("vector", pa.list_(pa.float32(), 1024)),
+                    pa.field("text", pa.string()),
+                    pa.field("source", pa.string()),
+                    pa.field("doc_id", pa.string()),
+                    pa.field("metadata", pa.string()),
+                ])
                 self._table = client.create_table(
                     "knowledge", schema=schema, exist_ok=True
                 )
@@ -421,59 +418,347 @@ class LanceDBKBRepo(KBRepo):
             return {"total_documents": 0, "sources": [], "source_count": 0}
 
 
-class AgentBaseKBRepo(KBRepo):
+# =============================================================================
+# AgentBase Memory — persistent KV layer
+# =============================================================================
+
+class _AgentBaseMemoryClient:
     """
-    AgentBase managed vector store implementation.
-    NOTE: This is a placeholder until AgentBase KB credentials are available.
+    Thin HTTP wrapper around the AgentBase Memory Records API.
+
+    Used for KB source hash tracking (persistent across container restarts):
+      Namespace "kb-hashes": records in format "{source_key}={md5_hash}"
+
+    The Memory Records API stores text facts, not raw binary data.  Vector
+    embeddings are NOT stored here — LanceDB is rebuilt via re-embedding at
+    each container start.  The bge-m3 model is pre-cached in the Docker image
+    so re-embedding takes ~10-30 s and is always acceptable.
+
+    IAM: standard OAuth2 client-credentials (HTTP Basic Auth + form body).
+    Token script: bash .claude/skills/agentbase/scripts/get_token.sh
+    """
+
+    IAM_URL = "https://iam.api.vngcloud.vn/accounts-api/v2/auth/token"
+    MEMORIES_URL = "https://agentbase.api.vngcloud.vn/memory/memories"
+    HASH_NAMESPACE = "kb-hashes"
+
+    def __init__(self, memory_id: str):
+        self.memory_id = memory_id
+        self._token: Optional[str] = None
+        self._token_expiry: float = 0.0
+        self._hash_cache: dict[str, str] = {}
+        self._cache_loaded: bool = False
+
+    async def _get_token(self) -> str:
+        """
+        Exchange GREENNODE_CLIENT_ID + GREENNODE_CLIENT_SECRET for a bearer token.
+        Uses HTTP Basic Auth + form-encoded body (standard OAuth2 client-credentials).
+        Raises ValueError immediately if credentials missing so callers can degrade.
+        """
+        import time
+        import httpx
+
+        if self._token and time.time() < self._token_expiry - 60:
+            return self._token
+
+        client_id = os.getenv("GREENNODE_CLIENT_ID", "").strip()
+        client_secret = os.getenv("GREENNODE_CLIENT_SECRET", "").strip()
+
+        if not client_id or not client_secret:
+            raise ValueError(
+                "AgentBase Memory requires GREENNODE_CLIENT_ID and "
+                "GREENNODE_CLIENT_SECRET. Set them in .env (local dev) or "
+                "they are auto-injected on AgentBase Runtime."
+            )
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                self.IAM_URL,
+                auth=(client_id, client_secret),          # HTTP Basic Auth
+                data={"grant_type": "client_credentials"}, # form-encoded body
+            )
+            if not resp.is_success:
+                raise RuntimeError(
+                    f"IAM token exchange failed {resp.status_code}: {resp.text[:200]}"
+                )
+            data = resp.json()
+            # Standard OAuth2: {"access_token": "...", "expires_in": 3600}
+            # VNG Cloud nested: {"data": {"token": "...", "expiresIn": 3600}}
+            if "access_token" in data:
+                self._token = data["access_token"]
+                self._token_expiry = time.time() + data.get("expires_in", 3600)
+            elif "data" in data and "token" in data.get("data", {}):
+                self._token = data["data"]["token"]
+                self._token_expiry = time.time() + data["data"].get("expiresIn", 3600)
+            else:
+                raise RuntimeError(f"Unexpected IAM token response: keys={list(data.keys())}")
+
+        return self._token
+
+    async def _list_hash_records(self, token: str) -> list[dict]:
+        """List all records in the kb-hashes namespace (up to 1000)."""
+        import httpx
+        url = f"{self.MEMORIES_URL}/{self.memory_id}/memory-records"
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                params={"namespace": self.HASH_NAMESPACE, "limit": 1000},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            # Handle both dict with listData and direct list responses
+            if isinstance(data, list):
+                return data
+            return data.get("listData", [])
+
+    async def _ensure_cache(self) -> None:
+        """Lazy-load all hash records into the in-memory cache (once per session)."""
+        if self._cache_loaded:
+            return
+        token = await self._get_token()
+        records = await self._list_hash_records(token)
+        for record in records:
+            # API returns text in the "memory" field (not "content")
+            text = self._record_text(record)
+            if "=" in text:
+                k, _, v = text.partition("=")
+                self._hash_cache[k] = v
+        self._cache_loaded = True
+
+    # ------------------------------------------------------------------
+    # High-level KB helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _record_text(record: dict) -> str:
+        """Extract the text content from a memory record.
+        AgentBase Memory API returns the text in the 'memory' field."""
+        return record.get("memory", "") or record.get("content", "")
+
+    async def get_source_hash(self, source_key: str) -> Optional[str]:
+        """Return the MD5 hash stored for this source, or None if not cached."""
+        await self._ensure_cache()
+        return self._hash_cache.get(source_key)
+
+    async def store_source_hash(self, source_key: str, file_hash: str) -> None:
+        """Persist (or update) the hash for a source file in AgentBase Memory."""
+        import httpx
+        token = await self._get_token()
+        records = await self._list_hash_records(token)
+        base = f"{self.MEMORIES_URL}/{self.memory_id}/memory-records"
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            # Delete any existing record for this source_key
+            for record in records:
+                if self._record_text(record).startswith(f"{source_key}="):
+                    record_id = record.get("id", "")
+                    if record_id:
+                        await client.delete(
+                            f"{base}/{record_id}",
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+            # Insert the new hash record
+            resp = await client.post(
+                f"{base}:insert-directly",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"namespace": self.HASH_NAMESPACE},
+                json={"memoryRecords": [f"{source_key}={file_hash}"]},
+            )
+            resp.raise_for_status()
+
+        self._hash_cache[source_key] = file_hash
+
+    async def remove_source_hash(self, source_key: str) -> None:
+        """Remove the hash record for a source file from AgentBase Memory."""
+        import httpx
+        token = await self._get_token()
+        records = await self._list_hash_records(token)
+        base = f"{self.MEMORIES_URL}/{self.memory_id}/memory-records"
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            for record in records:
+                if record.get("content", "").startswith(f"{source_key}="):
+                    record_id = record.get("id", "")
+                    if record_id:
+                        await client.delete(
+                            f"{base}/{record_id}",
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+
+        self._hash_cache.pop(source_key, None)
+
+
+# =============================================================================
+# HybridKBRepo — AgentBase Memory (persistence) + LanceDB (fast search)
+# =============================================================================
+
+class HybridKBRepo(KBRepo):
+    """
+    Two-tier KB:
+
+    • AgentBase Memory  — persistent hash tracking across container restarts.
+      Stores source_key → md5_hash records in the Memory Records API so we
+      know which files have changed and avoid unnecessary hash writes.
+
+    • LanceDB (in-process) — vector index rebuilt at every container start by
+      re-embedding all source files. bge-m3 is pre-cached in the Docker image
+      so this takes ~10-30 s and is always required (LanceDB is volatile).
+
+    Fallback (AGENTBASE_MEMORY_ID not set):
+      Plain LanceDB with local ingest_state.json hash tracking.
     """
 
     def __init__(self):
-        raise NotImplementedError(
-            "AgentBase KB implementation requires AgentBase credentials. "
-            "Use LanceDBKBRepo() for local development."
-        )
+        memory_id = os.getenv("AGENTBASE_MEMORY_ID", "").strip()
+        client_id = os.getenv("GREENNODE_CLIENT_ID", "").strip()
 
-    async def add_document(self, content: str, metadata: Optional[dict[str, Any]] = None) -> str:
-        raise NotImplementedError()
+        if memory_id and client_id:
+            self._ab: Optional[_AgentBaseMemoryClient] = _AgentBaseMemoryClient(memory_id)
+            self._lancedb = LanceDBKBRepo(db_path="./data/kb_runtime_cache")
+            self._using_agentbase = True
+            self._ab_healthy = True   # optimistic; degrades on first failure
+            print("[KB] HybridKBRepo: AgentBase Memory primary + LanceDB cache")
+        elif memory_id and not client_id:
+            self._ab = None
+            self._lancedb = LanceDBKBRepo(db_path="./data/kb_runtime_cache")
+            self._using_agentbase = False
+            self._ab_healthy = False
+            print(
+                "[KB] HybridKBRepo: AGENTBASE_MEMORY_ID is set but "
+                "GREENNODE_CLIENT_ID is missing — using LanceDB only. "
+                "Set GREENNODE_CLIENT_ID + GREENNODE_CLIENT_SECRET to enable AgentBase Memory."
+            )
+        else:
+            self._ab = None
+            self._lancedb = LanceDBKBRepo()  # file-based path for local dev
+            self._using_agentbase = False
+            self._ab_healthy = False
+            print("[KB] HybridKBRepo: LanceDB-only (set AGENTBASE_MEMORY_ID to enable AgentBase Memory)")
 
-    async def add_documents(self, documents: list[tuple[str, dict[str, Any]]]) -> list[str]:
-        raise NotImplementedError()
+    # ------------------------------------------------------------------
+    # Hybrid-specific helpers (used by ingest.py)
+    # ------------------------------------------------------------------
 
-    async def search(self, query: str, top_k: int = 5, filters: Optional[dict[str, Any]] = None) -> list[SearchResult]:
-        raise NotImplementedError()
+    @property
+    def using_agentbase(self) -> bool:
+        """True only when AgentBase Memory is configured AND still reachable."""
+        return self._using_agentbase and self._ab_healthy
+
+    def _degrade(self, reason: str) -> None:
+        """
+        Mark AgentBase Memory as unhealthy for this session.
+        Logged once; all subsequent AgentBase calls are skipped silently.
+        """
+        if self._ab_healthy:
+            self._ab_healthy = False
+            print(
+                f"[KB] AgentBase Memory unavailable ({reason[:200]}). "
+                "Falling back to LanceDB for this session. "
+                "Check GREENNODE_CLIENT_ID / GREENNODE_CLIENT_SECRET."
+            )
+
+    async def get_cached_hash(self, source_key: str) -> Optional[str]:
+        """
+        Return the MD5 hash stored in AgentBase Memory for this source, or None.
+        Falls back to returning None (triggering a fresh embed) if AgentBase is down.
+        """
+        if not self.using_agentbase or not self._ab:
+            return None
+        try:
+            return await self._ab.get_source_hash(source_key)
+        except Exception as e:
+            self._degrade(str(e))
+            return None
+
+
+    # ------------------------------------------------------------------
+    # KBRepo interface
+    # ------------------------------------------------------------------
+
+    async def add_document(
+        self, content: str, metadata: Optional[dict[str, Any]] = None
+    ) -> str:
+        return await self._lancedb.add_document(content, metadata)
+
+    async def add_documents(
+        self,
+        documents: list[tuple[str, dict[str, Any]]],
+        source_key: Optional[str] = None,
+        file_hash: Optional[str] = None,
+        update_memory: bool = True,
+    ) -> list[str]:
+        """
+        Embed + index documents into LanceDB.
+        If source_key + file_hash + update_memory are set and AgentBase Memory is
+        configured, the hash is also persisted to Memory for next-restart detection.
+        """
+        if not documents:
+            return []
+
+        texts = [d[0] for d in documents]
+        metadata_list = [d[1] for d in documents]
+        embeddings = self._lancedb._embed_text(texts)
+
+        doc_ids: list[str] = []
+        records = []
+
+        for i, (text, meta) in enumerate(zip(texts, metadata_list)):
+            did = str(uuid.uuid4())
+            doc_ids.append(did)
+            vec = embeddings[i]
+            records.append({
+                "vector": vec,
+                "text": text,
+                "source": meta.get("source", source_key or "unknown"),
+                "doc_id": did,
+                "metadata": json.dumps(meta),
+            })
+
+        table = self._lancedb._get_table()
+        table.add(records)
+
+        # Persist hash to AgentBase Memory for change detection on next restart.
+        if update_memory and self.using_agentbase and self._ab and source_key and file_hash:
+            try:
+                await self._ab.store_source_hash(source_key, file_hash)
+            except Exception as e:
+                self._degrade(f"write failed for {source_key}: {e}")
+
+        return doc_ids
+
+    async def search(
+        self, query: str, top_k: int = 5, filters: Optional[dict[str, Any]] = None
+    ) -> list[SearchResult]:
+        return await self._lancedb.search(query, top_k, filters)
 
     async def delete(self, doc_id: str) -> None:
-        raise NotImplementedError()
+        await self._lancedb.delete(doc_id)
 
     async def delete_by_source(self, source: str) -> int:
-        raise NotImplementedError()
+        if self.using_agentbase and self._ab:
+            try:
+                await self._ab.remove_source_hash(source)
+            except Exception as e:
+                self._degrade(f"delete failed for {source}: {e}")
+        return await self._lancedb.delete_by_source(source)
 
     async def list_sources(self) -> list[str]:
-        raise NotImplementedError()
+        return await self._lancedb.list_sources()
 
     async def get_stats(self) -> dict[str, Any]:
-        raise NotImplementedError()
+        stats = await self._lancedb.get_stats()
+        stats["backend"] = "agentbase+lancedb" if self._using_agentbase else "lancedb"
+        return stats
 
 
-def create_kb_repo(use_agentbase: bool = False) -> KBRepo:
-    """
-    Create a KB repository based on configuration.
+# =============================================================================
+# Factory
+# =============================================================================
 
-    Args:
-        use_agentbase: If True, try to use AgentBase KB.
-                      Falls back to LanceDB if not available.
-
-    Returns:
-        KBRepo implementation
-    """
-    if use_agentbase:
-        try:
-            return AgentBaseKBRepo()
-        except NotImplementedError:
-            pass
-
-    # Default to LanceDB
-    return LanceDBKBRepo()
+def create_kb_repo() -> KBRepo:
+    """Always returns HybridKBRepo. It self-selects AgentBase vs LanceDB-only."""
+    return HybridKBRepo()
 
 
 # Default instance
@@ -481,14 +766,14 @@ _default_kb_repo: Optional[KBRepo] = None
 
 
 def get_kb_repo() -> KBRepo:
-    """Get the default KB repository."""
+    """Get the default KB repository (HybridKBRepo singleton)."""
     global _default_kb_repo
     if _default_kb_repo is None:
-        _default_kb_repo = create_kb_repo(use_agentbase=False)
+        _default_kb_repo = create_kb_repo()
     return _default_kb_repo
 
 
 def set_kb_repo(repo: KBRepo) -> None:
-    """Set the default KB repository."""
+    """Set the default KB repository (for testing)."""
     global _default_kb_repo
     _default_kb_repo = repo

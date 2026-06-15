@@ -20,7 +20,17 @@ class AgentRegistry:
     Supports dynamic enable/disable without code changes.
     """
 
-    def __init__(self, config_path: str = "backend/config/agents.yaml"):
+    def __init__(self, config_path: str = None):
+        # Default to backend/config/agents.yaml relative to this file
+        if config_path is None:
+            import os
+            # This file is at: <project>/backend/agents/registry.py
+            # Config is at: <project>/backend/config/agents.yaml
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            # Go up from agents/ to backend/, then into config/
+            config_path = os.path.join(current_dir, "..", "config", "agents.yaml")
+            # Normalize the path (resolve ..)
+            config_path = os.path.normpath(config_path)
         """
         Initialize the registry.
 
@@ -60,13 +70,15 @@ class AgentRegistry:
             hooks = agent_config.get("hooks", [])
 
             # Day 5: Try to use real agent implementations first, fall back to stub
+            _here = os.path.dirname(os.path.abspath(__file__))
             try:
                 agent = self._create_real_agent(name, model_key, role_description, is_critical, kind, hooks)
             except Exception as e:
                 print(f"Real agent '{name}' failed to load: {e}, using stub")
-                # Use paths relative to this file so they resolve correctly
-                # regardless of the working directory the server starts from.
-                _here = os.path.dirname(os.path.abspath(__file__))
+                agent = None
+
+            # Fall back to stub when no real implementation exists or loading failed
+            if agent is None:
                 agent = create_agent(
                     name=name,
                     model_key=model_key,
@@ -94,7 +106,10 @@ class AgentRegistry:
         real_agent_map = {
             "account": ("agents.account.agent", "get_account_agent"),
             "compliance": ("agents.compliance.agent", "get_compliance_agent"),
-            # Add more agents as they're implemented
+            "market_strategy": ("agents.market_strategy.agent", "get_market_strategy_agent"),
+            "tech_solution": ("agents.tech_solution.agent", "get_tech_solution_agent"),
+            "content_generator": ("agents.content_generator.agent", "get_content_generator_agent"),
+            "design": ("agents.design.agent", "get_design_agent"),
         }
 
         if name in real_agent_map:

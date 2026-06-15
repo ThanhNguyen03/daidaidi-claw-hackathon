@@ -53,13 +53,16 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 
 # Per-agent model mapping (from environment)
 MODEL_MAPPING = {
-    "orchestrator": os.getenv("MODEL_ORCHESTRATOR", "MiniMax-M2.5"),
-    "tech_solution": os.getenv("MODEL_TECH_SOLUTION", "MiniMax-M2.5"),
-    "market_strategy": os.getenv("MODEL_MARKET_STRATEGY", "Qwen3-8B"),
-    "account": os.getenv("MODEL_ACCOUNT", "Qwen3-8B"),
-    "adtimabox": os.getenv("MODEL_ADTIMABOX", "Qwen3-8B"),
-    "design": os.getenv("MODEL_DESIGN", "Gemma-4-2b"),
-    "validation": os.getenv("MODEL_VALIDATION", "Gemma-4-2b"),
+    "orchestrator": os.getenv("MODEL_ORCHESTRATOR", "minimax/minimax-m2.5"),
+    "tech_solution": os.getenv("MODEL_TECH_SOLUTION", "minimax/minimax-m2.5"),
+    "market_strategy": os.getenv("MODEL_MARKET_STRATEGY", "qwen/qwen3-5-27b"),
+    "account": os.getenv("MODEL_ACCOUNT", "qwen/qwen3-5-27b"),
+    "adtimabox": os.getenv("MODEL_ADTIMABOX", "qwen/qwen3-5-27b"),
+    "design": os.getenv("MODEL_DESIGN", "minimax/minimax-m2.5"),
+    "validation": os.getenv("MODEL_VALIDATION", "minimax/minimax-m2.5"),
+    # New agents
+    "compliance": os.getenv("MODEL_COMPLIANCE", "qwen/qwen3-5-27b"),
+    "content_generator": os.getenv("MODEL_CONTENT_GENERATOR", "minimax/minimax-m2.5"),
 }
 
 
@@ -251,15 +254,12 @@ class GreenNodeLLM:
         Raises:
             ValueError: If agent_name is not recognized
         """
-        if agent_name not in MODEL_MAPPING:
-            available = ", ".join(MODEL_MAPPING.keys())
-            raise ValueError(
-                f"Unknown agent: {agent_name}. " f"Available agents: {available}"
-            )
+        # Fall back to orchestrator model for unknown agents rather than crashing
+        model_path = MODEL_MAPPING.get(agent_name, MODEL_MAPPING.get("orchestrator", "MiniMax-M2.5"))
 
         return GreenNodeClient(
             agent_name=agent_name,
-            model_path=MODEL_MAPPING[agent_name],
+            model_path=model_path,
             _client=self.client,
         )
 

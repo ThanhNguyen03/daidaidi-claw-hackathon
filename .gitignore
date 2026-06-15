@@ -4,7 +4,7 @@
 # Environment
 .env
 .env.local
-.env.example
+.env.production
 
 # AgentBase credentials & cache (NEVER commit — contains IAM secrets / tokens)
 .greennode.json

@@ -23,12 +23,12 @@ class ValidationService:
     C.5 §1: Validates brief and emits ValidationReport.
     """
 
-    # Mandatory fields by mode
+    # Mandatory fields by mode — only truly blocking fields (agents can work without budget)
     MANDATORY_FIELDS_BY_MODE = {
-        "planning": ["industry", "goal"],
-        "execute": ["industry", "budget_vnd", "goal"],
-        "chat": [],  # No mandatory fields for chat
-        "brainstorm": [],  # No mandatory fields for brainstorm
+        "planning": ["goal"],
+        "execute": ["goal"],
+        "chat": [],
+        "brainstorm": [],
     }
 
     # Fields that trigger re-validation when changed (critical edits)
@@ -90,15 +90,11 @@ class ValidationService:
         else:
             validation_report.kb_confidence = 0.9
 
-        # Determine status
+        # Determine status — only BLOCK on truly missing critical fields.
+        # Ambiguities are handled by agents themselves; don't stop dispatch over them.
         if validation_report.missing_required:
-            validation_report.status = "BLOCKED"
-            validation_report.severity = "critical"
-        elif validation_report.ambiguities or validation_report.kb_confidence < 0.7:
-            validation_report.status = "PENDING"
-            validation_report.severity = (
-                "major" if validation_report.ambiguities else "minor"
-            )
+            validation_report.status = "PENDING"  # Ask user, but agents will still run
+            validation_report.severity = "major"
         elif validation_report.out_of_scope:
             validation_report.status = "BLOCKED"
             validation_report.severity = "critical"

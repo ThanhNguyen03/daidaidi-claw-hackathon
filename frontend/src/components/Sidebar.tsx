@@ -107,7 +107,7 @@ export function Sidebar({
   sessionCount,
   isConnected,
   activeAgents = [],
-  isOpen,
+  isOpen = true,
   isDarkMode,
   onToggleTheme,
 }: SidebarProps) {
@@ -162,18 +162,22 @@ export function Sidebar({
 
   return (
     <aside
-      className={`${sidebarWidth} min-h-screen bg-surface border-r border-border flex flex-col p-4 transition-sidebar sticky top-0 z-40 shrink-0`}
+      className={`
+        ${sidebarWidth} h-screen bg-surface border-r border-border
+        flex flex-col p-4 transition-sidebar sticky top-0 z-40 shrink-0
+        ${!isOpen ? 'hidden md:flex' : 'flex'}
+      `}
     >
       {/* Logo / Title */}
       <div className="mb-6">
         {!isCollapsed && (
           <>
-            <h1 className="text-xl font-bold text-text">Sales AI</h1>
+            <h1 className="text-[18px] font-bold text-text">Sales AI</h1>
             <p className="text-xs text-text-muted">Multi-Agent Assistant</p>
           </>
         )}
         {isCollapsed && (
-          <div className="text-center text-xl font-bold text-accent">S</div>
+          <div className="text-center text-[18px] font-bold text-accent">S</div>
         )}
       </div>
 
@@ -182,7 +186,7 @@ export function Sidebar({
         onClick={onNewChat}
         className={`
           flex items-center justify-center gap-2 w-full py-3 bg-accent text-white rounded-lg
-          font-medium text-sm mb-6 hover:opacity-90 transition-opacity
+          font-medium text-[12px] mb-6 hover:opacity-90 transition-opacity
           ${isCollapsed ? 'px-2' : 'px-4'}
         `}
       >
@@ -204,7 +208,7 @@ export function Sidebar({
               onClick={() => onModeChange(mode.id)}
               className={`
                 flex items-center gap-3 rounded-md py-2.5 cursor-pointer
-                text-sm transition-all duration-150
+                text-[12px] transition-all duration-150
                 ${currentMode === mode.id
                   ? 'bg-accent-soft text-accent font-medium'
                   : 'text-text hover:bg-surface-hover'
@@ -319,28 +323,15 @@ export function Sidebar({
           {!isCollapsed && (isDarkMode ? 'Light' : 'Dark')}
         </button>
 
-        {/* Collapse Toggle - desktop only */}
-        {!isCollapsed && (
-          <button
-            onClick={() => setIsCollapsed(!isCollapsed)}
-            className="hidden md:flex items-center justify-center p-2 rounded-md border border-border text-text-muted hover:bg-surface-hover"
-            title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          >
-            <ChevronLeft size={16} />
-          </button>
-        )}
-      </div>
-
-      {/* Expand button when collapsed */}
-      {isCollapsed && (
+        {/* Collapse/Expand Toggle - always visible on larger screens when needed */}
         <button
-          onClick={() => setIsCollapsed(false)}
-          className="hidden md:flex items-center justify-center p-2 mt-2 rounded-md border border-border text-text-muted hover:bg-surface-hover"
-          title="Expand sidebar"
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          className="flex items-center justify-center p-2 rounded-md border border-border text-text-muted hover:bg-surface-hover"
+          title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
-          <ChevronRight size={16} />
+          {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
         </button>
-      )}
+      </div>
     </aside>
   );
 }

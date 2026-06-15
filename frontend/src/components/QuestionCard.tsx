@@ -2,7 +2,7 @@
  * Question Card Component
  * =======================
  * Displays questions to the user in a distinct card.
- * Uses Tailwind CSS for styling.
+ * Uses plain CSS values to avoid theme override issues.
  */
 
 import React, { useState } from 'react';
@@ -55,51 +55,152 @@ export function QuestionCard({
     return null;
   }
 
+  // Responsive styles
+  const containerStyle: React.CSSProperties = {
+    backgroundColor: '#ffffff',
+    border: '1px solid #e5e7eb',
+    borderRadius: '12px',
+    padding: '16px',
+    marginBottom: '16px',
+    zIndex: 99999,
+    position: 'relative',
+  };
+
+  const headerStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginBottom: '16px',
+    color: '#4f46e5',
+  };
+
+  const questionItemStyle: React.CSSProperties = {
+    padding: '14px',
+    backgroundColor: '#f9fafb',
+    border: '1px solid #e5e7eb',
+    borderRadius: '8px',
+  };
+
+  const questionTextStyle: React.CSSProperties = {
+    fontSize: '14px',
+    color: '#374151',
+    lineHeight: 1.6,
+    wordBreak: 'break-word',
+  };
+
+  const inputStyle: React.CSSProperties = {
+    flex: 1,
+    padding: '10px 14px',
+    borderRadius: '8px',
+    border: '1px solid #d1d5db',
+    backgroundColor: '#ffffff',
+    color: '#374151',
+    fontSize: '14px',
+    cursor: 'text',
+    width: '100%',
+    pointerEvents: 'auto',
+  };
+
+  const buttonStyle: React.CSSProperties = {
+    padding: '10px 14px',
+    borderRadius: '8px',
+    backgroundColor: '#4f46e5',
+    color: '#ffffff',
+    border: 'none',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontSize: '14px',
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
+  };
+
   return (
-    <div className="bg-yellow-50 border-l-4 border-yellow-500 rounded-lg p-4 mb-4 shadow-sm">
+    <div
+      className="question-card-container"
+      style={containerStyle}
+    >
       {/* Header */}
-      <div className="flex items-center gap-2 mb-4 text-amber-700">
-        <HelpCircle size={20} />
-        <span className="font-semibold text-sm">I need some information to proceed</span>
+      <div style={headerStyle}>
+        <HelpCircle size={18} />
+        <span style={{ fontWeight: 600, fontSize: '14px' }}>Need some information to proceed</span>
       </div>
 
       {/* Questions list */}
-      <div className="flex flex-col gap-4">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         {questions.map((question, index) => (
-          <div
-            key={question.id}
-            className="p-3 bg-white rounded border border-gray-100"
-          >
+          <div key={question.id} style={questionItemStyle}>
             {/* Question number + text */}
-            <div className="flex items-start gap-2 mb-2">
-              <span className="flex items-center justify-center w-6 h-6 bg-yellow-500 text-white rounded-full text-xs font-semibold shrink-0">
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '10px' }}>
+              <span
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '24px',
+                  height: '24px',
+                  borderRadius: '50%',
+                  backgroundColor: '#4f46e5',
+                  color: '#ffffff',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  flexShrink: 0,
+                }}
+              >
                 {index + 1}
               </span>
-              <span className="text-sm text-gray-800 leading-relaxed">{question.text}</span>
+              <span style={questionTextStyle}>{question.text}</span>
             </div>
 
             {/* Tags */}
-            <div className="ml-8 mb-3">
+            <div style={{ marginLeft: '34px', marginBottom: '10px' }}>
               {question.is_mandatory ? (
-                <span className="inline-flex items-center px-2 py-0.5 bg-red-50 text-red-700 rounded text-[10px] font-semibold uppercase">
-                  (required)
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    padding: '3px 8px',
+                    borderRadius: '4px',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    backgroundColor: '#fee2e2',
+                    color: '#dc2626',
+                  }}
+                >
+                  Required
                 </span>
               ) : (
-                <span className="inline-flex items-center px-2 py-0.5 bg-yellow-100 text-amber-700 rounded text-[10px] font-medium">
-                  (optional
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    padding: '3px 8px',
+                    borderRadius: '4px',
+                    fontSize: '10px',
+                    fontWeight: 500,
+                    backgroundColor: '#e0e7ff',
+                    color: '#4f46e5',
+                    flexWrap: 'wrap',
+                    gap: '4px',
+                  }}
+                >
+                  Optional
                   {question.assumption && (
-                    <span> — if skipped, I&apos;ll assume: {question.assumption}</span>
+                    <span style={{ color: '#6b7280', marginLeft: '4px' }}>
+                      — will assume: {question.assumption}
+                    </span>
                   )}
-                  )
                 </span>
               )}
             </div>
 
             {/* Inline answer input */}
-            <div className="ml-8">
-              <div className="flex gap-2">
+            <div style={{ marginLeft: '34px', position: 'relative', zIndex: 100 }}>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 <input
                   type="text"
+                  id={`answer-${question.id}`}
+                  name={`answer-${question.id}`}
                   value={inlineAnswers[question.id] || ''}
                   onChange={(e) => handleInlineAnswer(question.id, e.target.value)}
                   onKeyDown={(e) => {
@@ -109,20 +210,42 @@ export function QuestionCard({
                   }}
                   placeholder="Type your answer..."
                   disabled={disabled}
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded text-sm outline-none focus:border-yellow-500"
+                  autoComplete="off"
+                  style={{
+                    ...inputStyle,
+                    cursor: disabled ? 'not-allowed' : 'text',
+                    minWidth: '120px',
+                    flex: '1 1 140px',
+                  }}
                 />
                 <button
+                  type="button"
+                  aria-label="Send answer"
                   onClick={() => submitInlineAnswer(question)}
                   disabled={disabled || !inlineAnswers[question.id]?.trim()}
-                  className="p-2 bg-accent text-white rounded hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{
+                    ...buttonStyle,
+                    opacity: (disabled || !inlineAnswers[question.id]?.trim()) ? 0.5 : 1,
+                    cursor: (disabled || !inlineAnswers[question.id]?.trim()) ? 'not-allowed' : 'pointer',
+                  }}
                 >
                   <Check size={16} />
+                  <span className="hidden sm:inline">Send</span>
                 </button>
                 {!question.is_mandatory && (
                   <button
+                    type="button"
+                    aria-label="Skip this question"
                     onClick={() => onSkip(question.id)}
                     disabled={disabled}
-                    className="p-2 bg-gray-100 text-text-muted rounded hover:bg-gray-200 disabled:opacity-50"
+                    style={{
+                      padding: '10px',
+                      borderRadius: '8px',
+                      backgroundColor: '#f3f4f6',
+                      color: '#6b7280',
+                      border: '1px solid #d1d5db',
+                      cursor: disabled ? 'not-allowed' : 'pointer',
+                    }}
                     title="Skip - use assumption"
                   >
                     <SkipForward size={16} />
@@ -135,28 +258,39 @@ export function QuestionCard({
       </div>
 
       {/* Free text answer */}
-      <div className="mt-4 pt-4 border-t border-gray-100">
+      <div style={{ marginTop: '16px', paddingTop: '14px', borderTop: '1px solid #e5e7eb' }}>
         <form onSubmit={handleFreeTextSubmit}>
-          <div className="flex gap-2">
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <input
               type="text"
+              id="free-text-answer"
+              name="freeTextAnswer"
               value={freeText}
               onChange={(e) => setFreeText(e.target.value)}
-              placeholder="Or answer everything in one message (e.g., 'F&B, 150 triệu, Q3 launch')"
+              placeholder="Or answer everything in one message..."
               disabled={disabled}
-              className="flex-1 px-3 py-2 border border-gray-300 rounded text-sm outline-none focus:border-green-500"
+              style={{
+                ...inputStyle,
+                flex: '1 1 180px',
+                minWidth: '150px',
+              }}
             />
             <button
               type="submit"
+              aria-label="Send free text answer"
               disabled={disabled || !freeText.trim()}
-              className="flex items-center gap-1 px-4 py-2 bg-green-500 text-white rounded text-sm hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{
+                ...buttonStyle,
+                opacity: disabled ? 0.5 : 1,
+                cursor: disabled ? 'not-allowed' : 'pointer',
+              }}
             >
               <Send size={16} />
-              Send
+              <span className="hidden sm:inline">Send</span>
             </button>
           </div>
-          <p className="text-xs text-text-muted mt-2">
-            I&apos;ll automatically map your answer to the right fields.
+          <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '8px' }}>
+            I'll automatically map your answer to the right fields.
           </p>
         </form>
       </div>

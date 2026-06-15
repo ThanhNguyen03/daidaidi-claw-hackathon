@@ -61,6 +61,15 @@ agents:
     kind: generator
     critical: false
 
+  # A6 — Content generator (Group 2, sequential after Group-1 parallel)
+  content_generator:
+    name: "Content Generator"
+    model: MODEL_CONTENT_GENERATOR
+    role: "Proposal content writer — synthesises strategy, compliance and product analysis into a persuasive narrative"
+    enabled: true
+    kind: generator
+    critical: true
+
   # Day 2 B.6: Compliance as the first reviewer agent
   compliance:
     name: "Compliance"

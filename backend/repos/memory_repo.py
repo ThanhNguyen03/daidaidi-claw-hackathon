@@ -177,7 +177,7 @@ class SQLiteMemoryRepo(MemoryRepo):
         if not row:
             return None
 
-        _, _, profile_json, created_at, updated_at = row
+        _, profile_json, created_at, updated_at = row
         data = json.loads(profile_json)
         return SalespersonProfile(**data)
 

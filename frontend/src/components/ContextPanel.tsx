@@ -55,50 +55,57 @@ export function ContextPanel({
     return (
       <button
         onClick={onToggle}
-        className="fixed right-0 top-1/2 -translate-y-1/2 bg-accent text-white border-none py-4 px-2 rounded-l cursor-pointer text-xs font-medium z-50 flex items-center gap-1 shadow-card hover:opacity-90"
+        className="fixed right-0 top-1/2 -translate-y-1/2 bg-accent text-white border-none py-3 sm:py-4 px-1.5 sm:px-2 rounded-l-lg cursor-pointer text-xs font-medium z-50 flex items-center gap-1 shadow-card hover:opacity-90 transition-all"
         title="Open Context Panel"
       >
-        <PanelRightOpen size={16} />
-        <span className="vertical-text">Context</span>
+        <PanelRightOpen size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        <span className="hidden sm:inline text-[11px] sm:text-xs">Context</span>
       </button>
     );
   }
 
   return (
     <>
-      {/* Backdrop for mobile */}
+      {/* Backdrop for mobile and tablet (below lg) */}
       <div
         onClick={onToggle}
-        className="lg:hidden fixed inset-0 bg-black/30 z-40"
+        className="lg:hidden fixed inset-0 bg-black/40 z-40"
       />
 
-      {/* Drawer panel */}
-      <aside className="w-80 bg-surface border-l border-border flex flex-col h-screen overflow-hidden sticky top-0 z-45 shrink-0">
+      {/* Drawer panel - overlay on mobile/tablet, in-flow sticky panel on lg+ */}
+      <aside className="
+        bg-surface border-l border-border flex flex-col
+        fixed right-0 top-0 bottom-0 z-50 shrink-0
+        w-80 sm:w-80
+        lg:sticky lg:top-0 lg:bottom-auto lg:h-screen lg:w-80
+        transform transition-transform duration-300 ease-out
+        lg:transform-none
+        pb-20 lg:pb-0
+      ">
         {/* Header */}
-        <div className="px-4 py-4 border-b border-border flex items-center justify-between">
-          <h3 className="text-base font-semibold text-text">Context</h3>
+        <div className="px-4 py-3 sm:py-4 border-b border-border flex items-center justify-between">
+          <h3 className="text-sm sm:text-base font-semibold text-text">Context</h3>
           <button
             onClick={onToggle}
-            className="flex items-center gap-1 bg-transparent border-none cursor-pointer text-text-muted hover:text-text"
+            className="flex items-center gap-1.5 bg-transparent border-none cursor-pointer text-text-muted hover:text-text p-1.5 sm:p-0 rounded-lg sm:rounded-none hover:bg-surface-hover sm:bg-transparent transition-all"
             title="Close Context Panel"
           >
-            <span className="hidden lg:inline text-sm">Close</span>
+            <span className="hidden lg:inline text-[12px]">Close</span>
             <PanelRightClose size={18} />
           </button>
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto px-4 py-4">
+        <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-3 sm:py-4">
           {/* Brief Summary */}
-          <div className="mb-6">
+          <div className="mb-4 sm:mb-6">
             <button
               onClick={() => toggleSection('brief')}
-              className="flex items-center justify-between w-full bg-transparent border-none cursor-pointer py-2"
+              className="flex items-center justify-between w-full bg-transparent border-none cursor-pointer py-1.5 sm:py-2"
             >
-              <span className="font-semibold text-sm text-text">Brief Summary</span>
+              <span className="font-semibold text-xs sm:text-[12px] text-text">Brief Summary</span>
               <ChevronRight
-                size={16}
-                className={`text-text-muted transition-transform ${expandedSections.brief ? 'rotate-90' : ''}`}
+                size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-text-muted transition-transform"
               />
             </button>
 
@@ -109,13 +116,13 @@ export function ContextPanel({
                     {brief.industry && (
                       <div>
                         <span className="text-xs text-text-muted">Industry</span>
-                        <p className="text-sm text-text">{brief.industry}</p>
+                        <p className="text-[12px] text-text">{brief.industry}</p>
                       </div>
                     )}
                     {brief.budget_vnd && (
                       <div>
                         <span className="text-xs text-text-muted">Budget</span>
-                        <p className="text-sm text-text">
+                        <p className="text-[12px] text-text">
                           {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 }).format(brief.budget_vnd)}
                         </p>
                       </div>
@@ -123,30 +130,29 @@ export function ContextPanel({
                     {brief.goal && (
                       <div>
                         <span className="text-xs text-text-muted">Goal</span>
-                        <p className="text-sm text-text">{brief.goal}</p>
+                        <p className="text-[12px] text-text">{brief.goal}</p>
                       </div>
                     )}
                     {!brief.industry && !brief.budget_vnd && !brief.goal && (
-                      <p className="text-sm text-text-muted">No brief information yet</p>
+                      <p className="text-[12px] text-text-muted">No brief information yet</p>
                     )}
                   </div>
                 ) : (
-                  <p className="text-sm text-text-muted">No brief information yet</p>
+                  <p className="text-[12px] text-text-muted">No brief information yet</p>
                 )}
               </div>
             )}
           </div>
 
           {/* Active Constraints */}
-          <div className="mb-6">
+          <div className="mb-4 sm:mb-6">
             <button
               onClick={() => toggleSection('constraints')}
-              className="flex items-center justify-between w-full bg-transparent border-none cursor-pointer py-2"
+              className="flex items-center justify-between w-full bg-transparent border-none cursor-pointer py-1.5 sm:py-2"
             >
-              <span className="font-semibold text-sm text-text">Active Constraints</span>
+              <span className="font-semibold text-xs sm:text-[12px] text-text">Active Constraints</span>
               <ChevronRight
-                size={16}
-                className={`text-text-muted transition-transform ${expandedSections.constraints ? 'rotate-90' : ''}`}
+                size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-text-muted transition-transform"
               />
             </button>
 
@@ -187,7 +193,7 @@ export function ContextPanel({
                   </div>
                 ) : (
                   <div className="text-center py-4">
-                    <p className="text-sm text-text-muted">No active constraints</p>
+                    <p className="text-[12px] text-text-muted">No active constraints</p>
                     <p className="text-xs text-text-muted mt-1">Tell the assistant &quot;don&apos;t suggest X&quot; to create one</p>
                   </div>
                 )}
@@ -199,12 +205,11 @@ export function ContextPanel({
           <div>
             <button
               onClick={() => toggleSection('preferences')}
-              className="flex items-center justify-between w-full bg-transparent border-none cursor-pointer py-2"
+              className="flex items-center justify-between w-full bg-transparent border-none cursor-pointer py-1.5 sm:py-2"
             >
-              <span className="font-semibold text-sm text-text">Preferences</span>
+              <span className="font-semibold text-xs sm:text-[12px] text-text">Preferences</span>
               <ChevronRight
-                size={16}
-                className={`text-text-muted transition-transform ${expandedSections.preferences ? 'rotate-90' : ''}`}
+                size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-text-muted transition-transform"
               />
             </button>
 
@@ -225,7 +230,7 @@ export function ContextPanel({
                 onClick={() => toggleSection('artifacts')}
                 className="flex items-center justify-between w-full bg-transparent border-none cursor-pointer py-2"
               >
-                <span className="font-semibold text-sm text-text">Generated Artifacts</span>
+                <span className="font-semibold text-[12px] text-text">Generated Artifacts</span>
                 <ChevronRight
                   size={16}
                   className={`text-text-muted transition-transform ${expandedSections.artifacts ? 'rotate-90' : ''}`}

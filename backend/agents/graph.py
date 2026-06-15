@@ -12,6 +12,7 @@ This implements the Supervisor/Router pattern (B.1) with:
 """
 
 from typing import Optional, Callable
+import asyncio
 import os
 
 from langgraph.graph import StateGraph, END
@@ -160,12 +161,10 @@ class AgentGraph:
 
         # Get all registered agents
         registry = get_registry()
+        all_agents = [a for a in registry.all() if a.name != "orchestrator"]
 
-        # Add nodes for each agent
-        for agent in registry.all():
-            if agent.name == "orchestrator":
-                continue
-
+        # First, add all agent nodes
+        for agent in all_agents:
             # Create agent node function - use default arg to capture loop variable
             def make_node(a=agent):
                 async def node_inner(state: SalesCaseState) -> dict:
@@ -175,9 +174,17 @@ class AgentGraph:
 
             workflow.add_node(agent.name, make_node())
 
+        # Then, add conditional edges - each needs unique routing function
+        for idx, agent in enumerate(all_agents):
             # Add conditional edge: orchestrator -> agent
+            # Use partial to make routing function unique per agent
+            from functools import partial
+            route_fn = partial(create_routing_function(agent.name))
+            route_fn.__name__ = f"route_{agent.name}"
             workflow.add_conditional_edges(
-                "orchestrator", create_routing_function(agent.name), [agent.name, END]
+                "orchestrator",
+                route_fn,
+                [agent.name, END]
             )
 
             # Add edge: agent -> orchestrator (to aggregate results)
@@ -298,136 +305,194 @@ def rebuild_graph() -> AgentGraph:
 
 class SimpleAgentRunner:
     """
-    Simple agent runner for Day 2 (without full LangGraph complexity).
+    Multi-group agent runner implementing the A1→A2→Group1∥→Group2→… pipeline.
 
-    This provides the core orchestration logic without the full
-    LangGraph state machine. Will be replaced by AgentGraph in later days.
+    Architecture (matches workflow diagram):
+      A1  Scoping agent   — validates brief, asks missing fields
+      A2  Orchestrator    — pure router: creates plan, never executes tasks
+      G1  Parallel group  — strategy, compliance, product_expert run simultaneously
+      G2  Sequential      — content_generator synthesises G1 outputs
+      G3  Sequential      — account (budget/pricing), design (slide outline)
 
-    Day 4: Loads constraints and injects them into agent prompts.
+    Constraints are injected per-agent from the salesperson's feedback rules.
     """
 
     def __init__(self):
         self.orchestrator = get_orchestrator()
 
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _run_agent(
+        self,
+        agent_name: str,
+        task_description: str,
+        state: SalesCaseState,
+        constraints: list,
+    ):
+        """Run one agent with constraint injection. Returns AgentOutput."""
+        from agents.registry import get_agent
+        from memory.constraint_injection import get_constraints_for_agent
+        from schemas.state import AgentOutput
+
+        agent = get_agent(agent_name)
+        if agent is None:
+            return AgentOutput(
+                agent=agent_name,
+                status="FAILED",
+                payload={},
+                summary=f"Agent '{agent_name}' not found in registry",
+                confidence=0.0,
+                needs=None,
+                questions=[],
+            )
+
+        agent_constraints = get_constraints_for_agent(constraints, agent_name)
+        original_prompt = agent._base_prompt
+        agent._base_prompt = agent.get_prompt_with_constraints(agent_constraints)
+
+        try:
+            result = await agent.run(state)
+        except Exception as exc:
+            result = AgentOutput(
+                agent=agent_name,
+                status="FAILED",
+                payload={"error": str(exc)},
+                summary=f"Agent error: {exc}",
+                confidence=0.0,
+                needs=None,
+                questions=[],
+            )
+        finally:
+            agent._base_prompt = original_prompt
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Main run loop
+    # ------------------------------------------------------------------
+
     async def run(self, state: SalesCaseState) -> tuple[SalesCaseState, list[dict]]:
-        """
-        Run the orchestration.
-
-        Args:
-            state: Initial state
-
-        Returns:
-            Tuple of (final_state, stream_events)
-        """
-        stream_events = []
-        state.outputs = {}
-
-        # Day 4: Load active constraints and inject into state
         from repos.memory_repo import get_memory_repo
         from memory.constraint_injection import get_constraints_for_agent
+        from schemas.state import AgentOutput
 
+        stream_events: list[dict] = []
+        state.outputs = {}
+
+        # Load per-salesperson feedback rules for constraint injection
         memory_repo = get_memory_repo()
         constraints = await memory_repo.load_feedback_rules(
             state.salesperson_id, active_only=True
         )
-        state.constraints = constraints  # Populate constraints in state
+        state.constraints = constraints
 
-        # Initial status
-        stream_events.append(
-            {
-                "type": "agent_status",
-                "agent": "orchestrator",
-                "status": "thinking",
-                "message": "Analyzing request...",
-            }
-        )
+        # ── A1: Scoping & validation ──────────────────────────────────────
+        stream_events.append({
+            "type": "agent_status", "agent": "scoping",
+            "status": "thinking", "message": "Validating brief…",
+        })
 
-        # Run orchestrator to get first decision
-        orch_result = await self.orchestrator.run(state)
-        state.outputs["orchestrator"] = orch_result
+        # Skip LLM validation if chat_stream already ran it (READY or PENDING both proceed).
+        # This avoids double-calling the validation model on every request.
+        if state.validation_status not in ("READY", "PENDING"):
+            validation_output, should_dispatch = await self.orchestrator.validate_before_dispatch(state)
+            if not should_dispatch:
+                state.outputs["orchestrator"] = validation_output
+                stream_events.append({
+                    "type": "agent_status", "agent": "scoping",
+                    "status": "completed" if validation_output.status == "NEEDS_INPUT" else "failed",
+                    "message": validation_output.summary,
+                })
+                stream_events.append({"type": "done"})
+                return state, stream_events
 
-        stream_events.append(
-            {
-                "type": "agent_status",
-                "agent": "orchestrator",
-                "status": "completed",
-                "message": orch_result.summary,
-            }
-        )
+        stream_events.append({
+            "type": "agent_status", "agent": "scoping",
+            "status": "completed", "message": "Brief validated ✓",
+        })
 
-        # If needs an agent, dispatch
-        while orch_result.needs:
-            target_agent = orch_result.needs.agent
-            stream_events.append(
-                {
-                    "type": "agent_status",
-                    "agent": target_agent,
+        # ── A2: Orchestrator — pure routing, no execution ─────────────────
+        stream_events.append({
+            "type": "agent_status", "agent": "orchestrator",
+            "status": "thinking", "message": "Building execution plan…",
+        })
+
+        if not state.plan or not state.plan.tasks:
+            state.plan = self.orchestrator._create_execution_plan(state)
+
+        task_names = [t.agent_name for t in state.plan.tasks]
+        stream_events.append({
+            "type": "agent_status", "agent": "orchestrator",
+            "status": "completed",
+            "message": f"Plan ready → {', '.join(task_names)}",
+        })
+
+        # ── Execute tasks grouped by parallel_group ───────────────────────
+        group_map: dict[int, list] = {}
+        for task in state.plan.tasks:
+            g = getattr(task, "parallel_group", 0)
+            group_map.setdefault(g, []).append(task)
+
+        for group_num in sorted(group_map.keys()):
+            eligible = [t for t in group_map[group_num] if t.agent_name not in state.visited]
+            if not eligible:
+                continue
+
+            # Mark all agents in this group as visited before execution
+            for task in eligible:
+                state.visited.append(task.agent_name)
+                state.hop_depth += 1
+                stream_events.append({
+                    "type": "agent_status", "agent": task.agent_name,
                     "status": "thinking",
-                    "message": f"Executing {target_agent}...",
-                }
-            )
+                    "message": task.task_description
+                    + (" [parallel]" if len(eligible) > 1 else ""),
+                })
 
-            # Get the agent from registry
-            from agents.registry import get_agent
-
-            agent = get_agent(target_agent)
-
-            if agent is None:
-                stream_events.append(
-                    {
-                        "type": "agent_status",
-                        "agent": target_agent,
-                        "status": "failed",
-                        "message": f"Agent {target_agent} not found",
-                    }
+            if len(eligible) == 1:
+                # Sequential — single agent
+                task = eligible[0]
+                result = await self._run_agent(
+                    task.agent_name, task.task_description, state, constraints
                 )
-                break
+                state.outputs[task.agent_name] = result
+                stream_events.append({
+                    "type": "agent_status", "agent": task.agent_name,
+                    "status": "completed" if result.status == "COMPLETE" else "failed",
+                    "message": result.summary,
+                })
+            else:
+                # Parallel — asyncio.gather across the whole group
+                results = await asyncio.gather(
+                    *[
+                        self._run_agent(t.agent_name, t.task_description, state, constraints)
+                        for t in eligible
+                    ],
+                    return_exceptions=True,
+                )
+                for task, result in zip(eligible, results):
+                    if isinstance(result, Exception):
+                        err = AgentOutput(
+                            agent=task.agent_name, status="FAILED",
+                            payload={"error": str(result)}, summary=str(result),
+                            confidence=0.0, needs=None, questions=[],
+                        )
+                        state.outputs[task.agent_name] = err
+                        stream_events.append({
+                            "type": "agent_status", "agent": task.agent_name,
+                            "status": "failed", "message": str(result),
+                        })
+                    else:
+                        state.outputs[task.agent_name] = result
+                        stream_events.append({
+                            "type": "agent_status", "agent": task.agent_name,
+                            "status": "completed" if result.status == "COMPLETE" else "failed",
+                            "message": result.summary,
+                        })
 
-            # Day 4: Get constraints for this specific agent
-            agent_constraints = get_constraints_for_agent(constraints, target_agent)
-
-            # Run the agent with constraint-injected prompt
-            # Store the original prompt, inject constraints, run, restore
-            original_prompt = agent._base_prompt
-            injected_prompt = agent.get_prompt_with_constraints(agent_constraints)
-
-            # Temporarily set the injected prompt
-            agent._base_prompt = injected_prompt
-
-            try:
-                agent_result = await agent.run(state)
-            finally:
-                # Restore original prompt
-                agent._base_prompt = original_prompt
-
-            state.outputs[target_agent] = agent_result
-
-            stream_events.append(
-                {
-                    "type": "agent_status",
-                    "agent": target_agent,
-                    "status": "completed",
-                    "message": agent_result.summary,
-                }
-            )
-
-            # Handle agent result
-            orch_result = self.orchestrator.handle_agent_result(state, agent_result)
-            state.outputs["orchestrator"] = orch_result
-
-            # Check if orchestrator wants to continue
-            # Only continue if status is NEEDS_AGENT (needs another agent)
-            # If COMPLETE, FAILED, NEEDS_INPUT - break
-            if orch_result.status != "NEEDS_AGENT":
-                break
-
-        # Final status
-        stream_events.append(
-            {
-                "type": "done",
-            }
-        )
-
+        stream_events.append({"type": "done"})
         return state, stream_events
 
 

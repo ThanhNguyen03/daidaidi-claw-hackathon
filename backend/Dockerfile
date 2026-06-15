@@ -25,6 +25,18 @@ RUN useradd -m -u 1000 appuser
 COPY . /app
 WORKDIR /app
 
+# Pre-cache embedding models into a fixed path accessible by appuser at runtime.
+# HF_HOME must be set BEFORE the download so both the build step and the running
+# container agree on where the models live.  /opt/hf_cache is world-readable so
+# the non-root appuser can load the models without re-downloading from HuggingFace.
+ENV HF_HOME=/opt/hf_cache
+RUN mkdir -p /opt/hf_cache && \
+    python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \
+        print('Loading bge-m3...'); SentenceTransformer('BAAI/bge-m3'); \
+        print('Loading bge-reranker...'); CrossEncoder('BAAI/bge-reranker-v2-m3'); \
+        print('Done pre-caching models')" && \
+    chmod -R 755 /opt/hf_cache
+
 # Change ownership
 RUN chown -R appuser:appuser /app
 
@@ -38,7 +50,7 @@ ENV PORT=8080
 EXPOSE 8080
 
 # Health check (uses python's stdlib so we don't need curl in the slim image)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health').status==200 else 1)" || exit 1
 
 # Run the application (binds to $PORT = 8080). GREENNODE_* creds are auto-injected

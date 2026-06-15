@@ -38,6 +38,7 @@ interface UseChatReturn {
   sessionId: string | null;
   messages: Message[];
   isLoading: boolean;
+  isThinking: boolean;
   error: string | null;
   pendingQuestions: Question[];
   activeCheckpoint: Checkpoint | null;
@@ -87,16 +88,23 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   const [pendingQuestions, setPendingQuestions] = useState<Question[]>([]);
   const [activeCheckpoint, setActiveCheckpoint] = useState<Checkpoint | null>(null);
   const [activeAgents, setActiveAgents] = useState<AgentStatus[]>([
+    { name: 'scoping', status: 'idle' },
     { name: 'orchestrator', status: 'idle' },
-    { name: 'tech_solution', status: 'idle' },
     { name: 'market_strategy', status: 'idle' },
+    { name: 'compliance', status: 'idle' },
+    { name: 'adtimabox', status: 'idle' },
+    { name: 'content_generator', status: 'idle' },
     { name: 'account', status: 'idle' },
+    { name: 'design', status: 'idle' },
   ]);
 
   // Day 4: Constraints and profile state
   const [constraints, setConstraints] = useState<FeedbackRule[]>([]);
   const [profile, setProfile] = useState<SalespersonProfile | null>(null);
   const [brief, setBrief] = useState<Brief | null>(null);
+
+  // Thinking state — true while the LLM is emitting <think> reasoning tokens
+  const [isThinking, setIsThinking] = useState(false);
 
   // Day 6: Artifacts state
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
@@ -130,6 +138,25 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   // Ref for aborting requests
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // Inject a system message when the user switches modes mid-session
+  const prevModeRef = useRef<string>(mode);
+  useEffect(() => {
+    if (prevModeRef.current !== mode && messages.length > 0) {
+      const modeLabels: Record<string, string> = {
+        chat: 'Chat', planning: 'Planning', execute: 'Execute', brainstorm: 'Brainstorm',
+      };
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'system' as const,
+          content: `--- Switched to ${modeLabels[mode] || mode} mode. Session context carried over. ---`,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+    }
+    prevModeRef.current = mode;
+  }, [mode]);
+
   // Reset agent statuses when starting new message
   const resetAgentStatuses = useCallback(() => {
     setActiveAgents((prev) => prev.map((agent) => ({ ...agent, status: 'idle' as const })));
@@ -146,6 +173,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
       setIsLoading(true);
       setError(null);
+      setIsThinking(false);
       resetAgentStatuses();
 
       // Add user message immediately
@@ -158,37 +186,31 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
       let response: Response;
 
-      // Try BFF first, fall back to direct backend
+      const requestBody = JSON.stringify({
+        message,
+        session_id: sessionId,
+        salesperson_id: salespersonId,
+        mode,
+        brief,
+      });
+
+      // Try BFF first; fall back to direct backend on network error OR 5xx
       try {
         try {
           response = await fetch(BFF_URL, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              message,
-              session_id: sessionId,
-              salesperson_id: salespersonId,
-              mode,
-              brief,
-            }),
+            headers: { 'Content-Type': 'application/json' },
+            body: requestBody,
             signal: abortControllerRef.current.signal,
           });
-        } catch {
-          // Fall back to direct backend call
+          // BFF 5xx typically means backend is unreachable — retry directly
+          if (response.status >= 500) throw new Error('bff_unavailable');
+        } catch (bffErr) {
+          if ((bffErr as Error).name === 'AbortError') throw bffErr;
           response = await fetch(`${BACKEND_URL}/chat/stream`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              message,
-              session_id: sessionId,
-              salesperson_id: salespersonId,
-              mode,
-              brief,
-            }),
+            headers: { 'Content-Type': 'application/json' },
+            body: requestBody,
             signal: abortControllerRef.current.signal,
           });
         }
@@ -238,6 +260,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         setIsLoading(false);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [sessionId, salespersonId, mode, resetAgentStatuses]
   );
 
@@ -256,8 +279,17 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           // User message echoed back
           break;
 
+        case 'thinking_start':
+          setIsThinking(true);
+          break;
+
+        case 'thinking_end':
+          setIsThinking(false);
+          break;
+
         case 'content':
-          // Streaming content chunk
+          // Streaming content chunk — reasoning tokens have already been stripped by the backend
+          setIsThinking(false);
           {
             const content = data.content as string;
             setMessages((prev) => {
@@ -326,6 +358,26 @@ export function useChat(options: UseChatOptions): UseChatReturn {
             const checkpoint = data.checkpoint as Checkpoint;
             if (checkpoint) {
               setActiveCheckpoint(checkpoint);
+            }
+          }
+          break;
+
+        case 'agent_message':
+          // A specialized agent completed and is sending its response as a
+          // separate chat bubble (planning / execute mode).
+          {
+            const agentName = (data.agent as string) || 'assistant';
+            const agentContent = (data.content as string) || '';
+            if (agentContent) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: 'assistant',
+                  content: agentContent,
+                  agent: agentName,
+                  timestamp: new Date().toISOString(),
+                },
+              ]);
             }
           }
           break;
@@ -474,8 +526,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         if (response.ok) {
           // Reload session state
           const data = await response.json();
-          if (data.questions) {
+          if (data.questions && data.questions.length > 0) {
             setPendingQuestions(data.questions);
+          } else {
+            // No more questions - trigger agents to continue
+            setPendingQuestions([]);
+            // Send a continuation message to trigger agent execution
+            await sendMessage('Continue');
           }
         }
       } catch {
@@ -504,15 +561,19 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
         if (response.ok) {
           const data = await response.json();
-          if (data.questions) {
+          if (data.questions && data.questions.length > 0) {
             setPendingQuestions(data.questions);
+          } else {
+            // No more questions - trigger agents to continue
+            setPendingQuestions([]);
+            await sendMessage('Continue');
           }
         }
       } catch {
         // Silently fail - assumption will be used
       }
     },
-    [sessionId]
+    [sessionId, sendMessage]
   );
 
   // Free text answer - maps to multiple brief fields (C.5 §5, CHECK.md Issue #7)
@@ -774,6 +835,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     sessionId,
     messages,
     isLoading,
+    isThinking,
     error,
     pendingQuestions,
     activeCheckpoint,
