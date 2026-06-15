@@ -214,9 +214,41 @@ async def ingest_all_agents(force: bool = False) -> None:
     """
     Walk every agent directory and index all skills/knowledge.
     Called once at app startup.
+
+    Optimized: if all files are unchanged (force=False), skip KB initialization entirely.
     """
     if not AGENTS_DIR.exists():
         print("[ingest] agents dir not found, skipping")
+        return
+
+    # PRE-CHECK: Scan all files to see if any actually changed.
+    # This avoids initializing LanceDB (and loading bge-m3 model) if nothing is new.
+    local_state = _load_state()
+    any_changed = False
+    if not force:
+        for agent_dir in sorted(AGENTS_DIR.iterdir()):
+            if not agent_dir.is_dir() or agent_dir.name.startswith("_") or agent_dir.name.startswith("."):
+                continue
+            for doc_type in ("skills", "knowledge"):
+                dir_path = agent_dir / doc_type
+                if not dir_path.exists():
+                    continue
+                for md_file in dir_path.glob("*.md"):
+                    source_key = f"{agent_dir.name}/{doc_type}/{md_file.name}"
+                    file_hash = _file_hash(md_file)
+                    if local_state.get(source_key) != file_hash:
+                        any_changed = True
+                        break
+                if any_changed:
+                    break
+            if any_changed:
+                break
+    else:
+        any_changed = True  # force=True means always re-index
+
+    # If nothing changed and AgentBase Memory has up-to-date hashes, skip entirely
+    if not any_changed:
+        print("[ingest] skipped — all files unchanged")
         return
 
     agent_dirs = [
