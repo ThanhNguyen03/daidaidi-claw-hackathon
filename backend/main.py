@@ -1902,12 +1902,18 @@ async def checkpoint_decision(
     - reject: Do not execute, post clarifying question
     """
     # Get checkpoint from state (in production, load from store)
-    if session_id and session_id in _session_store:
-        state = _session_store[session_id]
-        checkpoint = state.checkpoint
+    print(f"[DEBUG] checkpoint_decision: session_id={session_id}, checkpoint_id={checkpoint_id}")
+    print(f"[DEBUG] Active sessions: {list(_session_store.keys())}")
 
-        if not checkpoint or checkpoint.id != checkpoint_id:
-            raise HTTPException(status_code=404, detail="Checkpoint not found")
+    if not session_id or session_id not in _session_store:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    state = _session_store[session_id]
+    checkpoint = state.checkpoint
+    print(f"[DEBUG] Current checkpoint in state: {checkpoint.id if checkpoint else None}")
+
+    if not checkpoint or checkpoint.id != checkpoint_id:
+        raise HTTPException(status_code=404, detail=f"Checkpoint not found: {checkpoint_id} (session has {checkpoint.id if checkpoint else 'none'})")
 
         # Handle session auto-approve
         if request.auto_approve:
