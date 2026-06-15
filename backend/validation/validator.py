@@ -23,10 +23,11 @@ class ValidationService:
     C.5 §1: Validates brief and emits ValidationReport.
     """
 
-    # Mandatory fields by mode — only truly blocking fields (agents can work without budget)
+    # Mandatory fields by mode — orchestrator MUST collect these before dispatching agents
+    # Agents cannot assume any information not explicitly provided by user
     MANDATORY_FIELDS_BY_MODE = {
-        "planning": ["goal"],
-        "execute": ["goal"],
+        "planning": ["industry", "goal", "target_audience", "budget_vnd"],
+        "execute": ["industry", "goal", "target_audience", "budget_vnd"],
         "chat": [],
         "brainstorm": [],
     }
@@ -76,12 +77,13 @@ class ValidationService:
         # Check first interaction (no profile or empty history)
         is_first_interaction = profile is None or len(profile.history) == 0
 
-        if is_first_interaction:
-            # First interaction always needs some basic info
-            if not brief.industry:
-                validation_report.missing_required.append("industry")
-            if not brief.goal:
-                validation_report.missing_required.append("goal")
+        # Check mandatory fields for the mode
+        mandatory_fields = self._get_mandatory_fields(brief.mode if hasattr(brief, 'mode') else "chat")
+        for field in mandatory_fields:
+            value = getattr(brief, field, None)
+            if not value:
+                if field not in validation_report.missing_required:
+                    validation_report.missing_required.append(field)
 
         # Check for low KB confidence (if we had KB, we'd check it)
         # For now, assume high confidence unless there's ambiguity
@@ -90,10 +92,9 @@ class ValidationService:
         else:
             validation_report.kb_confidence = 0.9
 
-        # Determine status — only BLOCK on truly missing critical fields.
-        # Ambiguities are handled by agents themselves; don't stop dispatch over them.
+        # Determine status based on missing fields
         if validation_report.missing_required:
-            validation_report.status = "PENDING"  # Ask user, but agents will still run
+            validation_report.status = "PENDING"  # Block dispatch - user MUST answer questions
             validation_report.severity = "major"
         elif validation_report.out_of_scope:
             validation_report.status = "BLOCKED"

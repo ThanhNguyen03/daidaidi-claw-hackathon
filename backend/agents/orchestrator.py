@@ -125,8 +125,8 @@ class Orchestrator:
             )
 
         elif validation_report.status == "PENDING":
-            # Missing some fields — generate questions but STILL allow dispatch.
-            # Agents are smart enough to work with partial info.
+            # Missing some fields — DO NOT dispatch until user answers questions.
+            # Orchestrator MUST NOT assume any information.
             question_manager = get_question_manager()
             questions = question_manager.generate_questions_from_validation(
                 brief=state.brief,
@@ -138,17 +138,18 @@ class Orchestrator:
             state.question_stack = question_manager.stack.items
             batch = question_manager.stack.next_batch()
 
-            # Return NEEDS_INPUT but with should_dispatch=True so agents still run
+            # Return NEEDS_INPUT and BLOCK dispatch (should_dispatch=False)
+            # Agents cannot run until all mandatory questions are answered
             return (
                 AgentOutput(
                     agent="orchestrator",
                     status="NEEDS_INPUT",
                     payload={"validation_status": "PENDING"},
-                    summary="Proceeding with available information. Some details can be refined later.",
+                    summary="Please answer the following questions before proceeding.",
                     confidence=0.8,
                     questions=batch,
                 ),
-                True,  # still dispatch agents
+                False,  # BLOCK dispatch until user answers all mandatory questions
             )
 
         else:
