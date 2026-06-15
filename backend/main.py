@@ -77,17 +77,14 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup/shutdown."""
-    # Startup: ingest KB
-    print("Starting up: Ingesting knowledge base...")
+    # Startup: index all agent skills + knowledge into LanceDB (idempotent).
+    # Files that haven't changed since last run are skipped via hash check.
+    print("Starting up: indexing agent skills/knowledge into LanceDB...")
     try:
-        from kb.ingest import ingest_all_agents
-        from repos.kb_repo import get_kb_repo
-
-        kb = get_kb_repo()
-        results = await ingest_all_agents(kb)
-        print(f"KB ingestion complete: {results}")
+        from tools.ingest import ingest_all_agents
+        await ingest_all_agents(force=False)
     except Exception as e:
-        print(f"Warning: KB ingestion failed: {e}")
+        print(f"Warning: knowledge ingest failed (non-fatal): {e}")
 
     # Startup: register checkpoint review hooks
     print("Starting up: Registering checkpoint review hooks...")

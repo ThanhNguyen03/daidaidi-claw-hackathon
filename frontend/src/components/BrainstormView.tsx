@@ -3,12 +3,13 @@
  * ==========================
  * UI for brainstorm mode with group bubbles, add-members modal,
  * round/token meter, and ASK-LOCK state display.
+ * Uses Tailwind CSS for styling.
  */
 
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Users, X, Plus, MessageCircle, Lock, Unlock, Clock, AlertCircle } from 'lucide-react';
+import { Users, X, Plus, MessageCircle, Lock, Unlock, Clock, AlertCircle, Loader2 } from 'lucide-react';
 
 interface BrainstormParticipant {
   agent_name: string;
@@ -36,7 +37,7 @@ interface BrainstormViewProps {
   onEndSession?: () => void;
 }
 
-// Add Member Modal Component
+// Add Member Modal - checkbox list from /debug/agents
 function AddMemberModal({
   isOpen,
   onClose,
@@ -46,115 +47,135 @@ function AddMemberModal({
   onClose: () => void;
   onAdd: (agentName: string) => void;
 }) {
-  const [agentName, setAgentName] = useState('');
+  const [availableAgents, setAvailableAgents] = useState<{ name: string; display_name: string }[]>([]);
+  const [selectedAgents, setSelectedAgents] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const fetchAgents = async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/debug/agents`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          const agents = data.agents?.map((a: { name: string; display_name?: string }) => ({
+            name: a.name,
+            display_name: a.display_name || a.name,
+          })) || [];
+          setAvailableAgents(agents);
+        }
+      } catch (err) {
+        console.error('Failed to fetch agents:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAgents();
+  }, [isOpen]);
+
+  const toggleAgent = (name: string) => {
+    setSelectedAgents(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(name)) {
+        newSet.delete(name);
+      } else {
+        newSet.add(name);
+      }
+      return newSet;
+    });
+  };
+
+  const handleAddSelected = () => {
+    selectedAgents.forEach(agentName => onAdd(agentName));
+    setSelectedAgents(new Set());
+    onClose();
+  };
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (agentName.trim()) {
-      onAdd(agentName.trim());
-      setAgentName('');
-      onClose();
-    }
-  };
-
   return (
     <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-      }}
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
       onClick={onClose}
     >
       <div
-        style={{
-          backgroundColor: 'white',
-          borderRadius: '0.5rem',
-          padding: '1.5rem',
-          width: '100%',
-          maxWidth: '400px',
-          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
-        }}
+        className="bg-surface rounded-lg p-6 w-full max-w-md shadow-lg border border-border"
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
-          <h3 style={{ fontSize: '1.125rem', fontWeight: '600' }}>Add Participant</h3>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold text-text">Add Participants</h3>
+          <button onClick={onClose} className="bg-transparent border-none cursor-pointer text-text-muted hover:text-text">
             <X size={20} />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '1rem' }}>
-            <label
-              htmlFor="agentName"
-              style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem' }}
-            >
-              Agent Name
-            </label>
-            <input
-              type="text"
-              id="agentName"
-              value={agentName}
-              onChange={(e) => setAgentName(e.target.value)}
-              placeholder="Enter agent name..."
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.375rem',
-                fontSize: '0.875rem',
-              }}
-            />
+        {loading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 size={24} className="animate-spin text-text-muted" />
           </div>
+        ) : (
+          <>
+            <p className="text-sm text-text-muted mb-4">Select agents to participate in the brainstorm:</p>
 
-          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-            <button
-              type="button"
-              onClick={onClose}
-              style={{
-                padding: '0.5rem 1rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.375rem',
-                backgroundColor: 'white',
-                fontSize: '0.875rem',
-                cursor: 'pointer',
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={!agentName.trim()}
-              style={{
-                padding: '0.5rem 1rem',
-                backgroundColor: agentName.trim() ? '#3b82f6' : '#9ca3af',
-                color: 'white',
-                border: 'none',
-                borderRadius: '0.375rem',
-                fontSize: '0.875rem',
-                cursor: agentName.trim() ? 'pointer' : 'not-allowed',
-              }}
-            >
-              Add
-            </button>
-          </div>
-        </form>
+            <div className="mb-4 max-h-60 overflow-y-auto">
+              {availableAgents.map(agent => (
+                <label
+                  key={agent.name}
+                  className={`
+                    flex items-center gap-3 p-3 rounded cursor-pointer transition-all
+                    ${selectedAgents.has(agent.name)
+                      ? 'bg-accent-soft border-accent'
+                      : 'bg-transparent border-border hover:bg-surface-hover'
+                    }
+                    border mb-2
+                  `}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedAgents.has(agent.name)}
+                    onChange={() => toggleAgent(agent.name)}
+                    className="w-4 h-4 accent-accent"
+                  />
+                  <div className="flex-1">
+                    <span className="text-sm font-medium text-text block">{agent.display_name}</span>
+                    <span className="text-xs text-text-muted">{agent.name}</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 border border-border rounded text-sm text-text hover:bg-surface-hover"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddSelected}
+                disabled={selectedAgents.size === 0}
+                className={`px-4 py-2 rounded text-sm ${
+                  selectedAgents.size > 0
+                    ? 'bg-accent text-white hover:opacity-90'
+                    : 'bg-text-muted text-white cursor-not-allowed'
+                }`}
+              >
+                Add Selected ({selectedAgents.size})
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-// Participant Bubble Component
+// Participant Bubble
 function ParticipantBubble({
   participant,
   isCurrentSpeaker,
@@ -166,108 +187,54 @@ function ParticipantBubble({
 }) {
   return (
     <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        padding: '1rem',
-        backgroundColor: isCurrentSpeaker ? '#eff6ff' : '#f9fafb',
-        border: isCurrentSpeaker ? '2px solid #3b82f6' : '1px solid #e5e7eb',
-        borderRadius: '0.75rem',
-        minWidth: '120px',
-        position: 'relative',
-      }}
+      className={`
+        flex flex-col items-center p-4 rounded-xl min-w-28 relative
+        ${isCurrentSpeaker ? 'bg-accent-soft border-2 border-accent' : 'bg-surface-2 border border-border'}
+      `}
     >
-      {/* Current speaker indicator */}
       {isCurrentSpeaker && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '-8px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            backgroundColor: '#3b82f6',
-            color: 'white',
-            fontSize: '0.625rem',
-            padding: '0.125rem 0.5rem',
-            borderRadius: '9999px',
-            fontWeight: '500',
-          }}
-        >
+        <div className="absolute -top-2 left-1/2 -translate-x-1/2 bg-accent text-white text-[10px] px-2 py-0.5 rounded-full font-medium">
           Speaking
         </div>
       )}
 
-      {/* Ask lock indicator */}
       {isAskLockHolder && (
-        <div style={{ position: 'absolute', top: '0.5rem', right: '0.5rem', color: '#f59e0b' }}>
+        <div className="absolute top-2 right-2 text-status-thinking">
           <Lock size={14} />
         </div>
       )}
 
-      <div
-        style={{
-          width: '40px',
-          height: '40px',
-          borderRadius: '50%',
-          backgroundColor: '#3b82f6',
-          color: 'white',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontWeight: '600',
-          fontSize: '1rem',
-          marginBottom: '0.5rem',
-        }}
-      >
+      <div className="w-10 h-10 rounded-full bg-accent text-white flex items-center justify-center font-semibold text-base mb-2">
         {participant.agent_name.charAt(0).toUpperCase()}
       </div>
 
-      <span style={{ fontSize: '0.875rem', fontWeight: '500', color: '#111827' }}>
-        {participant.agent_name}
-      </span>
-
-      <span style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
-        {participant.rounds_spoken} rounds
-      </span>
+      <span className="text-sm font-medium text-text">{participant.agent_name}</span>
+      <span className="text-xs text-text-muted mt-1">{participant.rounds_spoken} rounds</span>
     </div>
   );
 }
 
-// Round Meter Component
+// Round Meter
 function RoundMeter({ current, max }: { current: number; max: number }) {
   const percentage = Math.min((current / max) * 100, 100);
 
   return (
-    <div style={{ marginBottom: '1rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-        <span style={{ fontSize: '0.875rem', fontWeight: '500' }}>Round Progress</span>
-        <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-          {current} / {max}
-        </span>
+    <div className="mb-4">
+      <div className="flex justify-between mb-1">
+        <span className="text-sm font-medium">Round Progress</span>
+        <span className="text-sm text-text-muted">{current} / {max}</span>
       </div>
-      <div
-        style={{
-          height: '8px',
-          backgroundColor: '#e5e7eb',
-          borderRadius: '9999px',
-          overflow: 'hidden',
-        }}
-      >
+      <div className="h-2 bg-surface-2 rounded-full overflow-hidden">
         <div
-          style={{
-            height: '100%',
-            backgroundColor: percentage >= 100 ? '#10b981' : '#3b82f6',
-            width: `${percentage}%`,
-            transition: 'width 0.3s ease',
-          }}
+          className={`h-full transition-all duration-300 ${percentage >= 100 ? 'bg-status-completed' : 'bg-accent'}`}
+          style={{ width: `${percentage}%` }}
         />
       </div>
     </div>
   );
 }
 
-// ASK-LOCK Status Component
+// ASK-LOCK Status
 function AskLockStatus({
   holder,
   onRequest,
@@ -284,39 +251,23 @@ function AskLockStatus({
 
   return (
     <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0.75rem',
-        backgroundColor: hasLock ? '#fef3c7' : '#f9fafb',
-        border: '1px solid',
-        borderColor: hasLock ? '#fcd34d' : '#e5e7eb',
-        borderRadius: '0.5rem',
-      }}
+      className={`
+        flex items-center justify-between p-3 rounded-lg mb-4
+        ${hasLock ? 'bg-yellow-50 border border-yellow-200' : 'bg-surface-2 border border-border'}
+      `}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        {hasLock ? <Lock size={18} color="#f59e0b" /> : <Unlock size={18} color="#6b7280" />}
+      <div className="flex items-center gap-2">
+        {hasLock ? <Lock size={18} className="text-status-thinking" /> : <Unlock size={18} className="text-text-muted" />}
         <div>
-          <span style={{ fontSize: '0.875rem', fontWeight: '500' }}>ASK-LOCK: </span>
-          <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-            {hasLock ? `Held by ${holder}` : 'Available'}
-          </span>
+          <span className="text-sm font-medium">ASK-LOCK: </span>
+          <span className="text-sm text-text-muted">{hasLock ? `Held by ${holder}` : 'Available'}</span>
         </div>
       </div>
 
       {!isHolder && !hasLock && (
         <button
           onClick={onRequest}
-          style={{
-            padding: '0.25rem 0.75rem',
-            backgroundColor: '#3b82f6',
-            color: 'white',
-            border: 'none',
-            borderRadius: '0.375rem',
-            fontSize: '0.75rem',
-            cursor: 'pointer',
-          }}
+          className="px-3 py-1 bg-accent text-white rounded text-xs cursor-pointer hover:opacity-90"
         >
           Request Lock
         </button>
@@ -325,15 +276,7 @@ function AskLockStatus({
       {isHolder && (
         <button
           onClick={onRelease}
-          style={{
-            padding: '0.25rem 0.75rem',
-            backgroundColor: '#6b7280',
-            color: 'white',
-            border: 'none',
-            borderRadius: '0.375rem',
-            fontSize: '0.75rem',
-            cursor: 'pointer',
-          }}
+          className="px-3 py-1 bg-text-muted text-white rounded text-xs cursor-pointer hover:opacity-90"
         >
           Release Lock
         </button>
@@ -352,7 +295,6 @@ export function BrainstormView({
 }: BrainstormViewProps) {
   const [showAddModal, setShowAddModal] = useState(false);
 
-  // Default state when no session exists
   const state = brainState || {
     session_id: '',
     participants: [],
@@ -366,34 +308,14 @@ export function BrainstormView({
 
   if (state.is_ended) {
     return (
-      <div
-        style={{
-          padding: '2rem',
-          textAlign: 'center',
-          backgroundColor: '#f9fafb',
-          borderRadius: '0.5rem',
-        }}
-      >
-        <AlertCircle size={48} color="#10b981" style={{ marginBottom: '1rem', margin: '0 auto' }} />
-        <h3 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '0.5rem' }}>
-          Brainstorm Session Ended
-        </h3>
-        <p style={{ color: '#6b7280', fontSize: '0.875rem' }}>
-          The session has reached its conclusion.
-        </p>
+      <div className="p-8 text-center bg-surface rounded-lg">
+        <AlertCircle size={48} className="text-status-completed mx-auto mb-4" />
+        <h3 className="text-xl font-semibold mb-2">Brainstorm Session Ended</h3>
+        <p className="text-sm text-text-muted">The session has reached its conclusion.</p>
         {onEndSession && (
           <button
             onClick={onEndSession}
-            style={{
-              marginTop: '1rem',
-              padding: '0.5rem 1rem',
-              backgroundColor: '#3b82f6',
-              color: 'white',
-              border: 'none',
-              borderRadius: '0.375rem',
-              fontSize: '0.875rem',
-              cursor: 'pointer',
-            }}
+            className="mt-4 px-4 py-2 bg-accent text-white rounded text-sm hover:opacity-90"
           >
             Start New Session
           </button>
@@ -404,47 +326,25 @@ export function BrainstormView({
 
   if (state.is_frozen) {
     return (
-      <div
-        style={{
-          padding: '2rem',
-          textAlign: 'center',
-          backgroundColor: '#fef3c7',
-          borderRadius: '0.5rem',
-        }}
-      >
-        <Clock size={48} color="#f59e0b" style={{ marginBottom: '1rem', margin: '0 auto' }} />
-        <h3 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '0.5rem' }}>
-          Session Frozen
-        </h3>
-        <p style={{ color: '#92400e', fontSize: '0.875rem' }}>
-          The session has been frozen due to inactivity (15 minutes no response).
-        </p>
+      <div className="p-8 text-center bg-yellow-50 rounded-lg">
+        <Clock size={48} className="text-status-thinking mx-auto mb-4" />
+        <h3 className="text-xl font-semibold mb-2">Session Frozen</h3>
+        <p className="text-sm text-yellow-800">The session has been frozen due to inactivity (15 minutes no response).</p>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: '1rem' }}>
+    <div className="p-4">
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <MessageCircle size={20} color="#3b82f6" />
-          <h3 style={{ fontSize: '1rem', fontWeight: '600' }}>Brainstorm Mode</h3>
+      <div className="flex justify-between items-center mb-4">
+        <div className="flex items-center gap-2">
+          <MessageCircle size={20} className="text-accent" />
+          <h3 className="text-base font-semibold">Brainstorm Mode</h3>
         </div>
         <button
           onClick={() => setShowAddModal(true)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.25rem',
-            padding: '0.25rem 0.75rem',
-            backgroundColor: '#3b82f6',
-            color: 'white',
-            border: 'none',
-            borderRadius: '0.375rem',
-            fontSize: '0.75rem',
-            cursor: 'pointer',
-          }}
+          className="flex items-center gap-1 px-3 py-1.5 bg-accent text-white rounded text-xs hover:opacity-90"
         >
           <Plus size={14} />
           Add Member
@@ -455,7 +355,7 @@ export function BrainstormView({
       <RoundMeter current={state.round_count} max={state.max_rounds} />
 
       {/* ASK-LOCK Status */}
-      <div style={{ marginBottom: '1rem' }}>
+      <div>
         <AskLockStatus
           holder={state.ask_lock_holder}
           onRequest={onRequestAskLock || (() => {})}
@@ -464,38 +364,19 @@ export function BrainstormView({
         />
       </div>
 
-      {/* Participant Bubbles */}
-      <div style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-          <Users size={16} color="#6b7280" />
-          <span style={{ fontSize: '0.875rem', fontWeight: '500', color: '#374151' }}>
-            Participants ({state.participants.length})
-          </span>
+      {/* Participants */}
+      <div className="mb-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Users size={16} className="text-text-muted" />
+          <span className="text-sm font-medium text-text">Participants ({state.participants.length})</span>
         </div>
 
         {state.participants.length === 0 ? (
-          <div
-            style={{
-              padding: '2rem',
-              textAlign: 'center',
-              backgroundColor: '#f9fafb',
-              borderRadius: '0.5rem',
-              border: '1px dashed #d1d5db',
-            }}
-          >
-            <p style={{ color: '#6b7280', fontSize: '0.875rem' }}>
-              No participants yet. Click "Add Member" to start.
-            </p>
+          <div className="p-8 text-center bg-surface-2 rounded-lg border border-dashed border-border">
+            <p className="text-sm text-text-muted">No participants yet. Click &quot;Add Member&quot; to start.</p>
           </div>
         ) : (
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: '1rem',
-              justifyContent: 'center',
-            }}
-          >
+          <div className="flex flex-wrap justify-center gap-4">
             {state.participants.map((participant) => (
               <ParticipantBubble
                 key={participant.agent_name}
@@ -508,20 +389,11 @@ export function BrainstormView({
         )}
       </div>
 
-      {/* Current Speaker Indicator */}
+      {/* Current Speaker */}
       {state.current_speaker && (
-        <div
-          style={{
-            padding: '0.75rem',
-            backgroundColor: '#eff6ff',
-            borderRadius: '0.5rem',
-            textAlign: 'center',
-          }}
-        >
-          <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Current speaker: </span>
-          <span style={{ fontSize: '0.875rem', fontWeight: '600', color: '#3b82f6' }}>
-            {state.current_speaker}
-          </span>
+        <div className="p-3 bg-accent-soft rounded-lg text-center">
+          <span className="text-sm text-text-muted">Current speaker: </span>
+          <span className="text-sm font-semibold text-accent">{state.current_speaker}</span>
         </div>
       )}
 

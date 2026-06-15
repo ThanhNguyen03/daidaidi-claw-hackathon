@@ -64,14 +64,17 @@ class AgentRegistry:
                 agent = self._create_real_agent(name, model_key, role_description, is_critical, kind, hooks)
             except Exception as e:
                 print(f"Real agent '{name}' failed to load: {e}, using stub")
+                # Use paths relative to this file so they resolve correctly
+                # regardless of the working directory the server starts from.
+                _here = os.path.dirname(os.path.abspath(__file__))
                 agent = create_agent(
                     name=name,
                     model_key=model_key,
                     role_description=role_description,
                     is_stub=True,
-                    prompt_path=f"backend/agents/{name}/prompt.md",
-                    knowledge_dir=f"backend/agents/{name}/knowledge",
-                    skills_dir=f"backend/agents/{name}/skills",
+                    prompt_path=os.path.join(_here, name, "prompt.md"),
+                    knowledge_dir=os.path.join(_here, name, "knowledge"),
+                    skills_dir=os.path.join(_here, name, "skills"),
                     is_critical=is_critical,
                     kind=kind,
                     hooks=hooks,

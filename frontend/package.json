@@ -13,22 +13,27 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@assistant-ui/react": "latest",
+    "ai": "latest",
+    "lucide-react": "^0.400.0",
     "next": "14.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
-    "@assistant-ui/react": "latest",
-    "ai": "latest",
-    "lucide-react": "^0.400.0"
+    "react-markdown": "^10.1.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.1",
     "@types/node": "^20.12.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
-    "typescript": "^5.4.0",
+    "autoprefixer": "^10.5.0",
     "eslint": "^8.57.0",
     "eslint-config-next": "14.2.0",
+    "eslint-config-prettier": "^9.1.0",
+    "postcss": "^8.5.15",
     "prettier": "^3.2.0",
-    "eslint-config-prettier": "^9.1.0"
+    "tailwindcss": "^4.3.1",
+    "typescript": "^5.4.0"
   },
   "engines": {
     "node": ">=18"

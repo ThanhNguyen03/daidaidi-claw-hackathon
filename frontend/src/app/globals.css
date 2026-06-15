@@ -1,39 +1,95 @@
 /**
  * Global CSS Styles
  * =================
- * Basic reset and utility styles for the Sales AI Assistant.
+ * Theme system + Tailwind CSS foundation.
  */
 
+@import "tailwindcss";
+
+/* ===== THEME SYSTEM (CSS Variables for Tailwind) ===== */
+@theme {
+  /* Light theme (default) */
+  --color-bg: #faf9f7;
+  --color-surface: #ffffff;
+  --color-surface-2: #f3f4f6;
+  --color-surface-hover: #f9fafb;
+  --color-text: #111827;
+  --color-text-muted: #6b7280;
+  --color-border: #e5e7eb;
+  --color-border-strong: #d1d5db;
+
+  /* Accent */
+  --color-accent: #3b82f6;
+  --color-accent-soft: #eff6ff;
+  --color-accent-text: #1e40af;
+
+  /* Status */
+  --color-status-thinking: #f59e0b;
+  --color-status-waiting: #8b5cf6;
+  --color-status-completed: #10b981;
+  --color-status-failed: #ef4444;
+  --color-status-idle: #6b7280;
+
+  /* Shadows */
+  --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+
+  /* Fonts */
+  --font-sans: var(--font-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Per-mode accent colors */
+[data-mode="planning"] {
+  --color-accent: #3b82f6;
+}
+
+[data-mode="execute"] {
+  --color-accent: #10b981;
+}
+
+[data-mode="brainstorm"] {
+  --color-accent: #8b5cf6;
+}
+
+[data-mode="chat"] {
+  --color-accent: #64748b;
+}
+
+/* Dark theme */
+.dark {
+  --color-bg: #1a1a1a;
+  --color-surface: #2a2a2a;
+  --color-surface-2: #3a3a3a;
+  --color-surface-hover: #333333;
+  --color-text: #f9fafb;
+  --color-text-muted: #9ca3af;
+  --color-border: #404040;
+  --color-border-strong: #525252;
+  --color-accent-soft: #1e3a5f;
+  --color-accent-text: #93c5fd;
+}
+
+/* Base styles */
 * {
   box-sizing: border-box;
-  margin: 0;
-  padding: 0;
 }
 
 html,
 body {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
-    sans-serif;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background-color: #f9fafb;
-  color: #111827;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* Remove default focus outline, add custom */
-:focus {
-  outline: none;
-}
-
+/* Focus styles */
 :focus-visible {
-  outline: 2px solid #3b82f6;
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
-}
-
-/* Smooth scrolling */
-html {
-  scroll-behavior: smooth;
 }
 
 /* Prevent text selection on UI elements */
@@ -42,14 +98,14 @@ button,
   user-select: none;
 }
 
-/* Custom scrollbar */
+/* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: var(--color-surface-2);
 }
 
 ::-webkit-scrollbar-thumb {
@@ -61,77 +117,14 @@ button,
   background: #94a3b8;
 }
 
-/* Animation utilities */
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.animate-spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-
-.animate-pulse {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-/* Fade in animation */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.fade-in {
-  animation: fadeIn 0.3s ease-out;
-}
-
-/* Utility classes */
-.truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-/* Input placeholder styling */
+/* Input placeholder */
 ::placeholder {
   color: #9ca3af;
 }
 
-/* Link styling */
+/* Link */
 a {
-  color: #3b82f6;
+  color: var(--color-accent);
   text-decoration: none;
 }
 
@@ -139,8 +132,41 @@ a:hover {
   text-decoration: underline;
 }
 
-/* Selection styling */
+/* Selection */
 ::selection {
   background-color: #bfdbfe;
   color: #1e40af;
+}
+
+/* ===== UTILITY EXTENSIONS ===== */
+
+/* Status dot colors */
+.status-dot {
+  @apply w-2 h-2 rounded-full;
+}
+
+.status-idle { @apply bg-status-idle; }
+.status-thinking { @apply bg-status-thinking; }
+.status-waiting { @apply bg-status-waiting; }
+.status-completed { @apply bg-status-completed; }
+.status-failed { @apply bg-status-failed; }
+
+/* Smooth transitions */
+.transition-sidebar {
+  @apply transition-all duration-200 ease-in-out;
+}
+
+/* Pill shape */
+.pill {
+  @apply rounded-full;
+}
+
+/* Card styling */
+.card {
+  @apply bg-surface rounded-lg border border-border shadow-card p-4;
+}
+
+/* Gradient accent backgrounds */
+.bg-accent-gradient {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-text) 100%);
 }

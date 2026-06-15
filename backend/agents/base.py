@@ -6,7 +6,8 @@ Every agent must implement this contract to be part of the agent workflow.
 """
 
 from abc import ABC
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, Any, TYPE_CHECKING
+import asyncio
 import os
 
 from schemas.state import SalesCaseState, AgentOutput, FeedbackRule
@@ -125,49 +126,88 @@ Respond helpfully and professionally."""
         self, query: str, top_k: int = 3
     ) -> list[Any]:
         """
-        Retrieve relevant knowledge from the KB for this agent.
-
-        Args:
-            query: The search query
-            top_k: Number of results to retrieve
-
-        Returns:
-            List of SearchResult objects
+        Retrieve relevant knowledge chunks for this agent from LanceDB.
+        Filters by agent=self.name AND type=knowledge.
+        Files are indexed at startup by tools/ingest.py — no disk I/O here.
         """
+        return await self._rag_search(query, doc_type="knowledge", top_k=top_k)
+
+    async def retrieve_skill(
+        self, query: str, top_k: int = 2
+    ) -> list[Any]:
+        """
+        Retrieve the most relevant skill procedure for the current task.
+        Filters by agent=self.name AND type=skill.
+        """
+        return await self._rag_search(query, doc_type="skill", top_k=top_k)
+
+    async def _rag_search(
+        self, query: str, doc_type: str, top_k: int
+    ) -> list[Any]:
+        """Shared RAG search with agent + type filtering."""
         from repos.kb_repo import get_kb_repo
 
         try:
             kb = get_kb_repo()
-            # Filter by this agent's knowledge
-            results = await kb.search(query, top_k=top_k, filters={"agent": self.name})
+            results = await kb.search(
+                query,
+                top_k=top_k,
+                filters={"agent": self.name, "type": doc_type},
+            )
             return results
         except Exception as e:
-            print(f"Warning: KB search failed for {self.name}: {e}")
+            print(f"Warning: KB {doc_type} search failed for {self.name}: {e}")
             return []
 
-    def format_knowledge_context(
-        self, results: list[Any]
+    async def build_rag_context(
+        self,
+        query: str,
+        skill_top_k: int = 1,
+        knowledge_top_k: int = 3,
     ) -> str:
         """
-        Format retrieved knowledge into context for the prompt.
+        Convenience helper: retrieve the most relevant skill + knowledge chunks
+        and format them into a single context block ready to inject into a prompt.
 
-        Args:
-            results: Search results from retrieve_knowledge
+        Usage in agent.run():
+            context = await self.build_rag_context(user_message)
+            messages = [{"role": "system", "content": self.system_prompt + context}, ...]
 
-        Returns:
-            Formatted context string
+        Token cost: only the retrieved chunks (typically 300-1500 tokens), not
+        all files. Files are indexed once at startup; LanceDB caches the table
+        in-process — no disk reads after the first request.
         """
-        if not results:
-            return ""
+        skills, knowledge = await asyncio.gather(
+            self.retrieve_skill(query, top_k=skill_top_k),
+            self.retrieve_knowledge(query, top_k=knowledge_top_k),
+        )
+        return self._format_rag_context(skills, knowledge)
 
-        context_parts = ["=" * 60, "RELEVANT KNOWLEDGE:", "=" * 60]
+    def _format_rag_context(
+        self, skills: list[Any], knowledge: list[Any]
+    ) -> str:
+        """Format skill + knowledge results into a prompt-injectable block."""
+        parts: list[str] = []
 
-        for i, result in enumerate(results, 1):
-            context_parts.append(f"\n--- Source {i}: {result.source} (score: {result.score:.2f}) ---")
-            context_parts.append(result.content)
+        if skills:
+            parts.append("\n\n" + "=" * 60)
+            parts.append("RELEVANT SKILL / PROCEDURE:")
+            parts.append("=" * 60)
+            for r in skills:
+                parts.append(f"\n[{r.source}]\n{r.content}")
 
-        context_parts.append("=" * 60)
-        return "\n".join(context_parts)
+        if knowledge:
+            parts.append("\n\n" + "=" * 60)
+            parts.append("RELEVANT KNOWLEDGE:")
+            parts.append("=" * 60)
+            for r in knowledge:
+                parts.append(f"\n[{r.source}]\n{r.content}")
+
+        return "\n".join(parts) if parts else ""
+
+    # Keep the old name for backwards compatibility
+    def format_knowledge_context(self, results: list[Any]) -> str:
+        return self._format_rag_context([], results)
 
     async def run(self, state: SalesCaseState) -> AgentOutput:
         """

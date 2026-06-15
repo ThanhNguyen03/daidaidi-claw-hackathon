@@ -2,10 +2,11 @@
  * Chat Window Component
  * =====================
  * Main chat interface with message list and input.
+ * Uses Tailwind CSS for styling.
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2 } from 'lucide-react';
+import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
 import { QuestionCard } from './QuestionCard';
 import type { Message, Question, Checkpoint, Brief, ChatMode } from '../lib/types';
@@ -19,12 +20,14 @@ interface ChatWindowProps {
   mode: ChatMode;
   onSendMessage: (message: string, brief?: Brief) => void;
   onAnswerQuestion: (questionId: string, answer: string) => void;
-  onSkipQuestion?: (questionId: string) => void; // Day 3: Skip optional question
-  onFreeTextAnswer?: (freeText: string) => void; // Day 3: C.5 §5 - answer multiple questions at once
+  onSkipQuestion?: (questionId: string) => void;
+  onFreeTextAnswer?: (freeText: string) => void;
   onApproveCheckpoint: () => void;
   onRejectCheckpoint: () => void;
   onEditCheckpoint: (params: Record<string, unknown>) => void;
   onClearError: () => void;
+  onToggleContextPanel?: () => void;
+  onToggleMobileSidebar?: () => void;
 }
 
 // Checkpoint Card Component
@@ -40,55 +43,67 @@ function CheckpointCard({
   onEdit: (params: Record<string, unknown>) => void;
 }) {
   const [autoApprove, setAutoApprove] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
 
-  // Check for blocking findings
   const hasBlocking = checkpoint.compliance_findings?.some(f => f.severity === 'block');
 
-  // Get severity color
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case 'block': return 'bg-red-50 border-red-200 text-red-800';
-      case 'warn': return 'bg-yellow-50 border-yellow-200 text-yellow-800';
-      case 'info': return 'bg-blue-50 border-blue-200 text-blue-800';
-      default: return 'bg-gray-50 border-gray-200 text-gray-800';
+  // Format preview as a table
+  const formatPreview = (preview: unknown): React.ReactNode => {
+    if (!preview) return null;
+
+    if (typeof preview === 'object') {
+      const entries = Object.entries(preview as Record<string, unknown>);
+      if (entries.length === 0) return null;
+
+      return (
+        <div className="bg-surface rounded overflow-hidden text-xs">
+          <table className="w-full border-collapse">
+            <tbody>
+              {entries.map(([key, value]) => (
+                <tr key={key} className="border-b border-border">
+                  <td className="py-2 px-3 font-medium text-text-muted w-2/5">
+                    {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                  </td>
+                  <td className="py-2 px-3 text-text">
+                    {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
     }
+
+    return <pre className="whitespace-pre-wrap m-0">{String(preview)}</pre>;
+  };
+
+  const handleEditSubmit = () => {
+    onEdit({});
+    setIsEditing(false);
   };
 
   return (
-    <div
-      style={{
-        border: '2px solid #3b82f6',
-        backgroundColor: '#eff6ff',
-        padding: '1rem',
-        borderRadius: '0.5rem',
-        marginBottom: '1rem',
-      }}
-    >
+    <div className="border-2 border-accent bg-accent-soft rounded-lg p-4 mb-4">
       {/* Compliance Findings */}
       {checkpoint.compliance_findings && checkpoint.compliance_findings.length > 0 && (
-        <div style={{ marginBottom: '1rem' }}>
+        <div className="mb-4">
           {checkpoint.compliance_findings.map((finding, idx) => (
             <div
               key={idx}
-              style={{
-                padding: '0.75rem',
-                marginBottom: '0.5rem',
-                borderRadius: '0.375rem',
-                ...(finding.severity === 'block' ? { backgroundColor: '#fef2f2', border: '1px solid #fecaca' } :
-                   finding.severity === 'warn' ? { backgroundColor: '#fefce8', border: '1px solid #fde047' } :
-                   { backgroundColor: '#eff6ff', border: '1px solid #bfdbfe' })
-              }}
+              className={`
+                p-3 rounded mb-2
+                ${finding.severity === 'block' ? 'bg-red-50 border border-red-200' : ''}
+                ${finding.severity === 'warn' ? 'bg-yellow-50 border border-yellow-200' : ''}
+                ${finding.severity === 'info' ? 'bg-blue-50 border border-blue-200' : ''}
+              `}
             >
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
-                {finding.severity === 'block' && <span style={{ color: '#dc2626' }}>🔴</span>}
-                {finding.severity === 'warn' && <span style={{ color: '#ca8a04' }}>⚠️</span>}
-                {finding.severity === 'info' && <span style={{ color: '#2563eb' }}>ℹ️</span>}
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontSize: '0.875rem', fontWeight: '500' }}>{finding.message}</p>
+              <div className="flex items-start gap-2">
+                <span>{finding.severity === 'block' ? '🔴' : finding.severity === 'warn' ? '⚠️' : 'ℹ️'}</span>
+                <div className="flex-1">
+                  <p className="text-sm font-medium">{finding.message}</p>
                   {finding.suggestion && (
-                    <p style={{ fontSize: '0.8125rem', opacity: 0.8, marginTop: '0.25rem' }}>
-                      Suggestion: {finding.suggestion}
-                    </p>
+                    <p className="text-xs opacity-80 mt-1">Suggestion: {finding.suggestion}</p>
                   )}
                 </div>
               </div>
@@ -97,77 +112,80 @@ function CheckpointCard({
         </div>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-        <span style={{ fontSize: '1.25rem' }}>⚠️</span>
-        <div style={{ flex: 1 }}>
-          <h3 style={{ fontWeight: '600', color: '#1e40af', marginBottom: '0.5rem' }}>
-            Action Requires Approval
-          </h3>
-          <p style={{ fontSize: '0.875rem', color: '#1e3a8a', marginBottom: '0.75rem' }}>
-            {checkpoint.action.description}
-          </p>
+      <div className="flex items-start gap-3">
+        <AlertTriangle size={24} className="text-accent shrink-0 mt-0.5" />
+        <div className="flex-1">
+          <h3 className="font-semibold text-accent-text mb-2">Action Requires Approval</h3>
+          <p className="text-sm text-accent-text mb-3">{checkpoint.action.description}</p>
 
-          {/* Preview if available */}
-          {checkpoint.action.preview && (
-            <div
-              style={{
-                backgroundColor: '#ffffff',
-                padding: '0.75rem',
-                borderRadius: '0.375rem',
-                marginBottom: '1rem',
-                fontSize: '0.8125rem',
-              }}
-            >
-              <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
-                {JSON.stringify(checkpoint.action.preview, null, 2)}
-              </pre>
+          {/* Preview */}
+          {checkpoint.action.preview && !isEditing && <div className="mb-4">{formatPreview(checkpoint.action.preview)}</div>}
+
+          {/* Edit mode */}
+          {isEditing && (
+            <div className="mb-4 p-3 bg-surface rounded">
+              <p className="text-xs text-text-muted mb-2">Edit parameters and re-preview:</p>
+              <p className="text-xs text-text-muted">Edit functionality available — modify parameters and submit to re-preview.</p>
             </div>
           )}
 
-          {/* Auto-approve checkbox (except for send_external) */}
-          {checkpoint.action.type !== 'send_external' && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '0.8125rem', color: '#6b7280' }}>
+          {/* Auto-approve checkbox */}
+          {checkpoint.action.type !== 'send_external' && !isEditing && (
+            <label className="flex items-center gap-2 mb-3 text-xs text-text-muted cursor-pointer">
               <input
                 type="checkbox"
                 checked={autoApprove}
                 onChange={(e) => setAutoApprove(e.target.checked)}
+                className="rounded"
               />
               Don't ask again for {checkpoint.action.type} this session
             </label>
           )}
 
           {/* Action buttons */}
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button
-              onClick={onApprove}
-              disabled={hasBlocking}
-              style={{
-                padding: '0.5rem 1rem',
-                backgroundColor: hasBlocking ? '#9ca3af' : '#3b82f6',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '0.375rem',
-                fontSize: '0.875rem',
-                fontWeight: '500',
-                cursor: hasBlocking ? 'not-allowed' : 'pointer',
-              }}
-            >
-              Approve
-            </button>
-            <button
-              onClick={onReject}
-              style={{
-                padding: '0.5rem 1rem',
-                backgroundColor: 'transparent',
-                color: '#6b7280',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.375rem',
-                fontSize: '0.875rem',
-                cursor: 'pointer',
-              }}
-            >
-              Reject
-            </button>
+          <div className="flex gap-2 flex-wrap">
+            {isEditing ? (
+              <>
+                <button
+                  onClick={handleEditSubmit}
+                  className="flex items-center gap-1 px-4 py-2 bg-accent text-white rounded-md text-sm font-medium hover:opacity-90"
+                >
+                  <Check size={16} /> Re-preview
+                </button>
+                <button
+                  onClick={() => setIsEditing(false)}
+                  className="flex items-center gap-1 px-4 py-2 border border-border text-text-muted rounded-md text-sm hover:bg-surface-hover"
+                >
+                  <X size={16} /> Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={onApprove}
+                  disabled={hasBlocking}
+                  className={`flex items-center gap-1 px-4 py-2 rounded-md text-sm font-medium ${
+                    hasBlocking
+                      ? 'bg-text-muted text-white cursor-not-allowed'
+                      : 'bg-accent text-white hover:opacity-90'
+                  }`}
+                >
+                  <Check size={16} /> Approve
+                </button>
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="flex items-center gap-1 px-4 py-2 border border-border text-text-muted rounded-md text-sm hover:bg-surface-hover"
+                >
+                  <Edit size={16} /> Edit
+                </button>
+                <button
+                  onClick={onReject}
+                  className="flex items-center gap-1 px-4 py-2 border border-border text-text-muted rounded-md text-sm hover:bg-surface-hover"
+                >
+                  <X size={16} /> Reject
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -190,11 +208,12 @@ export function ChatWindow({
   onRejectCheckpoint,
   onEditCheckpoint,
   onClearError,
+  onToggleContextPanel,
+  onToggleMobileSidebar,
 }: ChatWindowProps) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -207,101 +226,79 @@ export function ChatWindow({
     }
   };
 
-  // Get mode indicator
-  const modeLabels: Record<ChatMode, string> = {
-    chat: '💬 Chat Mode',
-    planning: '📋 Planning Mode',
-    execute: '🚀 Execute Mode',
-    brainstorm: '💡 Brainstorm Mode',
+  const modeLabels: Record<ChatMode, { icon: string; label: string }> = {
+    chat: { icon: '💬', label: 'Chat' },
+    planning: { icon: '📋', label: 'Planning' },
+    execute: { icon: '🚀', label: 'Execute' },
+    brainstorm: { icon: '💡', label: 'Brainstorm' },
   };
 
   return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        backgroundColor: '#f9fafb',
-      }}
-    >
+    <div className="flex-1 flex flex-col min-h-screen bg-bg">
       {/* Header */}
-      <div
-        style={{
-          padding: '1rem 1.5rem',
-          backgroundColor: '#ffffff',
-          borderBottom: '1px solid #e5e7eb',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
-        <h2 style={{ fontSize: '1.125rem', fontWeight: '600', color: '#111827' }}>
-          {modeLabels[mode]}
-        </h2>
-        {isLoading && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#6b7280' }}>
-            <Loader2 size={16} className="animate-spin" />
-            <span style={{ fontSize: '0.875rem' }}>Thinking...</span>
-          </div>
-        )}
-      </div>
+      <header className="sticky top-0 z-30 px-6 py-4 bg-surface border-b border-border flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {/* Mobile sidebar toggle */}
+          <button
+            onClick={onToggleMobileSidebar}
+            className="md:hidden p-2 border border-border rounded hover:bg-surface-hover"
+          >
+            <Menu size={20} className="text-text-muted" />
+          </button>
+
+          {/* Mode indicator */}
+          <h2 className="text-lg font-semibold text-text flex items-center gap-2 relative">
+            <span className="text-accent">{modeLabels[mode].icon}</span>
+            {modeLabels[mode].label} Mode
+          </h2>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {isLoading && (
+            <div className="flex items-center gap-2 text-text-muted">
+              <Loader2 size={16} className="animate-spin" />
+              <span className="text-sm">Thinking...</span>
+            </div>
+          )}
+
+          {onToggleContextPanel && (
+            <button
+              onClick={onToggleContextPanel}
+              className="p-2 border border-border rounded hover:bg-surface-hover"
+              title="Toggle Context Panel"
+            >
+              <PanelRightClose size={20} className="text-text-muted" />
+            </button>
+          )}
+        </div>
+      </header>
 
       {/* Error display */}
       {error && (
-        <div
-          style={{
-            padding: '0.75rem 1.5rem',
-            backgroundColor: '#fef2f2',
-            borderBottom: '1px solid #fecaca',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}
-        >
-          <span style={{ color: '#dc2626', fontSize: '0.875rem' }}>{error}</span>
-          <button
-            onClick={onClearError}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#6b7280',
-              cursor: 'pointer',
-              fontSize: '0.875rem',
-            }}
-          >
-            ✕
+        <div className="px-6 py-3 bg-red-50 border-b border-red-200 flex items-center justify-between">
+          <span className="text-red-600 text-sm">{error}</span>
+          <button onClick={onClearError} className="text-text-muted hover:text-text">
+            <X size={16} />
           </button>
         </div>
       )}
 
       {/* Messages area */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: 'auto',
-          padding: '1.5rem',
-        }}
-      >
-        {/* Welcome message if no messages */}
+      <div className="flex-1 overflow-y-auto px-6 py-4">
         {messages.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>
-            <p style={{ fontSize: '1.125rem', marginBottom: '0.5rem' }}>
-              Welcome to Sales AI Assistant! 👋
-            </p>
-            <p style={{ fontSize: '0.875rem' }}>
-              I'm your multi-agent sales assistant. How can I help you today?
-            </p>
+          <div className="text-center py-8 text-text-muted">
+            <p className="text-lg text-text mb-2">Welcome to Sales AI Assistant! 👋</p>
+            <p className="text-sm">I&apos;m your multi-agent sales assistant. How can I help you today?</p>
           </div>
         )}
 
-        {/* Messages */}
-        {messages.map((msg, index) => (
-          <MessageBubble key={index} message={msg} />
-        ))}
+        {messages.map((msg, index) => {
+          const prevMsg = index > 0 ? messages[index - 1] : null;
+          const isGrouped = prevMsg && prevMsg.role === msg.role && prevMsg.agent === msg.agent;
+          return <MessageBubble key={index} message={msg} isGrouped={!!isGrouped} />;
+        })}
 
-        {/* Pending Questions - Day 3: Question cards (yellow, distinct from checkpoint) */}
-        {/* Use standalone QuestionCard component - CHECK.md Issue #6 */}
+        {/* Pending Questions */}
         {pendingQuestions.length > 0 && (
           <QuestionCard
             questions={pendingQuestions}
@@ -326,49 +323,33 @@ export function ChatWindow({
       </div>
 
       {/* Input area */}
-      <div
-        style={{
-          padding: '1rem 1.5rem',
-          backgroundColor: '#ffffff',
-          borderTop: '1px solid #e5e7eb',
-        }}
-      >
-        <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '0.75rem' }}>
-          <input
-            type="text"
+      <div className="px-6 py-4 bg-surface border-t border-border">
+        <form onSubmit={handleSubmit} className="flex gap-3 items-end">
+          <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Type your message..."
             disabled={isLoading}
-            style={{
-              flex: 1,
-              padding: '0.75rem 1rem',
-              border: '1px solid #d1d5db',
-              borderRadius: '0.5rem',
-              fontSize: '0.9375rem',
-              outline: 'none',
-              transition: 'border-color 0.15s ease',
+            rows={1}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSubmit(e);
+              }
             }}
+            className="flex-1 px-4 py-3 border border-border rounded-full text-sm resize-none min-h-[44px] max-h-[120px] bg-surface text-text focus:border-accent focus:ring-1 focus:ring-accent outline-none transition-colors"
           />
           <button
             type="submit"
             disabled={!input.trim() || isLoading}
-            style={{
-              padding: '0.75rem 1.25rem',
-              backgroundColor: input.trim() && !isLoading ? '#3b82f6' : '#9ca3af',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: '0.5rem',
-              fontSize: '0.9375rem',
-              fontWeight: '500',
-              cursor: input.trim() && !isLoading ? 'pointer' : 'not-allowed',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-            }}
+            className={`flex items-center gap-2 px-5 py-3 rounded-full text-sm font-medium ${
+              input.trim() && !isLoading
+                ? 'bg-accent text-white hover:opacity-90'
+                : 'bg-text-muted text-white cursor-not-allowed'
+            }`}
           >
             <Send size={18} />
-            Send
+            <span className="hidden sm:inline">Send</span>
           </button>
         </form>
       </div>

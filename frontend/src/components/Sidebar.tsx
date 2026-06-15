@@ -1,10 +1,11 @@
 /**
  * Sidebar Component
  * =================
- * Left sidebar with mode switcher, new chat, and session history.
+ * Left sidebar with mode switcher, new chat, session history, agent status.
+ * Uses Tailwind CSS for styling.
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   MessageCircle,
   ClipboardList,
@@ -14,6 +15,13 @@ import {
   Clock,
   Users,
   Database,
+  Sun,
+  Moon,
+  ChevronLeft,
+  ChevronRight,
+  Menu,
+  X,
+  Loader2,
 } from 'lucide-react';
 import type { ChatMode } from '../lib/types';
 
@@ -24,6 +32,10 @@ interface SidebarProps {
   sessionCount: number;
   isConnected: boolean;
   activeAgents?: AgentStatus[];
+  isOpen: boolean;
+  onToggle: () => void;
+  isDarkMode: boolean;
+  onToggleTheme: () => void;
 }
 
 interface AgentStatus {
@@ -31,30 +43,17 @@ interface AgentStatus {
   status: 'idle' | 'thinking' | 'waiting' | 'completed' | 'failed';
 }
 
+interface AgentInfo {
+  name: string;
+  display_name: string;
+}
+
 const MODES: { id: ChatMode; label: string; icon: React.ReactNode; description: string }[] = [
   { id: 'chat', label: 'Chat', icon: <MessageCircle size={18} />, description: 'Q&A & advisory' },
-  {
-    id: 'planning',
-    label: 'Planning',
-    icon: <ClipboardList size={18} />,
-    description: 'Sales planning',
-  },
-  {
-    id: 'execute',
-    label: 'Execute',
-    icon: <Rocket size={18} />,
-    description: 'Generate proposals',
-  },
-  {
-    id: 'brainstorm',
-    label: 'Brainstorm',
-    icon: <Lightbulb size={18} />,
-    description: 'Group discussion',
-  },
+  { id: 'planning', label: 'Planning', icon: <ClipboardList size={18} />, description: 'Sales planning' },
+  { id: 'execute', label: 'Execute', icon: <Rocket size={18} />, description: 'Generate proposals' },
+  { id: 'brainstorm', label: 'Brainstorm', icon: <Lightbulb size={18} />, description: 'Group discussion' },
 ];
-
-// Default agents to show
-const DEFAULT_AGENTS = ['orchestrator', 'tech_solution', 'market_strategy', 'account'];
 
 // Map agent names to display names
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
@@ -64,23 +63,42 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
   account: 'Account',
   adtimabox: 'AdtimaBox',
   design: 'Design',
+  compliance: 'Compliance',
 };
 
-// Get status color
-function getStatusColor(status: AgentStatus['status']): string {
-  switch (status) {
-    case 'thinking':
-      return '#f59e0b'; // Amber - processing
-    case 'waiting':
-      return '#8b5cf6'; // Violet - waiting for user
-    case 'completed':
-      return '#10b981'; // Green - done
-    case 'failed':
-      return '#ef4444'; // Red - error
-    default:
-      return '#6b7280'; // Gray - idle
-  }
-}
+// Status color classes
+const getStatusColorClass = (status: AgentStatus['status']): string => {
+  const classes: Record<AgentStatus['status'], string> = {
+    idle: 'bg-status-idle',
+    thinking: 'bg-status-thinking',
+    waiting: 'bg-status-waiting',
+    completed: 'bg-status-completed',
+    failed: 'bg-status-failed',
+  };
+  return classes[status] || classes.idle;
+};
+
+const getStatusTextClass = (status: AgentStatus['status']): string => {
+  const classes: Record<AgentStatus['status'], string> = {
+    idle: 'text-text',
+    thinking: 'text-status-thinking',
+    waiting: 'text-status-waiting',
+    completed: 'text-status-completed',
+    failed: 'text-status-failed',
+  };
+  return classes[status] || classes.idle;
+};
+
+const getStatusColorStyle = (status: AgentStatus['status']): string => {
+  const colors: Record<AgentStatus['status'], string> = {
+    idle: 'var(--color-status-idle)',
+    thinking: 'var(--color-status-thinking)',
+    waiting: 'var(--color-status-waiting)',
+    completed: 'var(--color-status-completed)',
+    failed: 'var(--color-status-failed)',
+  };
+  return colors[status] || colors.idle;
+};
 
 export function Sidebar({
   currentMode,
@@ -89,206 +107,240 @@ export function Sidebar({
   sessionCount,
   isConnected,
   activeAgents = [],
+  isOpen,
+  isDarkMode,
+  onToggleTheme,
 }: SidebarProps) {
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [agentsList, setAgentsList] = useState<AgentInfo[]>([]);
+  const [loadingAgents, setLoadingAgents] = useState(false);
+
+  // Fetch agents from /debug/agents on mount
+  useEffect(() => {
+    const fetchAgents = async () => {
+      setLoadingAgents(true);
+      try {
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/debug/agents`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          const agents = data.agents?.map((a: { name: string; display_name?: string }) => ({
+            name: a.name,
+            display_name: a.display_name || AGENT_DISPLAY_NAMES[a.name] || a.name,
+          })) || [];
+          setAgentsList(agents);
+        }
+      } catch (err) {
+        console.error('Failed to fetch agents:', err);
+      } finally {
+        setLoadingAgents(false);
+      }
+    };
+
+    fetchAgents();
+  }, []);
+
+  // Use fetched agents, fallback to defaults if empty
+  const displayAgents = agentsList.length > 0 ? agentsList : [
+    { name: 'orchestrator', display_name: 'Orchestrator' },
+    { name: 'tech_solution', display_name: 'Tech Solution' },
+    { name: 'market_strategy', display_name: 'Market Strategy' },
+    { name: 'account', display_name: 'Account' },
+    { name: 'adtimabox', display_name: 'AdtimaBox' },
+    { name: 'design', display_name: 'Design' },
+    { name: 'compliance', display_name: 'Compliance' },
+  ];
+
   // Create a map of agent statuses
   const agentStatusMap = new Map<string, AgentStatus['status']>();
   activeAgents.forEach((agent) => {
     agentStatusMap.set(agent.name, agent.status);
   });
 
+  const sidebarWidth = isCollapsed ? 'w-16' : 'w-64';
+
   return (
-    <div
-      style={{
-        width: '260px',
-        height: '100vh',
-        backgroundColor: '#ffffff',
-        borderRight: '1px solid #e5e7eb',
-        display: 'flex',
-        flexDirection: 'column',
-        padding: '1rem',
-      }}
+    <aside
+      className={`${sidebarWidth} min-h-screen bg-surface border-r border-border flex flex-col p-4 transition-sidebar sticky top-0 z-40 shrink-0`}
     >
       {/* Logo / Title */}
-      <div style={{ marginBottom: '1.5rem' }}>
-        <h1 style={{ fontSize: '1.25rem', fontWeight: '700', color: '#111827' }}>Sales AI</h1>
-        <p style={{ fontSize: '0.75rem', color: '#6b7280' }}>Multi-Agent Assistant</p>
+      <div className="mb-6">
+        {!isCollapsed && (
+          <>
+            <h1 className="text-xl font-bold text-text">Sales AI</h1>
+            <p className="text-xs text-text-muted">Multi-Agent Assistant</p>
+          </>
+        )}
+        {isCollapsed && (
+          <div className="text-center text-xl font-bold text-accent">S</div>
+        )}
       </div>
 
       {/* New Chat Button */}
       <button
         onClick={onNewChat}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '0.5rem',
-          width: '100%',
-          padding: '0.75rem',
-          backgroundColor: '#3b82f6',
-          color: '#ffffff',
-          border: 'none',
-          borderRadius: '0.5rem',
-          fontSize: '0.875rem',
-          fontWeight: '500',
-          cursor: 'pointer',
-          marginBottom: '1.5rem',
-        }}
+        className={`
+          flex items-center justify-center gap-2 w-full py-3 bg-accent text-white rounded-lg
+          font-medium text-sm mb-6 hover:opacity-90 transition-opacity
+          ${isCollapsed ? 'px-2' : 'px-4'}
+        `}
       >
         <Plus size={18} />
-        New Chat
+        {!isCollapsed && 'New Chat'}
       </button>
 
       {/* Mode Switcher */}
-      <div style={{ marginBottom: '1.5rem' }}>
-        <h2
-          style={{
-            fontSize: '0.75rem',
-            fontWeight: '600',
-            color: '#6b7280',
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            marginBottom: '0.75rem',
-          }}
-        >
-          Mode
-        </h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+      <div className="mb-6">
+        {!isCollapsed && (
+          <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+            Mode
+          </h2>
+        )}
+        <div className="flex flex-col gap-1">
           {MODES.map((mode) => (
             <button
               key={mode.id}
               onClick={() => onModeChange(mode.id)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.75rem',
-                padding: '0.625rem 0.75rem',
-                backgroundColor: currentMode === mode.id ? '#eff6ff' : 'transparent',
-                color: currentMode === mode.id ? '#3b82f6' : '#374151',
-                border: 'none',
-                borderRadius: '0.375rem',
-                fontSize: '0.875rem',
-                fontWeight: currentMode === mode.id ? '500' : '400',
-                cursor: 'pointer',
-                textAlign: 'left',
-                transition: 'all 0.15s ease',
-              }}
+              className={`
+                flex items-center gap-3 rounded-md py-2.5 cursor-pointer
+                text-sm transition-all duration-150
+                ${currentMode === mode.id
+                  ? 'bg-accent-soft text-accent font-medium'
+                  : 'text-text hover:bg-surface-hover'
+                }
+                ${isCollapsed ? 'justify-center px-2' : 'px-3 justify-start'}
+              `}
+              title={mode.description}
             >
-              <span style={{ color: currentMode === mode.id ? '#3b82f6' : '#6b7280' }}>
+              <span className={currentMode === mode.id ? 'text-accent' : 'text-text-muted'}>
                 {mode.icon}
               </span>
-              {mode.label}
+              {!isCollapsed && mode.label}
             </button>
           ))}
         </div>
       </div>
 
       {/* Active Agents */}
-      <div style={{ marginBottom: '1.5rem' }}>
-        <h2
-          style={{
-            fontSize: '0.75rem',
-            fontWeight: '600',
-            color: '#6b7280',
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            marginBottom: '0.75rem',
-          }}
-        >
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+      <div className="mb-6">
+        {!isCollapsed && (
+          <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3 flex items-center gap-2">
             <Users size={14} />
             Active Agents
-          </span>
-        </h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-          {DEFAULT_AGENTS.map((agentName) => {
-            const status = agentStatusMap.get(agentName) || 'idle';
-            const displayName = AGENT_DISPLAY_NAMES[agentName] || agentName;
+          </h2>
+        )}
+        {loadingAgents ? (
+          <div className="flex justify-center py-2">
+            <Loader2 size={16} className="animate-spin text-text-muted" />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {displayAgents.map((agent) => {
+              const status = agentStatusMap.get(agent.name) || 'idle';
+              const displayName = agent.display_name || AGENT_DISPLAY_NAMES[agent.name] || agent.name;
 
-            return (
-              <div
-                key={agentName}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  padding: '0.5rem 0.75rem',
-                  fontSize: '0.8125rem',
-                  color: '#374151',
-                }}
-              >
-                <span
-                  style={{
-                    width: '8px',
-                    height: '8px',
-                    borderRadius: '50%',
-                    backgroundColor: getStatusColor(status),
-                    transition: 'background-color 0.2s ease',
-                  }}
-                  title={status}
-                />
-                <span
-                  style={{
-                    color:
-                      status === 'thinking'
-                        ? '#f59e0b'
-                        : status === 'failed'
-                          ? '#ef4444'
-                          : '#374151',
-                  }}
+              return (
+                <div
+                  key={agent.name}
+                  className={`
+                    flex items-center gap-2 text-xs
+                    ${isCollapsed ? 'justify-center py-2' : 'px-3 py-2'}
+                  `}
+                  title={displayName}
                 >
-                  {displayName}
-                </span>
-                {status === 'thinking' && (
-                  <span style={{ fontSize: '0.625rem', color: '#f59e0b' }}>●</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                  <span
+                    className={`w-2 h-2 rounded-full ${getStatusColorClass(status)}`}
+                    style={{ backgroundColor: getStatusColorStyle(status) }}
+                    title={status}
+                  />
+                  {!isCollapsed && (
+                    <span className={getStatusTextClass(status)} style={{ color: getStatusColorStyle(status) }}>
+                      {displayName}
+                    </span>
+                  )}
+                  {status === 'thinking' && !isCollapsed && (
+                    <span className="text-xs text-status-thinking">●</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Spacer */}
-      <div style={{ flex: 1 }} />
+      <div className="flex-1" />
 
-      {/* KB Status */}
+      {/* KB/Backend Status */}
       <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem',
-          padding: '0.5rem 0.75rem',
-          fontSize: '0.75rem',
-          color: '#6b7280',
-          borderTop: '1px solid #e5e7eb',
-          marginTop: '0.5rem',
-        }}
+        className={`
+          flex items-center gap-2 text-xs text-text-muted border-t border-border pt-2 mt-2
+          ${isCollapsed ? 'justify-center' : 'px-3'}
+        `}
+        title={isConnected ? 'Backend connected and ready' : 'Backend offline or not configured'}
       >
         <Database size={14} />
-        <span
-          style={{
-            width: '8px',
-            height: '8px',
-            borderRadius: '50%',
-            backgroundColor: isConnected ? '#10b981' : '#ef4444',
-          }}
-        />
-        {isConnected ? 'KB Connected' : 'KB Offline'}
+        {!isCollapsed && (
+          <>
+            <span
+              className={`w-2 h-2 rounded-full ${isConnected ? 'bg-status-completed' : 'bg-status-failed'}`}
+              style={{ backgroundColor: isConnected ? 'var(--color-status-completed)' : 'var(--color-status-failed)' }}
+            />
+            {isConnected ? 'Backend Ready' : 'Backend Offline'}
+          </>
+        )}
       </div>
 
       {/* Session Count */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem',
-          padding: '0.5rem 0.75rem',
-          fontSize: '0.75rem',
-          color: '#6b7280',
-        }}
-      >
-        <Clock size={14} />
-        {sessionCount} sessions
+      {!isCollapsed && (
+        <div className="flex items-center gap-2 text-xs text-text-muted px-3">
+          <Clock size={14} />
+          {sessionCount} sessions
+        </div>
+      )}
+
+      {/* Bottom controls: Theme toggle + Collapse */}
+      <div className={`
+        flex items-center gap-2 mt-2 pt-2 border-t border-border
+        ${isCollapsed ? 'justify-center' : 'justify-between'}
+      `}>
+        {/* Theme Toggle */}
+        <button
+          onClick={onToggleTheme}
+          className={`
+            flex items-center justify-center gap-2 p-2 rounded-md
+            border border-border text-text-muted hover:bg-surface-hover transition-colors
+            ${isCollapsed ? 'w-full' : 'flex-1'}
+          `}
+          title={isDarkMode ? 'Switch to Light mode' : 'Switch to Dark mode'}
+        >
+          {isDarkMode ? <Sun size={16} /> : <Moon size={16} />}
+          {!isCollapsed && (isDarkMode ? 'Light' : 'Dark')}
+        </button>
+
+        {/* Collapse Toggle - desktop only */}
+        {!isCollapsed && (
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="hidden md:flex items-center justify-center p-2 rounded-md border border-border text-text-muted hover:bg-surface-hover"
+            title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            <ChevronLeft size={16} />
+          </button>
+        )}
       </div>
-    </div>
+
+      {/* Expand button when collapsed */}
+      {isCollapsed && (
+        <button
+          onClick={() => setIsCollapsed(false)}
+          className="hidden md:flex items-center justify-center p-2 mt-2 rounded-md border border-border text-text-muted hover:bg-surface-hover"
+          title="Expand sidebar"
+        >
+          <ChevronRight size={16} />
+        </button>
+      )}
+    </aside>
   );
 }
