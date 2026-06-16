@@ -11,7 +11,6 @@ import React, { useState, useEffect } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { ChatWindow } from '../components/ChatWindow';
 import { ContextPanel } from '../components/ContextPanel';
-import { BrainstormView } from '../components/BrainstormView';
 import { MobileNav } from '../components/MobileNav';
 import { useChat } from '../hooks/useChat';
 import type { ChatMode } from '../lib/types';
@@ -82,7 +81,6 @@ export default function Home() {
     constraints,
     brief,
     artifacts,
-    brainState,
     sendMessage,
     answerQuestion,
     skipQuestion,
@@ -94,10 +92,6 @@ export default function Home() {
     rejectCheckpoint,
     editCheckpoint,
     clearError,
-    addParticipant,
-    removeParticipant,
-    requestAskLock,
-    releaseAskLock,
   } = useChat({
     salespersonId: salespersonName || 'demo_user',
     displayName: salespersonName,
@@ -225,37 +219,26 @@ export default function Home() {
 
       {/* Main chat area */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden pt-14 md:pt-0 pb-16 md:pb-0">
-        {mode === 'brainstorm' ? (
-          <BrainstormView
-            key={mode}
-            brainState={brainState}
-            onAddParticipant={addParticipant}
-            onRemoveParticipant={removeParticipant}
-            onRequestAskLock={requestAskLock}
-            onReleaseAskLock={releaseAskLock}
-          />
-        ) : (
-          <ChatWindow
-            key={mode}
-            messages={messages}
-            isLoading={isLoading}
-            isThinking={isThinking}
-            error={error}
-            pendingQuestions={pendingQuestions}
-            activeCheckpoint={activeCheckpoint}
-            mode={mode}
-            onSendMessage={sendMessage}
-            onAnswerQuestion={answerQuestion}
-            onSkipQuestion={skipQuestion}
-            onFreeTextAnswer={freeTextAnswer}
-            onApproveCheckpoint={approveCheckpoint}
-            onRejectCheckpoint={rejectCheckpoint}
-            onEditCheckpoint={editCheckpoint}
-            onClearError={clearError}
-            onToggleContextPanel={() => setContextPanelOpen(!contextPanelOpen)}
-            onToggleMobileSidebar={() => setSidebarOpen(!sidebarOpen)}
-          />
-        )}
+        <ChatWindow
+          key={mode}
+          messages={messages}
+          isLoading={isLoading}
+          isThinking={isThinking}
+          error={error}
+          pendingQuestions={pendingQuestions}
+          activeCheckpoint={activeCheckpoint}
+          mode={mode}
+          onSendMessage={sendMessage}
+          onAnswerQuestion={answerQuestion}
+          onSkipQuestion={skipQuestion}
+          onFreeTextAnswer={freeTextAnswer}
+          onApproveCheckpoint={approveCheckpoint}
+          onRejectCheckpoint={rejectCheckpoint}
+          onEditCheckpoint={editCheckpoint}
+          onClearError={clearError}
+          onToggleContextPanel={() => setContextPanelOpen(!contextPanelOpen)}
+          onToggleMobileSidebar={() => setSidebarOpen(!sidebarOpen)}
+        />
       </main>
 
       {/* Context Panel */}

@@ -23,14 +23,9 @@ class ValidationService:
     C.5 §1: Validates brief and emits ValidationReport.
     """
 
-    # Mandatory fields by mode — orchestrator MUST collect these before dispatching agents
-    # Agents cannot assume any information not explicitly provided by user
-    MANDATORY_FIELDS_BY_MODE = {
-        "planning": ["industry", "goal", "target_audience", "budget_vnd"],
-        "execute": ["industry", "goal", "target_audience", "budget_vnd"],
-        "chat": [],
-        "brainstorm": [],
-    }
+    # Core fields the system should try to ground before dispatching specialists.
+    # This is mode-agnostic so the validator does not steer behavior by workflow mode.
+    MANDATORY_FIELDS = ["industry", "goal"]
 
     # Fields that trigger re-validation when changed (critical edits)
     CRITICAL_FIELDS = ["industry", "target_audience"]
@@ -49,19 +44,25 @@ class ValidationService:
             try:
                 self._client = get_llm_client(self.model_key)
             except ValueError:
-                # Fallback to orchestrator if validation model not configured
-                self._client = get_llm_client("orchestrator")
+                # Fallback to sales_orchestrator if validation model not configured
+                self._client = get_llm_client("sales_orchestrator")
         return self._client
 
     def _get_mandatory_fields(self, mode: str) -> list[str]:
-        """Get mandatory fields for the current mode."""
-        return self.MANDATORY_FIELDS_BY_MODE.get(mode, [])
+        """Get mandatory fields for validation.
+
+        The validator is intentionally mode-agnostic. `mode` is accepted for
+        backward compatibility, but the active workflow no longer changes the
+        required-field list.
+        """
+        return self.MANDATORY_FIELDS
 
     def _check_trigger_conditions(
         self,
         brief: Brief,
         profile: Optional[SalespersonProfile],
         validation_report: ValidationReport,
+        mode: str,
     ) -> ValidationReport:
         """
         C.5 §1: Check trigger conditions for validation.
@@ -78,7 +79,7 @@ class ValidationService:
         is_first_interaction = profile is None or len(profile.history) == 0
 
         # Check mandatory fields for the mode
-        mandatory_fields = self._get_mandatory_fields(brief.mode if hasattr(brief, 'mode') else "chat")
+        mandatory_fields = self._get_mandatory_fields(mode)
         for field in mandatory_fields:
             value = getattr(brief, field, None)
             if not value:
@@ -86,14 +87,14 @@ class ValidationService:
                     validation_report.missing_required.append(field)
 
         # Check for low KB confidence (if we had KB, we'd check it)
-        # For now, assume high confidence unless there's ambiguity
+        # Use a conservative default unless ambiguity forces a lower score.
         if validation_report.ambiguities:
             validation_report.kb_confidence = 0.6  # Lower due to ambiguity
         else:
             validation_report.kb_confidence = 0.9
 
         # Determine status based on missing fields
-        if validation_report.missing_required:
+        if validation_report.missing_required or validation_report.ambiguities:
             validation_report.status = "PENDING"  # Block dispatch - user MUST answer questions
             validation_report.severity = "major"
         elif validation_report.out_of_scope:
@@ -157,12 +158,12 @@ class ValidationService:
                 llm_ambiguities = await self._detect_ambiguities(brief)
                 validation_report.ambiguities = llm_ambiguities
             except Exception:
-                # If LLM fails, fall back to basic validation
+                # If LLM fails, fall back to basic validation only
                 pass
 
         # Check trigger conditions
         validation_report = self._check_trigger_conditions(
-            brief, profile, validation_report
+            brief, profile, validation_report, mode
         )
 
         return validation_report
@@ -172,8 +173,9 @@ class ValidationService:
         Use LLM to detect ambiguities in the brief.
         C.5 §1: Detects when ≥2 plausible interpretations exist.
         """
-        prompt = f"""Analyze this brief for ambiguities (multiple plausible interpretations).
-Respond in JSON format:
+        prompt = f"""Detect only genuine ambiguities in this brief.
+Do not invent missing details and do not recommend solutions.
+Return JSON only in this format:
 {{
   "ambiguities": [
     {{"field": "field_name", "interpretations": ["interpretation1", "interpretation2"], "why": "why ambiguous"}}
@@ -187,7 +189,7 @@ Brief:
 - Timeline: {brief.timeline or 'not specified'}
 - Target Audience: {brief.target_audience or 'not specified'}
 
-If no ambiguities, respond with {{"ambiguities": []}}"""
+If there are no genuine ambiguities, return {{"ambiguities": []}}."""
 
         try:
             response = self.client.create_completion(

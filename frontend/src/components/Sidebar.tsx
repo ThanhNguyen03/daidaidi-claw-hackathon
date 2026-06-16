@@ -48,22 +48,22 @@ interface AgentInfo {
   display_name: string;
 }
 
-const MODES: { id: ChatMode; label: string; icon: React.ReactNode; description: string }[] = [
+const MODES: { id: ChatMode; label: string; icon: React.ReactNode; description: string; comingSoon?: boolean }[] = [
   { id: 'chat', label: 'Chat', icon: <MessageCircle size={18} />, description: 'Q&A & advisory' },
-  { id: 'planning', label: 'Planning', icon: <ClipboardList size={18} />, description: 'Sales planning' },
-  { id: 'execute', label: 'Execute', icon: <Rocket size={18} />, description: 'Generate proposals' },
-  { id: 'brainstorm', label: 'Brainstorm', icon: <Lightbulb size={18} />, description: 'Group discussion' },
+  { id: 'planning', label: 'Planning', icon: <ClipboardList size={18} />, description: 'Coming soon', comingSoon: true },
+  { id: 'execute', label: 'Execute', icon: <Rocket size={18} />, description: 'Coming soon', comingSoon: true },
+  { id: 'brainstorm', label: 'Brainstorm', icon: <Lightbulb size={18} />, description: 'Coming soon', comingSoon: true },
 ];
 
 // Map agent names to display names
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
-  orchestrator: 'Orchestrator',
-  tech_solution: 'Tech Solution',
+  sales_orchestrator: 'Sales Orchestrator',
+  requirement_elicitation: 'Requirement Elicitation',
   market_strategy: 'Market Strategy',
-  account: 'Account',
-  adtimabox: 'AdtimaBox',
+  product_solution: 'Product Solution',
   design: 'Design',
   compliance: 'Compliance',
+  client_simulator: 'Client Simulator',
 };
 
 // Status color classes
@@ -143,13 +143,13 @@ export function Sidebar({
 
   // Use fetched agents, fallback to defaults if empty
   const displayAgents = agentsList.length > 0 ? agentsList : [
-    { name: 'orchestrator', display_name: 'Orchestrator' },
-    { name: 'tech_solution', display_name: 'Tech Solution' },
+    { name: 'sales_orchestrator', display_name: 'Sales Orchestrator' },
+    { name: 'requirement_elicitation', display_name: 'Requirement Elicitation' },
     { name: 'market_strategy', display_name: 'Market Strategy' },
-    { name: 'account', display_name: 'Account' },
-    { name: 'adtimabox', display_name: 'AdtimaBox' },
+    { name: 'product_solution', display_name: 'Product Solution' },
     { name: 'design', display_name: 'Design' },
     { name: 'compliance', display_name: 'Compliance' },
+    { name: 'client_simulator', display_name: 'Client Simulator' },
   ];
 
   // Create a map of agent statuses
@@ -205,7 +205,12 @@ export function Sidebar({
           {MODES.map((mode) => (
             <button
               key={mode.id}
-              onClick={() => onModeChange(mode.id)}
+              onClick={() => {
+                if (!mode.comingSoon) {
+                  onModeChange(mode.id);
+                }
+              }}
+              disabled={mode.comingSoon}
               className={`
                 flex items-center gap-3 rounded-md py-2.5 cursor-pointer
                 text-[12px] transition-all duration-150
@@ -213,6 +218,7 @@ export function Sidebar({
                   ? 'bg-accent-soft text-accent font-medium'
                   : 'text-text hover:bg-surface-hover'
                 }
+                ${mode.comingSoon ? 'opacity-60 cursor-not-allowed' : ''}
                 ${isCollapsed ? 'justify-center px-2' : 'px-3 justify-start'}
               `}
               title={mode.description}
@@ -220,7 +226,16 @@ export function Sidebar({
               <span className={currentMode === mode.id ? 'text-accent' : 'text-text-muted'}>
                 {mode.icon}
               </span>
-              {!isCollapsed && mode.label}
+              {!isCollapsed && (
+                <span className="flex items-center gap-2">
+                  {mode.label}
+                  {mode.comingSoon && (
+                    <span className="text-[10px] uppercase tracking-wide text-text-muted border border-border rounded-full px-2 py-0.5">
+                      Soon
+                    </span>
+                  )}
+                </span>
+              )}
             </button>
           ))}
         </div>

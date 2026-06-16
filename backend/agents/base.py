@@ -49,9 +49,9 @@ class BaseAgent(ABC):
         Initialize the agent.
 
         Args:
-            name: Unique agent name (e.g., 'tech_solution')
-            model_key: Environment variable key for model (e.g., 'MODEL_TECH_SOLUTION')
-            role_description: One-line description for routing (e.g., 'Technical recommendations')
+            name: Unique agent name (e.g., 'sales_orchestrator')
+            model_key: Environment variable key for model (e.g., 'MODEL_PRODUCT_SOLUTION')
+            role_description: One-line description for routing (e.g., 'Merged product solution and pricing')
             prompt_path: Path to prompt.md file (optional)
             knowledge_dir: Path to knowledge folder (optional)
             skills_dir: Path to skills folder (optional)
@@ -259,25 +259,27 @@ class StubAgent(BaseAgent):
     def _init_sample_responses(self) -> dict:
         """Initialize sample responses for each agent type."""
         return {
-            "tech_solution": {
-                "summary": "Analyzed requirements and provided technical recommendations",
+            "sales_orchestrator": {
+                "summary": "Validated the brief and produced a guarded execution plan",
                 "payload": {
-                    "recommendations": [
-                        {
-                            "category": "Infrastructure",
-                            "item": "Cloud hosting with auto-scaling",
-                        },
-                        {
-                            "category": "Integration",
-                            "item": "REST API with WebSocket support",
-                        },
-                        {
-                            "category": "Security",
-                            "item": "OAuth 2.0 + JWT authentication",
-                        },
+                    "validation_status": "READY",
+                    "plan": [
+                        "requirement_elicitation",
+                        "market_strategy",
+                        "product_solution",
+                        "design",
+                        "client_simulator",
                     ],
-                    "estimated_complexity": "medium",
-                    "timeline_weeks": 8,
+                },
+            },
+            "requirement_elicitation": {
+                "summary": "Normalized the brief and extracted unresolved requirements",
+                "payload": {
+                    "requirement_summary": "Structured requirement summary",
+                    "next_questions": [
+                        {"field": "industry", "text": "What industry is this for?"},
+                        {"field": "goal", "text": "What is the business outcome?"},
+                    ],
                 },
             },
             "market_strategy": {
@@ -289,29 +291,40 @@ class StubAgent(BaseAgent):
                     "recommended_pricing": "Tiered: $99/mo, $299/mo, $999/mo",
                 },
             },
-            "account": {
-                "summary": "Prepared pricing proposal and quotation",
+            "product_solution": {
+                "summary": "Prepared a merged product solution and pricing reference",
                 "payload": {
-                    "quote_id": "Q-2026-001",
-                    "items": [
-                        {"name": "Platform License", "price": 50000000, "unit": "year"},
-                        {
-                            "name": "Implementation",
-                            "price": 30000000,
-                            "unit": "one-time",
-                        },
-                        {"name": "Support", "price": 12000000, "unit": "year"},
-                    ],
-                    "total_vnd": 92000000,
-                    "valid_until": "2026-07-12",
+                    "solution_summary": "Merged product, pricing, and integration solution",
+                    "recommended_modules": ["Base package", "Integration add-on"],
+                    "pricing_breakdown": {
+                        "items": [
+                            {"name": "Base package", "price": 50000000, "unit": "project"},
+                            {"name": "Integration add-on", "price": 25000000, "unit": "project"},
+                        ],
+                        "subtotal": 75000000,
+                        "vat_8_percent": 6000000,
+                        "total_vnd": 81000000,
+                    },
                 },
             },
-            "adtimabox": {
-                "summary": "Provided AdtimaBox integration options",
+            "compliance": {
+                "summary": "Reviewed content and flagged policy risks",
                 "payload": {
-                    "integration_type": "API + SDK",
-                    "features": ["User sync", "Event tracking", "Push notifications"],
-                    "setup_time": "3-5 business days",
+                    "overall": "ok",
+                    "findings": [],
+                },
+            },
+            "client_simulator": {
+                "summary": "Simulated client pushback and flagged proposal weak points",
+                "payload": {
+                    "objections": [
+                        {"text": "Why is the pricing not broken down by module?", "severity": "high"},
+                        {"text": "Where is the proof that this will work for our industry?", "severity": "medium"},
+                    ],
+                    "weak_points": ["Missing competitive comparison", "No downside scenario"],
+                    "risks": ["Pitch may fail without clearer ROI story"],
+                    "scores": {"clarity": 3, "credibility": 3, "value_prop": 3, "pricing": 2},
+                    "recommendations": ["Add proof points", "Split pricing into modules", "Add risk caveats"],
                 },
             },
             "design": {
@@ -323,27 +336,6 @@ class StubAgent(BaseAgent):
                         {"type": "Mockup", "description": "Visual design (optional)"},
                     ],
                     "estimated_hours": 40,
-                },
-            },
-            "client_simulator": {
-                "summary": "Simulated client pushback and flagged proposal weak points",
-                "payload": {
-                    "objections": [
-                        {"text": "ROI timeline seems optimistic — show a downside scenario", "severity": "high"},
-                        {"text": "No reference customer in our industry", "severity": "medium"},
-                        {"text": "Pricing needs clearer breakdown per feature", "severity": "medium"},
-                    ],
-                    "weak_points": [
-                        "Value proposition paragraph is too generic",
-                        "Timeline milestones lack success criteria",
-                    ],
-                    "risks": ["Client may benchmark against cheaper alternatives without a competitive comparison slide"],
-                    "scores": {"clarity": 3, "credibility": 3, "value_prop": 4, "pricing": 3},
-                    "recommendations": [
-                        "Add a downside-scenario ROI table",
-                        "Include 1-2 case studies from the same industry vertical",
-                        "Rewrite the value proposition with specific measurable outcomes",
-                    ],
                 },
             },
         }

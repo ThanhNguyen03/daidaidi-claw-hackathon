@@ -46,12 +46,10 @@ class DesignAgent(BaseAgent):
 
         # Get context from other agents
         market_output = state.outputs.get("market_strategy")
-        tech_output = state.outputs.get("tech_solution")
-        content_output = state.outputs.get("content_generator")
-        account_output = state.outputs.get("account")
+        product_output = state.outputs.get("product_solution")
 
         # Build context for artifact generation
-        context = self._build_context(state, market_output, tech_output, content_output, account_output)
+        context = self._build_context(state, market_output, product_output)
 
         # Generate PPTX
         pptx_path = await self._generate_pptx(context, state.session_id)
@@ -93,7 +91,7 @@ class DesignAgent(BaseAgent):
             questions=[],
         )
 
-    def _build_context(self, state, market_output, tech_output, content_output, account_output) -> dict:
+    def _build_context(self, state, market_output, product_output) -> dict:
         """Build context from other agent outputs."""
         context = {
             "session_id": state.session_id,
@@ -103,14 +101,8 @@ class DesignAgent(BaseAgent):
         if market_output and hasattr(market_output, "payload"):
             context["market_strategy"] = market_output.payload
 
-        if tech_output and hasattr(tech_output, "payload"):
-            context["tech_solution"] = tech_output.payload
-
-        if content_output and hasattr(content_output, "payload"):
-            context["content"] = content_output.payload
-
-        if account_output and hasattr(account_output, "payload"):
-            context["pricing"] = account_output.payload
+        if product_output and hasattr(product_output, "payload"):
+            context["product_solution"] = product_output.payload
 
         return context
 
@@ -182,18 +174,27 @@ class DesignAgent(BaseAgent):
                         p.font.size = Pt(16)
                         p.space_after = Pt(8)
 
-            # Slide 4: Tech Solution
-            tech = context.get("tech_solution", {})
-            if tech:
-                tech_slide = prs.slides.add_slide(prs.slide_layouts[6])
-                title_box = tech_slide.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(12), Inches(0.8))
+            # Slide 4: Product Solution
+            product = context.get("product_solution", {})
+            if product:
+                product_slide = prs.slides.add_slide(prs.slide_layouts[6])
+                title_box = product_slide.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(12), Inches(0.8))
                 tf = title_box.text_frame
-                tf.paragraphs[0].text = "Technical Solution"
+                tf.paragraphs[0].text = "Product Solution"
                 tf.paragraphs[0].font.size = Pt(32)
                 tf.paragraphs[0].font.bold = True
 
+                content_box = product_slide.shapes.add_textbox(Inches(0.5), Inches(1.2), Inches(12), Inches(5))
+                tf = content_box.text_frame
+                tf.word_wrap = True
+                for key, value in list(product.items())[:8]:
+                    p = tf.add_paragraph()
+                    p.text = f"{key}: {value}"
+                    p.font.size = Pt(16)
+                    p.space_after = Pt(8)
+
             # Slide 5: Pricing
-            pricing = context.get("pricing", {})
+            pricing = (context.get("product_solution", {}) or {}).get("pricing_breakdown", {})
             if pricing:
                 pricing_slide = prs.slides.add_slide(prs.slide_layouts[6])
                 title_box = pricing_slide.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(12), Inches(0.8))

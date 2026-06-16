@@ -91,13 +91,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   const [activeCheckpoint, setActiveCheckpoint] = useState<Checkpoint | null>(null);
   const [activeAgents, setActiveAgents] = useState<AgentStatus[]>([
     { name: 'scoping', status: 'idle' },
-    { name: 'orchestrator', status: 'idle' },
+    { name: 'sales_orchestrator', status: 'idle' },
+    { name: 'requirement_elicitation', status: 'idle' },
     { name: 'market_strategy', status: 'idle' },
     { name: 'compliance', status: 'idle' },
-    { name: 'adtimabox', status: 'idle' },
-    { name: 'content_generator', status: 'idle' },
-    { name: 'account', status: 'idle' },
+    { name: 'product_solution', status: 'idle' },
     { name: 'design', status: 'idle' },
+    { name: 'client_simulator', status: 'idle' },
   ]);
 
   // Day 4: Constraints and profile state
@@ -140,25 +140,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   // Ref for aborting requests
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Inject a system message when the user switches modes mid-session
-  const prevModeRef = useRef<string>(mode);
-  useEffect(() => {
-    if (prevModeRef.current !== mode && messages.length > 0) {
-      const modeLabels: Record<string, string> = {
-        chat: 'Chat', planning: 'Planning', execute: 'Execute', brainstorm: 'Brainstorm',
-      };
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'system' as const,
-          content: `--- Switched to ${modeLabels[mode] || mode} mode. Session context carried over. ---`,
-          timestamp: new Date().toISOString(),
-        },
-      ]);
-    }
-    prevModeRef.current = mode;
-  }, [mode]);
-
   // Reset agent statuses when starting new message
   const resetAgentStatuses = useCallback(() => {
     setActiveAgents((prev) => prev.map((agent) => ({ ...agent, status: 'idle' as const })));
@@ -192,7 +173,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         message,
         session_id: sessionId,
         salesperson_id: salespersonId,
-        mode,
+        mode: 'chat',
         brief,
       });
 
@@ -263,7 +244,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sessionId, salespersonId, mode, resetAgentStatuses]
+    [sessionId, salespersonId, resetAgentStatuses]
   );
 
   // Handle SSE events
@@ -296,7 +277,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
             const content = data.content as string;
             setMessages((prev) => {
               const last = prev[prev.length - 1];
-              if (last && last.role === 'assistant' && last.agent === 'orchestrator') {
+              if (last && last.role === 'assistant' && last.agent === 'sales_orchestrator') {
                 // Append to existing assistant message
                 return [...prev.slice(0, -1), { ...last, content: last.content + content }];
               } else {
@@ -306,7 +287,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
                   {
                     role: 'assistant',
                     content,
-                    agent: 'orchestrator',
+                    agent: 'sales_orchestrator',
                     timestamp: new Date().toISOString(),
                   },
                 ];
@@ -367,7 +348,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
         case 'agent_message':
           // A specialized agent completed and is sending its response as a
-          // separate chat bubble (planning / execute mode).
+          // separate chat bubble.
           {
             const agentName = (data.agent as string) || 'assistant';
             const agentContent = (data.content as string) || '';
@@ -578,7 +559,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
             ...prev,
             {
               role: 'system',
-              content: '✓ Using assumed value. Continuing...',
+              content: '✓ Question skipped. Continuing...',
               timestamp: new Date().toISOString(),
             },
           ]);
@@ -593,7 +574,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           }
         }
       } catch {
-        // Silently fail - assumption will be used
+        // Silently fail - continue without blocking the chat flow
       }
     },
     [sessionId, sendMessage]
@@ -618,7 +599,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
             session_id: sessionId,
             message: freeText,
             salesperson_id: salespersonId,
-            mode,
+            mode: 'chat',
           }),
         });
 
@@ -651,7 +632,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         setIsLoading(false);
       }
     },
-    [sessionId, salespersonId, mode, sendMessage]
+    [sessionId, salespersonId, sendMessage]
   );
 
   // Day 4: Load constraints from backend
@@ -788,7 +769,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       const msg: Message = {
         role: 'assistant',
         content: clarifyingMsg,
-        agent: 'orchestrator',
+        agent: 'sales_orchestrator',
         timestamp: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, msg]);
@@ -825,7 +806,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         const msg: Message = {
           role: 'assistant',
           content: 'Parameters updated. Please review the new preview and approve.',
-          agent: 'orchestrator',
+          agent: 'sales_orchestrator',
           timestamp: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, msg]);

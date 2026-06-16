@@ -104,12 +104,13 @@ class AgentRegistry:
 
         # Map agent names to their real implementations
         real_agent_map = {
-            "account": ("agents.account.agent", "get_account_agent"),
-            "compliance": ("agents.compliance.agent", "get_compliance_agent"),
-            "market_strategy": ("agents.market_strategy.agent", "get_market_strategy_agent"),
-            "tech_solution": ("agents.tech_solution.agent", "get_tech_solution_agent"),
-            "content_generator": ("agents.content_generator.agent", "get_content_generator_agent"),
+            "requirement_elicitation": ("agents.requirement_elicitation_agent.agent", "get_requirement_elicitation_agent"),
+            "compliance": ("agents.compliance_policy_agent.agent", "get_compliance_agent"),
+            "market_strategy": ("agents.market_strategy_agent.agent", "get_market_strategy_agent"),
             "design": ("agents.design.agent", "get_design_agent"),
+            "product_solution": ("agents.product_solution_agent.agent", "get_product_solution_agent"),
+            "client_simulator": ("agents.client_simulator_agent.agent", "get_client_simulator_agent"),
+            "sales_orchestrator": ("agents.sales_orchestrator_agent.agent", "get_sales_orchestrator"),
         }
 
         if name in real_agent_map:

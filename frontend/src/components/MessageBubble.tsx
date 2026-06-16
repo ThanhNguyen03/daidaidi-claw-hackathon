@@ -315,28 +315,26 @@ interface MessageBubbleProps {
 }
 
 const AGENT_COLORS: Record<string, string> = {
-  orchestrator: '#6366f1',
+  sales_orchestrator: '#6366f1',
   scoping: '#64748b',
+  requirement_elicitation: '#0f766e',
   market_strategy: '#ec4899',
   compliance: '#f97316',
-  adtimabox: '#10b981',
-  content_generator: '#06b6d4',
-  account: '#f59e0b',
+  product_solution: '#10b981',
   design: '#3b82f6',
-  tech_solution: '#8b5cf6',
+  client_simulator: '#06b6d4',
   system: '#6b7280',
 };
 
 const AGENT_NAMES: Record<string, string> = {
-  orchestrator: 'Orchestrator',
+  sales_orchestrator: 'Sales Orchestrator',
   scoping: 'Scoping',
+  requirement_elicitation: 'Requirement Elicitation',
   market_strategy: 'Strategy',
   compliance: 'Compliance',
-  adtimabox: 'Product Expert',
-  content_generator: 'Content Generator',
-  account: 'Budget & Pricing',
+  product_solution: 'Product Solution',
   design: 'Slide Designer',
-  tech_solution: 'Tech Solution',
+  client_simulator: 'Client Simulator',
   system: 'System',
 };
 
@@ -414,7 +412,7 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
             color: '#ffffff',
           }}
         >
-          {message.agent === 'orchestrator' ? (
+          {message.agent === 'sales_orchestrator' ? (
             <Sparkles size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           ) : (
             <Bot size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />

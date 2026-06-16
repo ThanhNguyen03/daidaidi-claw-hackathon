@@ -41,7 +41,7 @@ from llm.greennode import get_llm_client
 # Import agent system (Day 2)
 from agents.registry import get_registry
 from agents.graph import get_simple_runner
-from agents.orchestrator import get_orchestrator
+from agents.sales_orchestrator_agent.agent import get_sales_orchestrator
 
 # Import validation (Day 3)
 from validation.question_stack import get_question_manager
@@ -65,6 +65,14 @@ from design.backend import get_default_backend
 APP_NAME = "Multi-Agent Sales Assistant"
 APP_VERSION = "0.6.0"  # Day 6 version
 DEBUG = os.getenv("DEBUG", "true").lower() == "true"
+ACTIVE_MODE = "chat"
+COMING_SOON_MODES = {"planning", "execute", "brainstorm"}
+
+
+def _normalize_mode(mode: Optional[str]) -> str:
+    """Keep the runtime on chat mode while preserving compatibility with legacy inputs."""
+    normalized = (mode or ACTIVE_MODE).strip().lower()
+    return ACTIVE_MODE if normalized != ACTIVE_MODE else ACTIVE_MODE
 
 
 # =============================================================================
@@ -90,7 +98,7 @@ async def lifespan(app: FastAPI):
     print("Starting up: Registering checkpoint review hooks...")
     try:
         from checkpoint.manager import get_checkpoint_manager
-        from agents.compliance.agent import get_compliance_agent
+        from agents.compliance_policy_agent.agent import get_compliance_agent
 
         cpm = get_checkpoint_manager()
         compliance_agent = get_compliance_agent()
@@ -152,7 +160,7 @@ class ChatRequest(BaseModel):
     )
     salesperson_id: str = Field(..., description="Salesperson identifier")
     mode: str = Field(
-        "chat", description="Chat mode: chat, planning, execute, brainstorm"
+        "chat", description="Active mode is chat; other modes are coming soon"
     )
     brief: Optional[Brief] = Field(None, description="Initial brief data")
     context: Optional[dict] = Field(None, description="Additional context")
@@ -186,9 +194,12 @@ def get_or_create_session(
     session_id: Optional[str], salesperson_id: str, mode: str = "chat"
 ) -> SalesCaseState:
     """Get existing session or create new one."""
+    mode = _normalize_mode(mode)
     # First check in-memory store
     if session_id and session_id in _session_store:
-        return _session_store[session_id]
+        state = _session_store[session_id]
+        state.mode = _normalize_mode(state.mode)
+        return state
 
     # Create new session (resume from DB happens via separate endpoint)
     new_session = SalesCaseState(
@@ -205,9 +216,12 @@ async def get_or_create_session_async(
     session_id: Optional[str], salesperson_id: str, mode: str = "chat"
 ) -> SalesCaseState:
     """Async version: Get existing session or create new one. Tries in-memory, then database."""
+    mode = _normalize_mode(mode)
     # First check in-memory store
     if session_id and session_id in _session_store:
-        return _session_store[session_id]
+        state = _session_store[session_id]
+        state.mode = _normalize_mode(state.mode)
+        return state
 
     # Try loading from database (Day 4: cross-session resume)
     if session_id:
@@ -216,6 +230,7 @@ async def get_or_create_session_async(
             state = await memory_repo.load_session(session_id)
             if state:
                 # Found in database, also put in memory
+                state.mode = _normalize_mode(state.mode)
                 _session_store[session_id] = state
                 return state
         except Exception as e:
@@ -255,14 +270,14 @@ async def _recompute_preview(state: SalesCaseState, params: dict) -> Optional[di
     In a full implementation, we'd re-run the Account agent.
     """
     # Get current payload from state
-    account_output = state.outputs.get("account")
-    if not account_output:
+    product_output = state.outputs.get("product_solution")
+    if not product_output:
         return None
 
-    payload = account_output.payload.copy() if account_output.payload else {}
+    payload = product_output.payload.copy() if product_output.payload else {}
 
     # Simple re-computation: update values based on params
-    # In production, this would re-run the Account agent with new params
+    # In production, this would re-run the product solution agent with new params
     if "budget" in params:
         # Budget was edited - update the total to be within budget
         try:
@@ -294,13 +309,8 @@ async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
     - Plan agent outputs a plan (generate_pptx, generate_userflow)
     - Design agent outputs wireframe requirements (generate_wireframe)
     """
-    # Check if we're in a mode that triggers checkpoints
-    # Chat mode: no checkpoints (read-only)
-    # Planning mode: checkpoint before finalizing plan
-    # Execute mode: checkpoint before every generation
-    # Brainstorm mode: no checkpoints (handled differently)
-    if state.mode == "chat" or state.mode == "brainstorm":
-        return None
+    # Check whether any agent output requires human approval.
+    # Mode no longer controls checkpointing; the output type does.
 
     # Get checkpoint manager
     cpm = get_checkpoint_manager()
@@ -437,12 +447,19 @@ async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
     action_type = None
     action_description = None
 
-    # Check for quote output from account agent
-    account_output = state.outputs.get("account")
-    if account_output:
-        account_payload = account_output.payload or {}
-        if "total_vnd" in account_payload or "quote_id" in account_payload:
-            payload = account_payload
+    # Check for quote output from product solution agent
+    product_output = state.outputs.get("product_solution")
+    if product_output:
+        product_payload = product_output.payload or {}
+        pricing_breakdown = product_payload.get("pricing_breakdown") or {}
+        if pricing_breakdown.get("total_vnd") or product_payload.get("quote_id"):
+            payload = {
+                "quote_id": product_payload.get("quote_id", "PENDING"),
+                "items": pricing_breakdown.get("items", []),
+                "total_vnd": pricing_breakdown.get("total_vnd", 0),
+                "valid_until": pricing_breakdown.get("valid_until"),
+                "payment_terms": product_payload.get("payment_terms", "To be confirmed"),
+            }
             action_type = "generate_quote"
             action_description = f"Generate quotation for {payload.get('total_vnd', 0):,} VND"
 
@@ -550,7 +567,7 @@ def _extract_agent_content(agent_name: str, output) -> str:
     """
     payload = getattr(output, "payload", {}) or {}
 
-    # content_generator: full narrative under "content"
+    # product_solution: full solution narrative under "solution_summary"
     if "content" in payload:
         return str(payload["content"])
 
@@ -558,7 +575,7 @@ def _extract_agent_content(agent_name: str, output) -> str:
     if "strategy" in payload:
         return str(payload["strategy"])
 
-    # tech_solution: recommendations (string or list)
+    # product_solution: recommendations (string or list)
     if "recommendations" in payload:
         recs = payload["recommendations"]
         if isinstance(recs, str):
@@ -611,11 +628,31 @@ def _extract_agent_content(agent_name: str, output) -> str:
     if "narrative" in payload:
         return str(payload["narrative"])
 
-    # adtimabox / integration: integration summary
+    # product_solution / integration: integration summary
     if "integration" in payload:
         return str(payload["integration"])
 
-    # account / quote: render as markdown table
+    if "solution_summary" in payload:
+        return str(payload["solution_summary"])
+
+    if "pricing_breakdown" in payload:
+        pricing = payload["pricing_breakdown"] or {}
+        lines = [f"**Báo giá / Solution**\n"]
+        for item in pricing.get("items", []):
+            price = item.get("price", 0)
+            lines.append(
+                f"- {item.get('name', '?')}: **{price:,.0f} VND** / {item.get('unit', '')}"
+                + (" *(ước tính)*" if item.get("is_estimate") else "")
+            )
+        if pricing.get("subtotal") is not None:
+            lines.append(f"\n**Subtotal:** {pricing.get('subtotal'):,.0f} VND")
+        if pricing.get("total_vnd") is not None:
+            lines.append(f"**Tổng cộng:** {pricing.get('total_vnd'):,.0f} VND")
+        if pricing.get("valid_until"):
+            lines.append(f"Hiệu lực đến: {pricing['valid_until']}")
+        return "\n".join(lines)
+
+    # product solution / quote: render as markdown table
     if "quote_id" in payload:
         lines = [f"**Báo giá #{payload['quote_id']}**\n"]
         for item in payload.get("items", []):
@@ -646,15 +683,14 @@ async def process_with_agents(
     This uses the SimpleAgentRunner from Day 2 which provides
     proper agent dispatch, anti-loop guard, and status streaming.
 
-    Mode-specific behavior (Day 6):
-    - chat: Use simple LLM (no agents), no checkpoints
-    - planning: Run Market+Strategy, checkpoint before finalizing plan
-    - execute: Full generation pipeline, checkpoint before every side effect
-    - brainstorm: Moderator subgraph (Day 7)
+    Chat-only runtime behavior:
+    - Validation runs first.
+    - The orchestrator decides which specialist agents to invoke.
+    - Checkpoints are created from the produced output type, not from mode.
 
     NOTE: When ENABLE_CHECKPOINT is true, this will use the full LangGraph
     AgentGraph which supports interrupt-before-tool HITL and durable checkpointer
-    for resume. This is needed for Day 4-5 checkpoint functionality.
+    for resume. This is needed for checkpoint functionality.
     """
     # Add user message to state
     state.messages.extend(
@@ -666,6 +702,11 @@ async def process_with_agents(
             },
         ]
     )
+
+    if not state.brief:
+        extracted = await _extract_brief_from_text(message)
+        if extracted:
+            state.brief = extracted
 
     # Day 7: Handle modes differently
     # chat mode: simple processing (no agents), handled in process_simple
@@ -696,7 +737,7 @@ async def process_with_agents(
 
         if brain_state is None:
             # Create new session with participants from state
-            participants = state.participants if state.participants else ["orchestrator"]
+            participants = state.participants if state.participants else ["sales_orchestrator"]
             brain_state = manager.create_session(
                 session_id=state.session_id,
                 participants=participants,
@@ -785,7 +826,7 @@ async def process_with_agents(
 
         # Stream each completed agent's real output as a separate agent_message
         for agent_name, output in final_state.outputs.items():
-            if agent_name == "orchestrator":
+            if agent_name == "sales_orchestrator":
                 continue
             if not output or not hasattr(output, "status"):
                 continue
@@ -821,15 +862,15 @@ async def process_with_agents(
 # Simple LLM Processing (Day 1 fallback)
 # =============================================================================
 
-ORCHESTRATOR_SYSTEM_PROMPT = """You are a Sales AI Assistant — a knowledgeable advisor for sales teams.
+ORCHESTRATOR_SYSTEM_PROMPT = """You are a Sales AI Assistant â€” a knowledgeable advisor for sales teams.
 
-## Your Role in Chat Mode
+## Your Role
 
-You answer questions and provide advice DIRECTLY from your own knowledge.
-You do NOT "dispatch agents", "combine agents", or "hand off to specialists" —
-all of that happens only in Planning / Execute mode (different flows).
+You coordinate the specialist agents internally and answer only from the
+evidence, context, and tools already available in the session.
 
-In chat mode: **you ARE the answer**. Respond fully and helpfully right now.
+Do NOT invent missing details, do NOT assume unavailable values, and do NOT
+answer execute-level requirements unless the context is sufficient.
 
 ## When User Shares a Sales Brief
 
@@ -842,22 +883,16 @@ Key fields to check:
 - Goals or KPIs
 - Current tech stack (CRM, Zalo OA, etc.)
 
-Once you have enough context, give a **comprehensive, direct response** — include:
-market insights, solution recommendations, rough timeline, pricing ballpark, and
-next steps. Do NOT say "I'll now create a plan" — just create it inline.
-
-## Suggesting Other Modes
-
-If the user asks for a formal proposal, multi-slide deck, or detailed quotation,
-tell them: *"For a complete multi-agent proposal with official pricing and design
-artifacts, switch to **Planning** or **Execute** mode using the sidebar."*
+Once you have enough context, coordinate the specialists and present a
+comprehensive, direct response with only grounded information.
 
 ## Response Guidelines
 
-- Be helpful, professional, and thorough — give real substance, not placeholders
+- Be helpful, professional, and thorough â€” give real substance, not placeholders
 - Respond in the user's language (Vietnamese if they write in Vietnamese)
 - Use markdown headers and bullet points for readability
 - Never promise future actions you cannot take in this turn
+- Never expose hidden mode names to the user
 """
 
 
@@ -927,11 +962,11 @@ async def process_simple(
 ) -> AsyncGenerator[str, None]:
     """
     Process message with simple LLM call (chat mode fallback).
-    Uses orchestrator system prompt. Strips <think> reasoning blocks and
+    Uses sales_orchestrator system prompt. Strips <think> reasoning blocks and
     emits thinking_start / thinking_end SSE events instead.
     """
     try:
-        client = get_llm_client("orchestrator")
+        client = get_llm_client("sales_orchestrator")
     except ValueError as e:
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
         return
@@ -996,7 +1031,7 @@ async def process_simple(
                 {
                     "role": "assistant",
                     "content": accumulated,
-                    "agent": "orchestrator",
+                    "agent": "sales_orchestrator",
                     "timestamp": datetime.now().isoformat(),
                 }
             )
@@ -1057,7 +1092,7 @@ async def chat(request: ChatRequest):
 
     # For Day 2, we'll use simple response (non-streaming)
     # The full agent dispatch would be implemented later
-    client = get_llm_client("orchestrator")
+        client = get_llm_client("sales_orchestrator")
     messages = [{"role": "user", "content": request.message}]
 
     try:
@@ -1076,7 +1111,7 @@ async def chat(request: ChatRequest):
     return ChatResponse(
         session_id=state.session_id,
         message=response_text,
-        agent="orchestrator",
+        agent="sales_orchestrator",
         done=True,
     )
 
@@ -1165,9 +1200,9 @@ def _auto_detect_outputs(message: str) -> list[str]:
         outputs.append("figma")
     if any(w in lower for w in ["diagram", "flow", "userflow", "mermaid"]):
         outputs.append("userflow")
-    if any(w in lower for w in ["quote", "quotation", "pricing", "price", "cost", "account"]):
+    if any(w in lower for w in ["quote", "quotation", "pricing", "price", "cost", "product solution"]):
         outputs.append("quote")
-    return outputs or ["pptx", "quote"]  # sensible default for sales briefs
+    return outputs
 
 
 @app.post("/chat/stream")
@@ -1177,6 +1212,24 @@ async def chat_stream(request: Request, payload: ChatRequest):
     Chat endpoint - streaming via SSE.
     Uses the multi-agent system (Day 2).
     """
+    requested_mode = (payload.mode or ACTIVE_MODE).strip().lower()
+    if requested_mode != ACTIVE_MODE:
+        async def coming_soon_stream():
+            yield f"data: {json.dumps({'type': 'session', 'session_id': payload.session_id or f'sess_{uuid.uuid4().hex[:12]}'})}\n\n"
+            yield f"data: {json.dumps({'type': 'user_message', 'content': payload.message})}\n\n"
+            yield f"data: {json.dumps({'type': 'content', 'content': 'Planning, execute, and brainstorm modes are coming soon. Chat mode is the only active mode for now.'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+        return StreamingResponse(
+            coming_soon_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     # Get or create session
     state = get_or_create_session(
         session_id=payload.session_id,
@@ -1189,13 +1242,13 @@ async def chat_stream(request: Request, payload: ChatRequest):
 
     # Always sync the mode on the session — user may have switched modes
     # between requests while keeping the same session (brief/history carries over).
-    state.mode = payload.mode
+    state.mode = ACTIVE_MODE
 
     # Determine processing mode based on request.
     # planning/execute use the full multi-agent system.
     # chat uses a direct LLM call (process_simple) — the system prompt
     # guides the LLM to answer comprehensively without promising agent dispatch.
-    use_agents = payload.mode in ["planning", "execute"]
+    use_agents = True
 
     # Reset per-request agent state so agents re-run on every new message.
     # Without this, state.plan and state.visited accumulate across turns and
@@ -1215,7 +1268,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
         yield f"data: {json.dumps({'type': 'user_message', 'content': payload.message})}\n\n"
 
         # ── Brief auto-detection: switch chat → execute when user pastes a brief ──
-        # This is the main fix for "only orchestrator responds" — when a user types
+        # This is the main fix for "only sales_orchestrator responds" — when a user types
         # a full campaign brief in chat mode, we auto-route to the multi-agent pipeline.
         if not use_agents and _looks_like_brief(payload.message):
             extracted = await _extract_brief_from_text(payload.message)
@@ -1234,68 +1287,28 @@ async def chat_stream(request: Request, payload: ChatRequest):
 # yield f"data: {json.dumps({'type': 'content', 'content': '> **Brief detected** — dispatching specialist agents in Execute mode...\\n\\n'})}\n\n"
 
         # C.5 §3: Validation gate - check before any agent dispatch
-        orchestrator = get_orchestrator()
+        orchestrator = get_sales_orchestrator()
         validation_output, should_dispatch = (
             await orchestrator.validate_before_dispatch(state)
         )
 
         if not should_dispatch:
-            # BLOCKED (out-of-scope) — hard stop
             if validation_output.status == "FAILED":
                 yield f"data: {json.dumps({'type': 'error', 'error': validation_output.summary})}\n\n"
-                update_session(state)
-                brief_data = state.brief.model_dump() if state.brief else None
-                yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'validation_status': state.validation_status, 'brief': brief_data})}\n\n"
-                return
+            elif validation_output.questions:
+                def question_to_dict(q):
+                    d = q.model_dump()
+                    if d.get("last_asked_at") and hasattr(d["last_asked_at"], "isoformat"):
+                        d["last_asked_at"] = d["last_asked_at"].isoformat()
+                    return d
 
-        # Show question card for PENDING (missing optional fields) but still proceed with agents
-        if validation_output.questions:
-            # Convert questions to dict, handling datetime serialization
-            def question_to_dict(q):
-                d = q.model_dump()
-                # Convert datetime to ISO string
-                if d.get('last_asked_at') and hasattr(d['last_asked_at'], 'isoformat'):
-                    d['last_asked_at'] = d['last_asked_at'].isoformat()
-                return d
-            yield f"data: {json.dumps({'type': 'question_card', 'questions': [question_to_dict(q) for q in validation_output.questions]})}\n\n"
+                yield f"data: {json.dumps({'type': 'question_card', 'questions': [question_to_dict(q) for q in validation_output.questions]})}\n\n"
 
-        # Execute mode: ask what output format the user wants if not yet specified
-        if payload.mode == "execute" and not state.desired_outputs:
-            msg_lower = payload.message.lower()
-            # Try to detect output intent from the message first
-            detected_outputs = []
-            if any(w in msg_lower for w in ["pptx", "powerpoint", "slide", "deck", "presentation"]):
-                detected_outputs.append("pptx")
-            if any(w in msg_lower for w in ["figma", "figmajam", "wireframe", "design", "mockup", "ui"]):
-                detected_outputs.append("figma")
-            if any(w in msg_lower for w in ["diagram", "flow", "userflow", "mermaid", "journey"]):
-                detected_outputs.append("userflow")
-            if any(w in msg_lower for w in ["quote", "quotation", "pricing", "invoice", "proposal"]):
-                detected_outputs.append("quote")
-
-            if detected_outputs:
-                state.desired_outputs = detected_outputs
-            else:
-                # Ask which output format the user wants
-                from schemas.state import Question as QuestionSchema
-                output_question = QuestionSchema(
-                    id="desired_output",
-                    text="What output would you like me to generate?",
-                    priority=1,
-                    is_mandatory=True,
-                    assumption=None,
-                    target_field="desired_outputs",
-                    options=[
-                        "PPTX Presentation (PowerPoint slide deck)",
-                        "FigmaJam / Wireframe (UI design)",
-                        "Userflow Diagram (Mermaid / process flow)",
-                        "Quotation / Pricing Proposal",
-                    ],
-                )
-                yield f"data: {json.dumps({'type': 'question_card', 'questions': [output_question.model_dump()]})}\n\n"
-                update_session(state)
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                return
+            update_session(state)
+            brief_data = state.brief.model_dump() if state.brief else None
+            yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'validation_status': state.validation_status, 'brief': brief_data})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
 
         # Validation passed - proceed with agent dispatch
         # D.2: Check for feedback in the message and extract rules
@@ -1398,7 +1411,7 @@ async def get_session_by_id(session_id: str):
         return {
             "session_id": state.session_id,
             "salesperson_id": state.salesperson_id,
-            "mode": state.mode,
+            "mode": ACTIVE_MODE,
             "brief": state.brief.model_dump() if state.brief else None,
             "summary": state.summary,
             "outputs": {k: v.model_dump() for k, v in state.outputs.items()},
@@ -1419,7 +1432,7 @@ async def get_session_by_id(session_id: str):
             return {
                 "session_id": state.session_id,
                 "salesperson_id": state.salesperson_id,
-                "mode": state.mode,
+                "mode": ACTIVE_MODE,
                 "brief": state.brief.model_dump() if state.brief else None,
                 "summary": state.summary,
                 "outputs": {k: v.model_dump() for k, v in state.outputs.items()},
@@ -1452,7 +1465,7 @@ async def list_sessions(
         {
             "session_id": s.session_id,
             "salesperson_id": s.salesperson_id,
-            "mode": s.mode,
+            "mode": ACTIVE_MODE,
             "summary": s.summary,
             "visited": s.visited,
             "hop_depth": s.hop_depth,
@@ -1483,79 +1496,31 @@ class SwitchModeRequest(BaseModel):
 @app.post("/sessions/switch_mode")
 async def switch_mode(request: SwitchModeRequest):
     """
-    Switch to a different chat mode.
+    Mode switching is disabled for now.
 
-    Mode switching changes system prompt + active subgraph but does NOT
-    wipe session state (the brief carries across modes).
-
-    - chat: read-only Q&A, no checkpoints
-    - planning: Market+Strategy, checkpoint before finalizing plan
-    - execute: full generation pipeline + checkpoint before every side effect
-    - brainstorm: moderator subgraph (Day 7)
+    Chat is the only active mode. Other modes are marked coming soon so the
+    UI can show them without changing the runtime workflow.
     """
     if request.session_id not in _session_store:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    valid_modes = ["chat", "planning", "execute", "brainstorm"]
-    if request.mode not in valid_modes:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid mode. Must be one of: {', '.join(valid_modes)}"
-        )
-
     state = _session_store[request.session_id]
     old_mode = state.mode
-    state.mode = request.mode
+    state.mode = ACTIVE_MODE
 
-    # Day 7: Handle brainstorm mode setup
-    response_data = {
-        "status": "switched",
+    return {
+        "status": "coming_soon",
         "session_id": state.session_id,
         "old_mode": old_mode,
         "new_mode": state.mode,
+        "requested_mode": request.mode,
+        "message": "Only chat mode is active right now. Planning, execute, and brainstorm are coming soon.",
         "preserved": {
             "brief": state.brief.model_dump() if state.brief else None,
             "message_count": len(state.messages),
             "output_count": len(state.outputs),
-        }
+        },
     }
-
-    # If switching to brainstorm mode, create a brainstorm session
-    if request.mode == "brainstorm":
-        from mode.brainstorm import get_brainstorm_manager
-
-        # Get participants (default to all available agents if not specified)
-        participants = request.participants or ["market", "strategy", "tech_solution", "account"]
-        manager = get_brainstorm_manager()
-        brainstorm_state = manager.create_session(
-            session_id=request.session_id,
-            participants=participants
-        )
-
-        response_data["brainstorm"] = {
-            "status": "started",
-            "participants": participants,
-            "max_rounds": brainstorm_state.max_rounds,
-            "transcript": [
-                {"speaker": m.speaker, "content": m.content}
-                for m in brainstorm_state.transcript
-            ]
-        }
-
-    # If leaving brainstorm mode, end the session
-    if old_mode == "brainstorm" and request.mode != "brainstorm":
-        from mode.brainstorm import get_brainstorm_manager
-
-        manager = get_brainstorm_manager()
-        if manager.get_session(request.session_id):
-            summary = manager.get_session(request.session_id).get_summary()
-            manager.delete_session(request.session_id)
-            response_data["brainstorm"] = {
-                "status": "ended",
-                "summary": summary
-            }
-
-    return response_data
 
 
 # =============================================================================
@@ -1590,8 +1555,8 @@ async def answer_question(request: Request, payload: AnswerQuestionRequest):
 
     state = _session_store[payload.session_id]
 
-    # Get orchestrator to handle validation response
-    orchestrator = get_orchestrator()
+    # Get sales_orchestrator to handle validation response
+    orchestrator = get_sales_orchestrator()
 
     # Special case: desired_output question routes to state.desired_outputs, not the brief
     if payload.question_id == "desired_output":
@@ -1658,7 +1623,7 @@ async def skip_question(request: Request, payload: SkipQuestionRequest):
     question_manager.skip_optional(payload.question_id)
 
     # Re-validate
-    orchestrator = get_orchestrator()
+    orchestrator = get_sales_orchestrator()
     validation_output, should_dispatch = await orchestrator.validate_before_dispatch(
         state
     )
@@ -1692,8 +1657,8 @@ async def answer_free_text(request: ChatRequest):
 
     state = _session_store[request.session_id]
 
-    # Get orchestrator
-    orchestrator = get_orchestrator()
+    # Get sales_orchestrator
+    orchestrator = get_sales_orchestrator()
 
     # Handle free text answer
     answers = {"free_text": request.message}
@@ -1928,7 +1893,7 @@ async def checkpoint_decision(
 
         # Day 5: If edit, re-compute preview with new params
         if request.decision == "edit" and request.params:
-            # Re-run the account agent with updated parameters
+            # Re-run the product solution agent with updated parameters
             new_payload = await _recompute_preview(state, request.params)
             if new_payload:
                 # Update the checkpoint preview with new values

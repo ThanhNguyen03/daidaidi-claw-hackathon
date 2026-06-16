@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Question Card Component
  * =======================
  * Displays questions to the user in a distinct card.
@@ -182,16 +182,9 @@ export function QuestionCard({
                     fontWeight: 500,
                     backgroundColor: '#e0e7ff',
                     color: '#4f46e5',
-                    flexWrap: 'wrap',
-                    gap: '4px',
                   }}
                 >
                   Optional
-                  {question.assumption && (
-                    <span style={{ color: '#6b7280', marginLeft: '4px' }}>
-                      — will assume: {question.assumption}
-                    </span>
-                  )}
                 </span>
               )}
             </div>
@@ -249,7 +242,7 @@ export function QuestionCard({
                       cursor: isSubmitting ? 'not-allowed' : 'pointer',
                       opacity: isSubmitting ? 0.5 : 1,
                     }}
-                    title="Skip - use assumption"
+                    title="Skip question"
                   >
                     <SkipForward size={16} />
                   </button>
@@ -303,3 +296,4 @@ export function QuestionCard({
 }
 
 export default QuestionCard;
+

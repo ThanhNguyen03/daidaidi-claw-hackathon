@@ -22,7 +22,7 @@ from langchain_core.runnables import RunnableConfig
 from schemas.state import SalesCaseState
 from agents.base import BaseAgent
 from agents.registry import get_registry
-from agents.orchestrator import get_orchestrator
+from agents.sales_orchestrator_agent.agent import get_sales_orchestrator
 
 # =============================================================================
 # Graph Node Functions
@@ -35,11 +35,11 @@ async def orchestrator_node(state: SalesCaseState) -> dict:
 
     Analyzes state, decides next action, returns updates via Command.
     """
-    orchestrator = get_orchestrator()
+    orchestrator = get_sales_orchestrator()
     result = await orchestrator.run(state)
 
     # Update state with result
-    updates = {"outputs": {**state.outputs, "orchestrator": result}}
+    updates = {"outputs": {**state.outputs, "sales_orchestrator": result}}
 
     # Check what the result says to do next
     if result.status == "NEEDS_AGENT" and result.needs:
@@ -125,7 +125,7 @@ def create_routing_function(agent_name: str) -> Callable:
                     return agent_name
 
         # Default: check orchestrator's last decision
-        orch_output = state.outputs.get("orchestrator")
+        orch_output = state.outputs.get("sales_orchestrator")
         if orch_output and orch_output.needs:
             if orch_output.needs.agent == agent_name:
                 return agent_name
@@ -161,11 +161,11 @@ class AgentGraph:
         workflow = StateGraph(SalesCaseState)
 
         # Add orchestrator node (supervisor)
-        workflow.add_node("orchestrator", orchestrator_node)
+        workflow.add_node("sales_orchestrator", orchestrator_node)
 
         # Get all registered agents
         registry = get_registry()
-        all_agents = [a for a in registry.all() if a.name != "orchestrator"]
+        all_agents = [a for a in registry.all() if a.name != "sales_orchestrator"]
 
         # First, add all agent nodes
         # agent_node() is a sync factory — call it immediately to capture the loop
@@ -181,16 +181,16 @@ class AgentGraph:
             route_fn = partial(create_routing_function(agent.name))
             route_fn.__name__ = f"route_{agent.name}"
             workflow.add_conditional_edges(
-                "orchestrator",
+                "sales_orchestrator",
                 route_fn,
                 [agent.name, END]
             )
 
             # Add edge: agent -> orchestrator (to aggregate results)
-            workflow.add_edge(agent.name, "orchestrator")
+            workflow.add_edge(agent.name, "sales_orchestrator")
 
         # Set entry point
-        workflow.set_entry_point("orchestrator")
+        workflow.set_entry_point("sales_orchestrator")
 
         # Compile with checkpointer
         self.graph = workflow.compile(
@@ -243,10 +243,10 @@ class AgentGraph:
 
         async for event in graph.astream(state, config=config):
             for node_name, node_output in event.items():
-                if node_name == "orchestrator":
+                if node_name == "sales_orchestrator":
                     yield {
                         "type": "agent_status",
-                        "agent": "orchestrator",
+                        "agent": "sales_orchestrator",
                         "status": "thinking",
                         "message": node_output.get("summary", ""),
                     }
@@ -310,14 +310,14 @@ class SimpleAgentRunner:
       A1  Scoping agent   — validates brief, asks missing fields
       A2  Orchestrator    — pure router: creates plan, never executes tasks
       G1  Parallel group  — strategy, compliance, product_expert run simultaneously
-      G2  Sequential      — content_generator synthesises G1 outputs
-      G3  Sequential      — account (budget/pricing), design (slide outline)
+      G2  Sequential      — product_solution synthesises G1 outputs
+      G3  Sequential      — product_solution (budget/pricing), design (slide outline)
 
     Constraints are injected per-agent from the salesperson's feedback rules.
     """
 
     def __init__(self):
-        self.orchestrator = get_orchestrator()
+        self.orchestrator = get_sales_orchestrator()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -393,19 +393,21 @@ class SimpleAgentRunner:
             "status": "thinking", "message": "Validating brief…",
         })
 
-        # Skip LLM validation if chat_stream already ran it (READY or PENDING both proceed).
-        # This avoids double-calling the validation model on every request.
-        if state.validation_status not in ("READY", "PENDING"):
-            validation_output, should_dispatch = await self.orchestrator.validate_before_dispatch(state)
-            if not should_dispatch:
-                state.outputs["orchestrator"] = validation_output
+        validation_output, should_dispatch = await self.orchestrator.validate_before_dispatch(state)
+        if not should_dispatch:
+            state.outputs["sales_orchestrator"] = validation_output
+            stream_events.append({
+                "type": "agent_status", "agent": "scoping",
+                "status": "completed" if validation_output.status == "NEEDS_INPUT" else "failed",
+                "message": validation_output.summary,
+            })
+            if validation_output.questions:
                 stream_events.append({
-                    "type": "agent_status", "agent": "scoping",
-                    "status": "completed" if validation_output.status == "NEEDS_INPUT" else "failed",
-                    "message": validation_output.summary,
+                    "type": "question_card",
+                    "questions": [q.model_dump() for q in validation_output.questions],
                 })
-                stream_events.append({"type": "done"})
-                return state, stream_events
+            stream_events.append({"type": "done"})
+            return state, stream_events
 
         stream_events.append({
             "type": "agent_status", "agent": "scoping",
@@ -414,7 +416,7 @@ class SimpleAgentRunner:
 
         # ── A2: Orchestrator — pure routing, no execution ─────────────────
         stream_events.append({
-            "type": "agent_status", "agent": "orchestrator",
+            "type": "agent_status", "agent": "sales_orchestrator",
             "status": "thinking", "message": "Building execution plan…",
         })
 
@@ -423,7 +425,7 @@ class SimpleAgentRunner:
 
         task_names = [t.agent_name for t in state.plan.tasks]
         stream_events.append({
-            "type": "agent_status", "agent": "orchestrator",
+            "type": "agent_status", "agent": "sales_orchestrator",
             "status": "completed",
             "message": f"Plan ready → {', '.join(task_names)}",
         })

@@ -60,7 +60,7 @@ class Question(BaseModel):
         False, description="Whether this question must be answered to proceed"
     )
     assumption: Optional[str] = Field(
-        None, description="What will be assumed if optional question is skipped"
+        None, description="Optional context associated with the question"
     )
     target_field: str = Field(
         ..., description="Which brief field this question populates"
@@ -95,7 +95,7 @@ class Question(BaseModel):
 class NeedsRequest(BaseModel):
     """
     Signal that an agent needs information from another agent.
-    Used for the anti-loop mechanism - agent requests orchestrator to invoke another agent.
+    Used for the anti-loop mechanism - agent requests sales_orchestrator to invoke another agent.
     """
 
     agent: str = Field(..., description="Agent name that is needed")
@@ -300,7 +300,7 @@ class FeedbackRule(BaseModel):
     )
     scope: list[str] = Field(
         ...,
-        description="Which agents this applies to (e.g., ['account', 'orchestrator'])",
+        description="Which agents this applies to (e.g., ['product_solution', 'sales_orchestrator'])",
     )
     rule: str = Field(..., description="The actual rule text")
     source_quote: str = Field(
@@ -379,11 +379,13 @@ class SalesCaseState(BaseModel):
     # Core identifiers
     session_id: str = Field(..., description="Unique session identifier")
     salesperson_id: str = Field(..., description="Salesperson identifier")
+    participants: list[str] = Field(
+        default_factory=list,
+        description="Optional brainstorm participants for moderated discussions",
+    )
 
     # Mode and workflow
-    mode: Literal["chat", "planning", "execute", "brainstorm"] = Field(
-        "chat", description="Current conversation mode"
-    )
+    mode: str = Field("chat", description="Current runtime mode; normalized to chat")
     brief: Optional[Brief] = Field(None, description="User's brief/request")
 
     # Validation
@@ -419,11 +421,10 @@ class SalesCaseState(BaseModel):
         default_factory=list, description="Active feedback rules"
     )
 
-    # Desired output formats for execute mode
-    # Set once the user answers the output-format question or specifies inline.
+    # Desired output formats requested by the user, if any.
     desired_outputs: list[str] = Field(
         default_factory=list,
-        description="Output types the user wants: pptx, figma, userflow, quote",
+        description="Output types requested by the user: pptx, figma, userflow, quote",
     )
 
     # Checkpoint

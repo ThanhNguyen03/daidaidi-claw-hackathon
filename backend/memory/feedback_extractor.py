@@ -61,23 +61,25 @@ class FeedbackExtractor:
 
     # Scope mapping: keywords to agent scopes
     SCOPE_KEYWORDS = {
-        "discount": ["account", "orchestrator"],
-        "price": ["account", "orchestrator"],
-        "pricing": ["account", "orchestrator"],
-        "quotation": ["account", "orchestrator"],
-        "quote": ["account", "orchestrator"],
-        "tech": ["tech_solution"],
-        "technical": ["tech_solution"],
-        "solution": ["tech_solution"],
+        "discount": ["product_solution", "sales_orchestrator"],
+        "price": ["product_solution", "sales_orchestrator"],
+        "pricing": ["product_solution", "sales_orchestrator"],
+        "quotation": ["product_solution", "sales_orchestrator"],
+        "quote": ["product_solution", "sales_orchestrator"],
+        "tech": ["sales_orchestrator"],
+        "technical": ["sales_orchestrator"],
+        "solution": ["product_solution", "sales_orchestrator"],
         "design": ["design"],
         "wireframe": ["design"],
         "market": ["market_strategy"],
         "strategy": ["market_strategy"],
-        "adtima": ["adtimabox"],
+        "adtima": ["product_solution", "sales_orchestrator"],
+        "requirement": ["requirement_elicitation"],
+        "requirements": ["requirement_elicitation"],
         "compliance": ["compliance"],
         "policy": ["compliance"],
-        "brief": ["orchestrator"],
-        "question": ["orchestrator"],
+        "brief": ["sales_orchestrator"],
+        "question": ["sales_orchestrator"],
     }
 
     def __init__(self):
@@ -186,7 +188,7 @@ class FeedbackExtractor:
 
         # Default to orchestrator if no specific scope found
         if not scopes:
-            scopes.add("orchestrator")
+            scopes.add("sales_orchestrator")
 
         return sorted(list(scopes))
 

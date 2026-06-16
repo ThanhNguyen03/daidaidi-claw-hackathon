@@ -8,7 +8,7 @@ Usage:
     from llm.greennode import get_llm_client
 
     # Get client for specific agent
-    client = get_llm_client("orchestrator")
+    client = get_llm_client("sales_orchestrator")
 
     # Chat completion
     response = client.chat.completions.create(
@@ -53,16 +53,14 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 
 # Per-agent model mapping (from environment)
 MODEL_MAPPING = {
-    "orchestrator": os.getenv("MODEL_ORCHESTRATOR", "minimax/minimax-m2.5"),
-    "tech_solution": os.getenv("MODEL_TECH_SOLUTION", "minimax/minimax-m2.5"),
+    "sales_orchestrator": os.getenv("MODEL_SALES_ORCHESTRATOR", "minimax/minimax-m2.5"),
+    "requirement_elicitation": os.getenv("MODEL_REQUIREMENT_ELICITATION", "qwen/qwen3-5-27b"),
     "market_strategy": os.getenv("MODEL_MARKET_STRATEGY", "qwen/qwen3-5-27b"),
-    "account": os.getenv("MODEL_ACCOUNT", "qwen/qwen3-5-27b"),
-    "adtimabox": os.getenv("MODEL_ADTIMABOX", "qwen/qwen3-5-27b"),
+    "product_solution": os.getenv("MODEL_PRODUCT_SOLUTION", "qwen/qwen3-5-27b"),
     "design": os.getenv("MODEL_DESIGN", "minimax/minimax-m2.5"),
     "validation": os.getenv("MODEL_VALIDATION", "minimax/minimax-m2.5"),
     # New agents
     "compliance": os.getenv("MODEL_COMPLIANCE", "qwen/qwen3-5-27b"),
-    "content_generator": os.getenv("MODEL_CONTENT_GENERATOR", "minimax/minimax-m2.5"),
 }
 
 
@@ -246,7 +244,7 @@ class GreenNodeLLM:
         Get a configured client for a specific agent.
 
         Args:
-            agent_name: Name of the agent (e.g., 'orchestrator', 'tech_solution')
+            agent_name: Name of the agent (e.g., 'sales_orchestrator', 'market_strategy')
 
         Returns:
             GreenNodeClient configured for that agent
@@ -254,8 +252,11 @@ class GreenNodeLLM:
         Raises:
             ValueError: If agent_name is not recognized
         """
-        # Fall back to orchestrator model for unknown agents rather than crashing
-        model_path = MODEL_MAPPING.get(agent_name, MODEL_MAPPING.get("orchestrator", "MiniMax-M2.5"))
+        # Fall back to sales_orchestrator model for unknown agents rather than crashing
+        model_path = MODEL_MAPPING.get(
+            agent_name,
+            MODEL_MAPPING.get("sales_orchestrator", "MiniMax-M2.5"),
+        )
 
         return GreenNodeClient(
             agent_name=agent_name,

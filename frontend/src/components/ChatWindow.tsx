@@ -255,14 +255,6 @@ export function ChatWindow({
       }
     }
   };
-
-  const modeLabels: Record<ChatMode, { icon: string; label: string }> = {
-    chat: { icon: '💬', label: 'Chat' },
-    planning: { icon: '📋', label: 'Planning' },
-    execute: { icon: '🚀', label: 'Execute' },
-    brainstorm: { icon: '💡', label: 'Brainstorm' },
-  };
-
   return (
     <div className="flex-1 flex flex-col h-full bg-bg overflow-hidden">
       {/* Header - compact */}
@@ -279,9 +271,9 @@ export function ChatWindow({
           {/* Mode indicator with per-mode accent underline */}
           <div className="relative">
             <h2 className="text-sm sm:text-base font-semibold text-text flex items-center gap-1.5 sm:gap-2">
-              <span className="text-accent text-base sm:text-lg">{modeLabels[mode].icon}</span>
-              <span className="hidden sm:inline">{modeLabels[mode].label}</span>
-              <span className="sm:hidden">{modeLabels[mode].label === 'Brainstorm' ? 'Brain' : modeLabels[mode].label}</span>
+              <span className="text-accent text-base sm:text-lg">💬</span>
+              <span className="hidden sm:inline">Chat</span>
+              <span className="sm:hidden">Chat</span>
               <span className="hidden sm:inline">Mode</span>
             </h2>
             {/* Per-mode accent underline */}

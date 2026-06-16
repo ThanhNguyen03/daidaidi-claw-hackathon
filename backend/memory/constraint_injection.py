@@ -31,7 +31,10 @@ def inject_constraints(
     # Filter constraints relevant to this agent
     relevant = [
         c for c in constraints
-        if c.active and (agent_name in c.scope or "orchestrator" in c.scope)
+        if c.active and (
+            agent_name in c.scope
+            or "sales_orchestrator" in c.scope
+        )
     ]
 
     if not relevant:
@@ -85,8 +88,8 @@ def get_constraints_for_agent(
             continue
 
         # Check if agent is in scope
-        # Orchestrator gets all constraints (it coordinates)
-        if agent_name == "orchestrator":
+        # sales_orchestrator gets all constraints (it coordinates)
+        if agent_name == "sales_orchestrator":
             relevant.append(constraint)
         elif agent_name in constraint.scope:
             relevant.append(constraint)

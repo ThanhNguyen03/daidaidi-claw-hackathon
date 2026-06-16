@@ -37,9 +37,22 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 AGENTS_DIR = Path(__file__).parent.parent / "agents"
+AGENTS_CONFIG = Path(__file__).parent.parent / "config" / "agents.yaml"
 STATE_FILE = Path(__file__).parent.parent / "data" / "ingest_state.json"
 CHUNK_MIN_CHARS = 200   # skip tiny headings that have no body
 CHUNK_MAX_CHARS = 2000  # split oversized sections to stay token-friendly
+
+# Prefer the current runtime agent names and their newest source folders.
+# If a plain folder and a *_agent folder both exist, the plain folder wins.
+AGENT_SOURCE_PRIORITY = {
+    "sales_orchestrator": ["sales_orchestrator_agent"],
+    "requirement_elicitation": ["requirement_elicitation_agent"],
+    "market_strategy": ["market_strategy_agent"],
+    "product_solution": ["product_solution_agent"],
+    "design": ["design"],
+    "compliance": ["compliance_policy_agent"],
+    "client_simulator": ["client_simulator_agent"],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +123,50 @@ def _file_hash(path: Path) -> str:
     return hashlib.md5(path.read_bytes()).hexdigest()
 
 
+def _load_active_agent_names() -> list[str]:
+    """Load the active logical agent names from config/agents.yaml."""
+    if not AGENTS_CONFIG.exists():
+        return []
+
+    try:
+        import yaml
+
+        config = yaml.safe_load(AGENTS_CONFIG.read_text(encoding="utf-8")) or {}
+        agents = config.get("agents", {})
+        return [
+            name
+            for name, cfg in agents.items()
+            if cfg.get("enabled", True)
+        ]
+    except Exception as exc:
+        print(f"[ingest] warning: failed to read agents config: {exc}")
+        return []
+
+
+def _resolve_source_dir(agent_name: str) -> Optional[Path]:
+    """Resolve the source directory for a logical agent name."""
+    candidates = AGENT_SOURCE_PRIORITY.get(agent_name, [agent_name, f"{agent_name}_agent"])
+    for candidate in candidates:
+        dir_path = AGENTS_DIR / candidate
+        if dir_path.exists():
+            return dir_path
+    return None
+
+
+def _iter_agent_docs(source_dir: Path):
+    """Yield (doc_type, file_path, source_key) for supported agent docs."""
+    for doc_type in ("skills", "knowledge", "reference"):
+        dir_path = source_dir / doc_type
+        if not dir_path.exists():
+            continue
+        for md_file in sorted(dir_path.glob("*.md")):
+            yield doc_type, md_file, md_file.name
+
+    skill_file = source_dir / "SKILL.md"
+    if skill_file.exists():
+        yield "skill", skill_file, skill_file.name
+
+
 # ---------------------------------------------------------------------------
 # Core ingest logic
 # ---------------------------------------------------------------------------
@@ -133,79 +190,79 @@ async def ingest_agent(agent_name: str, force: bool = False) -> dict[str, int]:
     local_state = _load_state()
     stats = {"indexed": 0, "skipped": 0, "errors": 0}
 
-    for doc_type in ("skills", "knowledge"):
-        dir_path = AGENTS_DIR / agent_name / doc_type
-        if not dir_path.exists():
-            continue
+    source_dir = _resolve_source_dir(agent_name)
+    if source_dir is None:
+        return stats
 
-        for md_file in sorted(dir_path.glob("*.md")):
-            source_key = f"{agent_name}/{doc_type}/{md_file.name}"
-            file_hash = _file_hash(md_file)
+    for doc_type, md_file, filename in _iter_agent_docs(source_dir):
+        source_type = "knowledge" if doc_type == "reference" else doc_type.rstrip("s")
+        source_key = f"{agent_name}/{doc_type}/{filename}"
+        file_hash = _file_hash(md_file)
 
-            skip_memory_update = False
-            if not force:
-                if isinstance(kb, HybridKBRepo) and kb.using_agentbase:
-                    cached_hash = await kb.get_cached_hash(source_key)
-                    if cached_hash == file_hash:
-                        if local_state.get(source_key) == file_hash:
-                            # Both Memory and local hash match: LanceDB was populated
-                            # in this process environment and is still current.
-                            stats["skipped"] += 1
-                            continue
-                        skip_memory_update = True  # Memory hash current; just re-embed
-                else:
-                    # Local dev without AgentBase: LanceDB persists on disk.
+        skip_memory_update = False
+        if not force:
+            if isinstance(kb, HybridKBRepo) and kb.using_agentbase:
+                cached_hash = await kb.get_cached_hash(source_key)
+                if cached_hash == file_hash:
                     if local_state.get(source_key) == file_hash:
+                        # Both Memory and local hash match: LanceDB was populated
+                        # in this process environment and is still current.
                         stats["skipped"] += 1
                         continue
-
-            try:
-                text = md_file.read_text(encoding="utf-8")
-                chunks = _chunk_markdown(text, source_key)
-
-                if not chunks:
-                    print(f"  [ingest] {source_key}: no chunks extracted, skipping")
+                    skip_memory_update = True  # Memory hash current; just re-embed
+            else:
+                # Local dev without AgentBase: LanceDB persists on disk.
+                if local_state.get(source_key) == file_hash:
                     stats["skipped"] += 1
                     continue
 
-                # Remove old version of this file from the index
-                await kb.delete_by_source(source_key)
+        try:
+            text = md_file.read_text(encoding="utf-8")
+            chunks = _chunk_markdown(text, source_key)
 
-                # Build documents list
-                docs = []
-                for chunk in chunks:
-                    docs.append((
-                        chunk["text"],
-                        {
-                            "agent": agent_name,
-                            "type": doc_type.rstrip("s"),   # "skill" | "knowledge"
-                            "source": source_key,
-                            "file": md_file.stem,
-                            "section": chunk["section"],
-                        },
-                    ))
+            if not chunks:
+                print(f"  [ingest] {source_key}: no chunks extracted, skipping")
+                stats["skipped"] += 1
+                continue
 
-                # add_documents() embeds + writes to LanceDB.
-                # update_memory=False when hash already matches in AgentBase Memory
-                # (no need to re-write the same hash record).
-                if isinstance(kb, HybridKBRepo):
-                    await kb.add_documents(
-                        docs,
-                        source_key=source_key,
-                        file_hash=file_hash,
-                        update_memory=not skip_memory_update,
-                    )
-                else:
-                    await kb.add_documents(docs)
+            # Remove old version of this file from the index
+            await kb.delete_by_source(source_key)
 
-                local_state[source_key] = file_hash
-                label = "re-embedded (hash unchanged)" if skip_memory_update else "indexed"
-                print(f"  [ingest] {source_key}: {len(docs)} chunk(s) {label}")
-                stats["indexed"] += len(docs)
+            # Build documents list
+            docs = []
+            for chunk in chunks:
+                docs.append((
+                    chunk["text"],
+                    {
+                        "agent": agent_name,
+                        "type": source_type,   # "skill" | "knowledge"
+                        "source": source_key,
+                        "file": md_file.stem,
+                        "section": chunk["section"],
+                    },
+                ))
 
-            except Exception as e:
-                print(f"  [ingest] ERROR {source_key}: {e}")
-                stats["errors"] += 1
+            # add_documents() embeds + writes to LanceDB.
+            # update_memory=False when hash already matches in AgentBase Memory
+            # (no need to re-write the same hash record).
+            if isinstance(kb, HybridKBRepo):
+                await kb.add_documents(
+                    docs,
+                    source_key=source_key,
+                    file_hash=file_hash,
+                    update_memory=not skip_memory_update,
+                )
+            else:
+                await kb.add_documents(docs)
+
+            local_state[source_key] = file_hash
+            label = "re-embedded (hash unchanged)" if skip_memory_update else "indexed"
+            print(f"  [ingest] {source_key}: {len(docs)} chunk(s) {label}")
+            stats["indexed"] += len(docs)
+
+        except Exception as e:
+            print(f"  [ingest] ERROR {source_key}: {e}")
+            stats["errors"] += 1
 
     _save_state(local_state)
     return stats
@@ -226,21 +283,17 @@ async def ingest_all_agents(force: bool = False) -> None:
     # This avoids initializing LanceDB (and loading the embedding provider) if nothing is new.
     local_state = _load_state()
     any_changed = False
+    active_agents = _load_active_agent_names()
     if not force:
-        for agent_dir in sorted(AGENTS_DIR.iterdir()):
-            if not agent_dir.is_dir() or agent_dir.name.startswith("_") or agent_dir.name.startswith("."):
+        for agent_name in active_agents:
+            source_dir = _resolve_source_dir(agent_name)
+            if source_dir is None:
                 continue
-            for doc_type in ("skills", "knowledge"):
-                dir_path = agent_dir / doc_type
-                if not dir_path.exists():
-                    continue
-                for md_file in dir_path.glob("*.md"):
-                    source_key = f"{agent_dir.name}/{doc_type}/{md_file.name}"
-                    file_hash = _file_hash(md_file)
-                    if local_state.get(source_key) != file_hash:
-                        any_changed = True
-                        break
-                if any_changed:
+            for doc_type, md_file, filename in _iter_agent_docs(source_dir):
+                source_key = f"{agent_name}/{doc_type}/{filename}"
+                file_hash = _file_hash(md_file)
+                if local_state.get(source_key) != file_hash:
+                    any_changed = True
                     break
             if any_changed:
                 break
@@ -252,23 +305,15 @@ async def ingest_all_agents(force: bool = False) -> None:
         print("[ingest] skipped — all files unchanged")
         return
 
-    agent_dirs = [
-        d for d in sorted(AGENTS_DIR.iterdir())
-        if d.is_dir() and not d.name.startswith("_") and not d.name.startswith(".")
-    ]
+    agent_dirs = []
+    for agent_name in active_agents:
+        source_dir = _resolve_source_dir(agent_name)
+        if source_dir is not None:
+            agent_dirs.append((agent_name, source_dir))
 
     total = {"indexed": 0, "skipped": 0, "errors": 0}
-    for agent_dir in agent_dirs:
-        agent_name = agent_dir.name
-        # Only process dirs that have at least one skill/knowledge folder
-        has_content = any(
-            (agent_dir / dt).exists()
-            for dt in ("skills", "knowledge")
-        )
-        if not has_content:
-            continue
-
-        print(f"[ingest] agent: {agent_name}")
+    for agent_name, source_dir in agent_dirs:
+        print(f"[ingest] agent: {agent_name} <- {source_dir.name}")
         stats = await ingest_agent(agent_name, force=force)
         for k, v in stats.items():
             total[k] += v

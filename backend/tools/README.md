@@ -87,23 +87,24 @@ So agents only ever retrieve their own files. No cross-agent leakage.
 
 ```
 backend/agents/
-├── orchestrator/
-│   ├── skills/          ← adtimabox-orchestrator.md, abox-data-masking.md, adtimabox-proposal-assembler.md
-│   └── knowledge/       ← skill_feedback.md
-├── market_strategy/
+├── sales_orchestrator_agent/
+│   ├── skills/          ← orchestrator.md, skill_feedback.md
+│   └── reference/       ← orchestrator workflow, proposal assembler, data masking, legacy skill refs
+├── requirement_elicitation_agent/
+│   ├── skills/          ← requirement-elicitor.md
+│   └── reference/       ← requirement elicitation reference material
+├── market_strategy_agent/
 │   ├── skills/          ← strategy-skill.md, case-study-advisor.md
-│   └── knowledge/       ← buyer-personas-fmcg.md, competitive-defense-pharma.md, objection-bank-fmcg.md
-├── adtimabox/
-│   ├── skills/          ← requirement-elicitor.md, miniapp-specialist.md, solution-designer.md
-│   └── knowledge/       ← domain-knowledge.md
-├── account/
-│   └── knowledge/       ← product-advisor.md, rate_card.md
-├── tech_solution/
-│   ├── skills/          ← integration-advisor.md
-│   └── knowledge/       ← platform-haravan.md, platform-kiotviet.md
-└── compliance/
-    ├── skills/          ← compliance-skill.md
-    └── knowledge/       ← vn-advertising-law-pharma.md, vn-data-privacy.md,
-                            zalo-ads-policy.md, zalo-miniapp-policy.md, zalo-oa-policy.md,
-                            discount_policy.md, payment_policy.md
+│   └── reference/       ← case studies, strategy consultant, objection handling
+├── product_solution_agent/
+│   ├── skills/          ← product-advisor.md, solution-designer.md, miniapp-specialist.md, integration-advisor.md
+│   └── reference/       ← pricing, domain knowledge, integration, platform references
+├── compliance_policy_agent/
+│   ├── skills/          ← compliance-skill.md
+│   └── reference/       ← compliance policies and legal references
+├── client_simulator_agent/
+│   ├── skills/          ← objection-bank.md
+│   └── reference/       ← objection handling and battlecard references
+└── design/
+    └── skills/          ← design system / wireframe helpers
 ```

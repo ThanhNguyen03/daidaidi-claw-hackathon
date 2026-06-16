@@ -5,7 +5,7 @@
 #
 # Schema (per DAY_2 §4 + B.6):
 #   name: Display name
-#   model: Env var key (e.g., MODEL_ORCHESTRATOR)
+#   model: Env var key (e.g., MODEL_SALES_ORCHESTRATOR)
 #   role: One-line routing description
 #   enabled: true/false
 #   kind: generator | advisory | reviewer (how the orchestrator uses the agent)
@@ -13,21 +13,21 @@
 #   critical: true/false (B.5 failure policy)
 
 agents:
-  orchestrator:
-    name: "Orchestrator"
-    model: MODEL_ORCHESTRATOR
-    role: "Supervisor that routes requests and manages flow"
+  sales_orchestrator:
+    name: "Sales Orchestrator"
+    model: MODEL_SALES_ORCHESTRATOR
+    role: "Supervisor that validates briefs, asks clarifying questions, and routes tasks"
     enabled: true
     kind: generator
     critical: true
 
-  tech_solution:
-    name: "Tech Solution"
-    model: MODEL_TECH_SOLUTION
-    role: "Technical recommendations and solutions"
+  requirement_elicitation:
+    name: "Requirement Elicitation"
+    model: MODEL_REQUIREMENT_ELICITATION
+    role: "Normalize briefs, ask blocking questions, and translate requirements"
     enabled: true
     kind: generator
-    critical: false
+    critical: true
 
   market_strategy:
     name: "Market Strategy"
@@ -37,18 +37,10 @@ agents:
     kind: generator
     critical: false
 
-  account:
-    name: "Account"
-    model: MODEL_ACCOUNT
-    role: "Pricing and quotations"
-    enabled: true
-    kind: generator
-    critical: false
-
-  adtimabox:
-    name: "AdtimaBox"
-    model: MODEL_ADTIMABOX
-    role: "Adtima platform integration"
+  product_solution:
+    name: "Product Solution"
+    model: MODEL_PRODUCT_SOLUTION
+    role: "Merged product, pricing, and integration solution"
     enabled: true
     kind: generator
     critical: false
@@ -61,16 +53,7 @@ agents:
     kind: generator
     critical: false
 
-  # A6 — Content generator (Group 2, sequential after Group-1 parallel)
-  content_generator:
-    name: "Content Generator"
-    model: MODEL_CONTENT_GENERATOR
-    role: "Proposal content writer — synthesises strategy, compliance and product analysis into a persuasive narrative"
-    enabled: true
-    kind: generator
-    critical: true
-
-  # A9 — Client simulator (Group 3, after account + design; per workflow diagram)
+  # A9 — Client simulator (optional reviewer after solution and design)
   client_simulator:
     name: "Client Simulator"
     model: MODEL_CLIENT_SIMULATOR
