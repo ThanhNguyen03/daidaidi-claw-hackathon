@@ -1,0 +1,116 @@
+name: backend-deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: backend-deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      RUNTIME_ID: ${{ secrets.AGENTBASE_RUNTIME_ID }}
+      FLAVOR_ID: runtime-s2-general-2x4
+      IMAGE_NAME: sales-ai-agent
+      BACKEND_ENV_FILE: ${{ secrets.BACKEND_ENV_FILE }}
+      GREENNODE_CLIENT_ID: ${{ secrets.GREENNODE_CLIENT_ID }}
+      GREENNODE_CLIENT_SECRET: ${{ secrets.GREENNODE_CLIENT_SECRET }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Prepare backend env
+        run: |
+          set -euo pipefail
+          if [ -f backend/.env.production ]; then
+            echo "Using repository backend/.env.production"
+            exit 0
+          fi
+
+          if [ -z "${BACKEND_ENV_FILE:-}" ]; then
+            echo "Missing backend/.env.production and BACKEND_ENV_FILE secret"
+            exit 1
+          fi
+
+          printf '%s\n' "$BACKEND_ENV_FILE" > backend/.env.production
+
+      - name: Verify IAM credentials
+        run: bash .claude/skills/agentbase/scripts/check_credentials.sh iam
+
+      - name: Get CR repo info
+        id: cr
+        run: |
+          set -euo pipefail
+          repo_json=$(bash .claude/skills/agentbase/scripts/cr.sh repo get)
+          echo "registry_url=$(echo "$repo_json" | jq -r '.registryUrl')" >> "$GITHUB_OUTPUT"
+          echo "repo_name=$(echo "$repo_json" | jq -r '.name')" >> "$GITHUB_OUTPUT"
+
+      - name: Docker login to AgentBase CR
+        run: bash .claude/skills/agentbase/scripts/cr.sh credentials docker-login
+
+      - name: Build backend image
+        id: build
+        run: |
+          set -euo pipefail
+          IMAGE_TAG="v${GITHUB_SHA::7}"
+          IMAGE="${{ steps.cr.outputs.registry_url }}/${{ steps.cr.outputs.repo_name }}/${IMAGE_NAME}:${IMAGE_TAG}"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          docker build --platform linux/amd64 -f backend/Dockerfile -t "$IMAGE" backend
+
+      - name: Push backend image
+        run: docker push "${{ steps.build.outputs.image }}"
+
+      - name: Update AgentBase runtime
+        run: |
+          set -euo pipefail
+          bash .claude/skills/agentbase/scripts/runtime.sh update "$RUNTIME_ID" \
+            --image "${{ steps.build.outputs.image }}" \
+            --flavor "$FLAVOR_ID" \
+            --env-file backend/.env.production \
+            --description "sales-ai-agent" \
+            --min-replicas 1 \
+            --max-replicas 1 \
+            --cpu-scale 50 \
+            --mem-scale 50 \
+            --from-cr \
+            --network-mode PUBLIC
+
+      - name: Verify runtime and health
+        run: |
+          set -euo pipefail
+          runtime_json=$(bash .claude/skills/agentbase/scripts/runtime.sh get "$RUNTIME_ID")
+          endpoint_json=$(bash .claude/skills/agentbase/scripts/runtime.sh endpoints list "$RUNTIME_ID")
+          endpoint_url=$(echo "$endpoint_json" | jq -r '.listData[] | select(.name=="default") | .url')
+
+          if [ -z "$endpoint_url" ] || [ "$endpoint_url" = "null" ]; then
+            echo "Could not determine default endpoint URL"
+            echo "$endpoint_json"
+            exit 1
+          fi
+
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS "$endpoint_url/health" >/dev/null; then
+              echo "Backend health OK: $endpoint_url"
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "Backend health check failed"
+          echo "$runtime_json"
+          echo "$endpoint_json"
+          exit 1

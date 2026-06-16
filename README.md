@@ -44,7 +44,7 @@ git clone <repo-url>
 cd daidaidi-claw-hackathon
 
 # Copy environment files
-cp .env.example .env
+cp backend/.env.example backend/.env.production
 cp frontend/.env.example frontend/.env.production
 ```
 
@@ -343,7 +343,7 @@ The **backend** deploys on **AgentBase Runtime** as a Custom Agent container; th
 **frontend** (Next.js) deploys separately and points at the backend endpoint.
 
 Env split:
-- Backend: `.env.production` at the repo root
+- Backend: `backend/.env.production`
 - Frontend: `frontend/.env.production` or a Vercel project environment variable
 
 > 📘 **Full step-by-step guide: [`DEPLOY.md`](./DEPLOY.md).** The quick version is below.
@@ -363,26 +363,39 @@ container — **do not put these in your deploy env file**.
 
 ```bash
 # 1. Build (amd64) and push to the AgentBase managed Container Registry
-docker build --platform linux/amd64 -t sales-assistant-backend:latest ./backend
+docker build --platform linux/amd64 -t sales-ai-agent:latest ./backend
 bash .claude/skills/agentbase/scripts/cr.sh repo get
 bash .claude/skills/agentbase/scripts/cr.sh credentials docker-login
-docker tag sales-assistant-backend:latest <registryUrl>/<repoName>/sales-assistant-backend:latest
-docker push <registryUrl>/<repoName>/sales-assistant-backend:latest
+docker tag sales-ai-agent:latest <registryUrl>/<repoName>/sales-ai-agent:latest
+docker push <registryUrl>/<repoName>/sales-ai-agent:latest
 
 # 2. Create the runtime (env file must NOT contain GREENNODE_* or PORT)
 bash .claude/skills/agentbase/scripts/runtime.sh create \
-  --name sales-assistant-backend \
-  --image <registryUrl>/<repoName>/sales-assistant-backend:latest \
-  --flavor 1x1-general --env-file deploy.env --from-cr --network-mode PUBLIC
+  --name sales-ai-agent \
+  --image <registryUrl>/<repoName>/sales-ai-agent:latest \
+  --flavor runtime-s2-general-2x4 --env-file backend/.env.production --from-cr --network-mode PUBLIC
 
 # 3. Get the endpoint + health-check
 bash .claude/skills/agentbase/scripts/runtime.sh endpoints list <RUNTIME_ID>
 curl -s -o /dev/null -w "%{http_code}\n" "<endpoint-url>/health"   # expect 200
 ```
 
-> ⚠️ The repo also contains `.github/workflows/deploy.yml` and `DEPLOYMENT.md` that use a
-> non-AgentBase flow (`@agentbase/cli` + `AGENTBASE_API_KEY` + `ghcr.io`). That mechanism does
-> **not** exist for AgentBase — use `DEPLOY.md` instead. See `CHECK.md`.
+## CI/CD
+
+Two GitHub Actions workflows handle merge-to-main deploys:
+- [`backend-deploy.yml`](./.github/workflows/backend-deploy.yml) for `backend/**`
+- [`frontend-deploy.yml`](./.github/workflows/frontend-deploy.yml) for `frontend/**`
+
+Backend workflow secrets:
+- `GREENNODE_CLIENT_ID`
+- `GREENNODE_CLIENT_SECRET`
+- `AGENTBASE_RUNTIME_ID`
+- `BACKEND_ENV_FILE` if you do not want to commit `backend/.env.production`
+
+Frontend workflow secrets:
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID`
 
 ## License
 
