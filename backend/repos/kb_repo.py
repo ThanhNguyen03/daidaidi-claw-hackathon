@@ -5,7 +5,8 @@ Repository interface for the vector knowledge base.
 Dual implementation: LanceDB (local fallback) / AgentBase (primary).
 
 This interface enables RAG (Retrieval-Augmented Generation) for agents.
-Uses bge-m3 embeddings and bge-reranker-v2-m3 for multilingual retrieval.
+Uses configurable embeddings with GreenNode-hosted `baai/bge-m3` as the
+default production provider, plus an optional local reranker fallback.
 """
 
 import os
@@ -14,9 +15,13 @@ import uuid
 from typing import Optional, Any
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from dotenv import load_dotenv
+
+from repos.embeddings import (
+    EmbeddingProvider,
+    create_embedding_provider,
+)
 
 load_dotenv()
 
@@ -82,7 +87,7 @@ class KBRepo(ABC):
 class LanceDBKBRepo(KBRepo):
     """
     LanceDB implementation of KBRepo.
-    Uses bge-m3 embeddings and bge-reranker-v2-m3 for multilingual retrieval.
+    Uses the configured embedding provider and an optional local reranker.
     """
 
     def __init__(self, db_path: Optional[str] = None):
@@ -96,8 +101,9 @@ class LanceDBKBRepo(KBRepo):
         self._ensure_db_dir()
         self._client = None
         self._table = None
-        self._embedding_model = None
+        self._embedding_provider: EmbeddingProvider = create_embedding_provider()
         self._reranker = None
+        self._enable_reranker = os.getenv("KB_ENABLE_RERANKER", "false").lower() == "true"
 
     def _ensure_db_dir(self):
         """Ensure the database directory exists."""
@@ -109,27 +115,26 @@ class LanceDBKBRepo(KBRepo):
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
 
-    def _get_embedding_model(self):
-        """Lazy load the embedding model."""
-        if self._embedding_model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-
-                # Use bge-m3 for multilingual embeddings (Vietnamese support)
-                self._embedding_model = SentenceTransformer("BAAI/bge-m3")
-            except ImportError:
-                print("Warning: sentence-transformers not installed. Using fallback.")
-                self._embedding_model = None
-        return self._embedding_model
+    async def _embed_text(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for text(s) through the configured provider."""
+        return await self._embedding_provider.embed_texts(texts)
 
     def _get_reranker(self):
         """Lazy load the reranker model."""
+        if not self._enable_reranker:
+            return None
         if self._reranker is None:
             try:
                 from sentence_transformers import CrossEncoder
 
-                # Use bge-reranker-v2-m3 for reranking
-                self._reranker = CrossEncoder("BAAI/bge-reranker-v2-m3")
+                cache_dir = os.getenv("SENTENCE_TRANSFORMERS_HOME") or os.getenv("HF_HOME")
+                reranker_model = os.getenv(
+                    "KB_RERANKER_MODEL", "baai/bge-reranker-v2-m3"
+                )
+                self._reranker = CrossEncoder(
+                    reranker_model,
+                    cache_folder=cache_dir,
+                )
             except ImportError:
                 print("Warning: sentence-transformers not installed. Using fallback.")
                 self._reranker = None
@@ -174,22 +179,6 @@ class LanceDBKBRepo(KBRepo):
 
         return self._table
 
-    def _embed_text(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for text(s)."""
-        model = self._get_embedding_model()
-        if model is None:
-            # Fallback: return random vectors (for testing without model)
-            import random
-
-            dim = 1024  # bge-m3 dimension
-            return [[random.random() for _ in range(dim)] for _ in texts]
-
-        # Generate embeddings
-        embeddings = model.encode(
-            texts, normalize_embeddings=True, batch_size=32, show_progress_bar=False
-        )
-        return embeddings.tolist()
-
     async def add_document(
         self, content: str, metadata: Optional[dict[str, Any]] = None
     ) -> str:
@@ -198,7 +187,7 @@ class LanceDBKBRepo(KBRepo):
         metadata = metadata or {}
 
         # Get embedding
-        embedding = self._embed_text([content])[0]
+        embedding = (await self._embed_text([content]))[0]
 
         # Get table and add
         table = self._get_table()
@@ -228,7 +217,7 @@ class LanceDBKBRepo(KBRepo):
         metadata_list = [doc[1] for doc in documents]
 
         # Generate embeddings in batch
-        embeddings = self._embed_text(texts)
+        embeddings = await self._embed_text(texts)
 
         # Build records
         doc_ids = []
@@ -260,7 +249,7 @@ class LanceDBKBRepo(KBRepo):
         Uses embedding similarity + optional reranking.
         """
         # Generate query embedding
-        query_embedding = self._embed_text([query])[0]
+        query_embedding = (await self._embed_text([query]))[0]
 
         # Get table
         table = self._get_table()
@@ -375,7 +364,7 @@ class LanceDBKBRepo(KBRepo):
         try:
             table.update(
                 where=f"doc_id = '{doc_id}'",
-                values={"text": "[DELETED]"},
+                values={"text": "[DELETED]", "source": "[DELETED]"},
             )
         except Exception:
             pass
@@ -384,15 +373,16 @@ class LanceDBKBRepo(KBRepo):
         """Delete all documents from a source."""
         table = self._get_table()
         try:
-            # Get count before
-            before = table.count_rows()
+            df = table.to_pandas()
+            before = int((df["source"] == source).sum())
 
             # Delete by source (mark as deleted)
-            table.update(where=f"source = '{source}'", values={"text": "[DELETED]"})
+            table.update(
+                where=f"source = '{source}'",
+                values={"text": "[DELETED]", "source": "[DELETED]"},
+            )
 
-            # Get count after
-            after = table.count_rows()
-            return before - after
+            return before
         except Exception:
             return 0
 
@@ -411,7 +401,8 @@ class LanceDBKBRepo(KBRepo):
         """Get KB statistics."""
         table = self._get_table()
         try:
-            total = table.count_rows()
+            df = table.to_pandas()
+            total = int((df["source"] != "[DELETED]").sum())
             sources = await self.list_sources()
             return {"total_documents": total, "sources": sources, "source_count": len(sources)}
         except Exception:
@@ -431,8 +422,7 @@ class _AgentBaseMemoryClient:
 
     The Memory Records API stores text facts, not raw binary data.  Vector
     embeddings are NOT stored here — LanceDB is rebuilt via re-embedding at
-    each container start.  The bge-m3 model is pre-cached in the Docker image
-    so re-embedding takes ~10-30 s and is always acceptable.
+    each container start using the configured embedding provider.
 
     IAM: standard OAuth2 client-credentials (HTTP Basic Auth + form body).
     Token script: bash .claude/skills/agentbase/scripts/get_token.sh
@@ -578,7 +568,7 @@ class _AgentBaseMemoryClient:
 
         async with httpx.AsyncClient(timeout=15) as client:
             for record in records:
-                if record.get("content", "").startswith(f"{source_key}="):
+                if self._record_text(record).startswith(f"{source_key}="):
                     record_id = record.get("id", "")
                     if record_id:
                         await client.delete(
@@ -602,8 +592,8 @@ class HybridKBRepo(KBRepo):
       know which files have changed and avoid unnecessary hash writes.
 
     • LanceDB (in-process) — vector index rebuilt at every container start by
-      re-embedding all source files. bge-m3 is pre-cached in the Docker image
-      so this takes ~10-30 s and is always required (LanceDB is volatile).
+      re-embedding all source files with the configured embedding provider.
+      This is the fast local vector index used for retrieval.
 
     Fallback (AGENTBASE_MEMORY_ID not set):
       Plain LanceDB with local ingest_state.json hash tracking.
@@ -698,7 +688,7 @@ class HybridKBRepo(KBRepo):
 
         texts = [d[0] for d in documents]
         metadata_list = [d[1] for d in documents]
-        embeddings = self._lancedb._embed_text(texts)
+        embeddings = await self._lancedb._embed_text(texts)
 
         doc_ids: list[str] = []
         records = []

@@ -28,7 +28,7 @@ python-json-logger>=2.0.0
 httpx>=0.26.0
 tenacity>=8.2.0
 
-# Embeddings and RAG
+# Embeddings and optional local RAG fallback
 sentence-transformers>=2.2.0
 torch>=2.0.0
 numpy>=1.24.0

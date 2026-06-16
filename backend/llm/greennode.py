@@ -83,7 +83,7 @@ class GreenNodeClient:
     _client: OpenAI
 
     @property
-    def chat(self) -> OpenAI.Chat:
+    def chat(self) -> OpenAI.chat:
         """Access to chat completions API."""
         return self._client.chat
 

@@ -43,8 +43,9 @@ A multi-agent AI assistant for sales teams that supports sales planning, custome
 git clone <repo-url>
 cd daidaidi-claw-hackathon
 
-# Copy environment file
+# Copy environment files
 cp .env.example .env
+cp frontend/.env.example frontend/.env.production
 ```
 
 ### Step 2: Get Your GreenNode API Key and Model Paths
@@ -226,6 +227,10 @@ In `.env`:
 
 ### AgentBase Managed Services (optional)
 
+The KB embeddings default to the GreenNode-hosted `baai/bge-m3` model, so the
+container does not need to download Hugging Face weights at startup. If you
+switch the provider back to local, it will fall back to `sentence-transformers`.
+
 By default the app runs on the **local fallbacks** (SQLite for memory, LanceDB for
 the vector store) — you do **not** need any AgentBase credentials to develop or
 demo. Configure these only when you want the managed **Memory** / **MCP Gateway**
@@ -336,6 +341,10 @@ agents un-subscribe from their hook automatically — no other agent is affected
 
 The **backend** deploys on **AgentBase Runtime** as a Custom Agent container; the
 **frontend** (Next.js) deploys separately and points at the backend endpoint.
+
+Env split:
+- Backend: `.env.production` at the repo root
+- Frontend: `frontend/.env.production` or a Vercel project environment variable
 
 > 📘 **Full step-by-step guide: [`DEPLOY.md`](./DEPLOY.md).** The quick version is below.
 

@@ -126,7 +126,7 @@ Respond helpfully and professionally."""
         self, query: str, top_k: int = 3
     ) -> list[Any]:
         """
-        Retrieve relevant knowledge chunks for this agent from LanceDB.
+        Retrieve relevant knowledge chunks for this agent from the knowledge base.
         Filters by agent=self.name AND type=knowledge.
         Files are indexed at startup by tools/ingest.py — no disk I/O here.
         """
@@ -174,8 +174,8 @@ Respond helpfully and professionally."""
             messages = [{"role": "system", "content": self.system_prompt + context}, ...]
 
         Token cost: only the retrieved chunks (typically 300-1500 tokens), not
-        all files. Files are indexed once at startup; LanceDB caches the table
-        in-process — no disk reads after the first request.
+        all files. Files are indexed once at startup; the vector store caches
+        the table in-process — no disk reads after the first request.
         """
         skills, knowledge = await asyncio.gather(
             self.retrieve_skill(query, top_k=skill_top_k),

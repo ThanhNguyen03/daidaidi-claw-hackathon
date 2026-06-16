@@ -120,7 +120,8 @@ async def ingest_agent(agent_name: str, force: bool = False) -> dict[str, int]:
 
     Hash-check priority:
       1. AgentBase Memory (if AGENTBASE_MEMORY_ID is set) — persists hash records across
-         restarts.  LanceDB is always rebuilt via re-embedding (volatile in containers).
+         restarts.  LanceDB is always rebuilt via re-embedding through the configured
+         embedding provider (volatile in containers).
       2. Local ingest_state.json — file-based fallback; skips re-embed only when LanceDB
          data also persists (local dev with a persistent ./data directory).
 
@@ -222,7 +223,7 @@ async def ingest_all_agents(force: bool = False) -> None:
         return
 
     # PRE-CHECK: Scan all files to see if any actually changed.
-    # This avoids initializing LanceDB (and loading bge-m3 model) if nothing is new.
+    # This avoids initializing LanceDB (and loading the embedding provider) if nothing is new.
     local_state = _load_state()
     any_changed = False
     if not force:

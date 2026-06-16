@@ -13,10 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m venv /opt/venv
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH=/opt/venv/bin:$PATH
+ENV PIP_REQUIRE_HASHES=0
 
 # Install dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
 
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser
@@ -24,18 +25,6 @@ RUN useradd -m -u 1000 appuser
 # Copy application
 COPY . /app
 WORKDIR /app
-
-# Pre-cache embedding models into a fixed path accessible by appuser at runtime.
-# HF_HOME must be set BEFORE the download so both the build step and the running
-# container agree on where the models live.  /opt/hf_cache is world-readable so
-# the non-root appuser can load the models without re-downloading from HuggingFace.
-ENV HF_HOME=/opt/hf_cache
-RUN mkdir -p /opt/hf_cache && \
-    python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \
-        print('Loading bge-m3...'); SentenceTransformer('BAAI/bge-m3'); \
-        print('Loading bge-reranker...'); CrossEncoder('BAAI/bge-reranker-v2-m3'); \
-        print('Done pre-caching models')" && \
-    chmod -R 755 /opt/hf_cache
 
 # Change ownership
 RUN chown -R appuser:appuser /app

@@ -21,7 +21,8 @@ Per request (inside agent.run())
 typical call injects < 1500 tokens regardless of how many files exist.
 
 **No disk reads per request:** LanceDB caches the table in-process. After
-startup, all retrieval is in-memory vector search.
+startup, all retrieval is in-memory vector search. Embeddings are produced by
+the configured provider, which defaults to GreenNode-hosted `baai/bge-m3`.
 
 ---
 

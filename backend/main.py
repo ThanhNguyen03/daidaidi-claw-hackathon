@@ -77,9 +77,9 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup/shutdown."""
-    # Startup: index all agent skills + knowledge into LanceDB (idempotent).
+    # Startup: index all agent skills + knowledge into the KB vector store (idempotent).
     # Files that haven't changed since last run are skipped via hash check.
-    print("Starting up: indexing agent skills/knowledge into LanceDB...")
+    print("Starting up: indexing agent skills/knowledge into the KB vector store...")
     try:
         from tools.ingest import ingest_all_agents
         await ingest_all_agents(force=False)

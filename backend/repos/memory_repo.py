@@ -456,52 +456,283 @@ class AgentBaseMemoryRepo(MemoryRepo):
                 "Use SQLite fallback instead: SQLiteMemoryRepo()"
             )
 
-        self._client = None  # Would be greennode_agentbase.memory.MemoryClient()
+        self._token: Optional[str] = None
+        self._token_expiry: float = 0.0
 
-    def _ensure_client(self):
-        """Ensure the AgentBase client is initialized."""
-        # Placeholder - would initialize actual AgentBase Memory client
-        # For now, this will fall back to SQLite
-        raise NotImplementedError(
-            "AgentBase Memory implementation requires AgentBase SDK. "
-            "Please use SQLiteMemoryRepo() for now."
+    @staticmethod
+    def _normalize_record_text(record: dict[str, Any]) -> str:
+        return (
+            record.get("memory")
+            or record.get("content")
+            or record.get("text")
+            or record.get("value")
+            or ""
         )
+
+    def _namespace(self, kind: str) -> str:
+        return f"sales-assistant/{kind}"
+
+    async def _get_token(self) -> str:
+        import time
+        import httpx
+
+        if self._token and time.time() < self._token_expiry - 60:
+            return self._token
+
+        client_id = os.getenv("GREENNODE_CLIENT_ID", "").strip()
+        client_secret = os.getenv("GREENNODE_CLIENT_SECRET", "").strip()
+
+        if not client_id or not client_secret:
+            raise ValueError(
+                "AgentBase Memory requires GREENNODE_CLIENT_ID and "
+                "GREENNODE_CLIENT_SECRET. Set them in .env locally or use the "
+                "auto-injected runtime credentials."
+            )
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://iam.api.vngcloud.vn/accounts-api/v2/auth/token",
+                auth=(client_id, client_secret),
+                data={"grant_type": "client_credentials"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        if "access_token" in data:
+            self._token = data["access_token"]
+            self._token_expiry = time.time() + int(data.get("expires_in", 3600))
+        elif "data" in data and isinstance(data["data"], dict) and data["data"].get("token"):
+            self._token = data["data"]["token"]
+            self._token_expiry = time.time() + int(data["data"].get("expiresIn", 3600))
+        else:
+            raise RuntimeError(f"Unexpected IAM token response: keys={list(data.keys())}")
+
+        return self._token
+
+    async def _list_records(self, namespace: str) -> list[dict[str, Any]]:
+        import httpx
+
+        token = await self._get_token()
+        url = f"https://agentbase.api.vngcloud.vn/memory/memories/{self.memory_id}/memory-records"
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                params={"namespace": namespace, "limit": 1000},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        if isinstance(data, list):
+            return data
+        return data.get("listData", [])
+
+    async def _upsert_entity(self, namespace: str, entity_id: str, payload: dict[str, Any]) -> None:
+        import httpx
+
+        token = await self._get_token()
+        url = f"https://agentbase.api.vngcloud.vn/memory/memories/{self.memory_id}/memory-records"
+        records = await self._list_records(namespace)
+        record_text = json.dumps(payload, default=str, ensure_ascii=False)
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            for record in records:
+                text = self._normalize_record_text(record)
+                if not text:
+                    continue
+                try:
+                    existing = json.loads(text)
+                except Exception:
+                    existing = {}
+
+                if existing.get("entity_id") == entity_id:
+                    record_id = record.get("id") or record.get("memoryRecordId")
+                    if record_id:
+                        await client.delete(
+                            f"{url}/{record_id}",
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+
+            resp = await client.post(
+                f"{url}:insert-directly",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"namespace": namespace},
+                json={"memoryRecords": [record_text]},
+            )
+            resp.raise_for_status()
+
+    async def _delete_entity(self, namespace: str, entity_id: str) -> None:
+        import httpx
+
+        token = await self._get_token()
+        url = f"https://agentbase.api.vngcloud.vn/memory/memories/{self.memory_id}/memory-records"
+        records = await self._list_records(namespace)
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            for record in records:
+                text = self._normalize_record_text(record)
+                if not text:
+                    continue
+                try:
+                    existing = json.loads(text)
+                except Exception:
+                    continue
+                if existing.get("entity_id") == entity_id:
+                    record_id = record.get("id") or record.get("memoryRecordId")
+                    if record_id:
+                        await client.delete(
+                            f"{url}/{record_id}",
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+
+    @staticmethod
+    def _state_to_payload(state: SalesCaseState) -> dict[str, Any]:
+        return {
+            "entity_type": "session",
+            "entity_id": state.session_id,
+            "salesperson_id": state.salesperson_id,
+            "payload": state.model_dump(),
+        }
+
+    @staticmethod
+    def _profile_to_payload(profile: SalespersonProfile) -> dict[str, Any]:
+        return {
+            "entity_type": "profile",
+            "entity_id": profile.salesperson_id,
+            "salesperson_id": profile.salesperson_id,
+            "payload": profile.model_dump(),
+        }
+
+    @staticmethod
+    def _rule_to_payload(rule: FeedbackRule) -> dict[str, Any]:
+        return {
+            "entity_type": "feedback_rule",
+            "entity_id": rule.rule_id,
+            "salesperson_id": rule.salesperson_id,
+            "payload": rule.model_dump(),
+        }
+
+    @staticmethod
+    def _payload_to_state(payload: dict[str, Any]) -> Optional[SalesCaseState]:
+        data = payload.get("payload") if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            return None
+        return SalesCaseState(**data)
+
+    @staticmethod
+    def _payload_to_profile(payload: dict[str, Any]) -> Optional[SalespersonProfile]:
+        data = payload.get("payload") if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            return None
+        return SalespersonProfile(**data)
+
+    @staticmethod
+    def _payload_to_rule(payload: dict[str, Any]) -> Optional[FeedbackRule]:
+        data = payload.get("payload") if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            return None
+        return FeedbackRule(**data)
 
     async def save_session(self, state: SalesCaseState) -> None:
         """Save session to AgentBase Memory."""
-        self._ensure_client()
+        await self._upsert_entity(self._namespace("sessions"), state.session_id, self._state_to_payload(state))
 
     async def load_session(self, session_id: str) -> Optional[SalesCaseState]:
         """Load session from AgentBase Memory."""
-        self._ensure_client()
+        records = await self._list_records(self._namespace("sessions"))
+        for record in records:
+            text = self._normalize_record_text(record)
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+            except Exception:
+                continue
+            if payload.get("entity_id") == session_id:
+                return self._payload_to_state(payload)
+        return None
 
     async def save_profile(self, profile: SalespersonProfile) -> None:
         """Save profile to AgentBase Memory."""
-        self._ensure_client()
+        await self._upsert_entity(self._namespace("profiles"), profile.salesperson_id, self._profile_to_payload(profile))
 
     async def load_profile(self, salesperson_id: str) -> Optional[SalespersonProfile]:
         """Load profile from AgentBase Memory."""
-        self._ensure_client()
+        records = await self._list_records(self._namespace("profiles"))
+        for record in records:
+            text = self._normalize_record_text(record)
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+            except Exception:
+                continue
+            if payload.get("entity_id") == salesperson_id:
+                return self._payload_to_profile(payload)
+        return None
 
     async def save_feedback_rule(self, rule: FeedbackRule) -> None:
         """Save feedback rule to AgentBase Memory."""
-        self._ensure_client()
+        await self._upsert_entity(self._namespace("feedback_rules"), rule.rule_id, self._rule_to_payload(rule))
 
     async def load_feedback_rules(
         self, salesperson_id: str, active_only: bool = True
     ) -> list[FeedbackRule]:
         """Load feedback rules from AgentBase Memory."""
-        self._ensure_client()
+        results: list[FeedbackRule] = []
+        records = await self._list_records(self._namespace("feedback_rules"))
+        for record in records:
+            text = self._normalize_record_text(record)
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+            except Exception:
+                continue
+            rule = self._payload_to_rule(payload)
+            if not rule or rule.salesperson_id != salesperson_id:
+                continue
+            if active_only and not rule.active:
+                continue
+            results.append(rule)
+        return results
 
     async def delete_feedback_rule(self, rule_id: str) -> None:
         """Delete feedback rule from AgentBase Memory."""
-        self._ensure_client()
+        await self._delete_entity(self._namespace("feedback_rules"), rule_id)
 
     async def list_sessions(
         self, salesperson_id: Optional[str] = None, limit: int = 10
     ) -> list[dict[str, Any]]:
         """List recent sessions from AgentBase Memory."""
-        self._ensure_client()
+        sessions = []
+        records = await self._list_records(self._namespace("sessions"))
+        for record in records:
+            text = self._normalize_record_text(record)
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+            except Exception:
+                continue
+            if payload.get("entity_type") != "session":
+                continue
+            if salesperson_id and payload.get("salesperson_id") != salesperson_id:
+                continue
+            session_payload = payload.get("payload", {})
+            sessions.append(
+                {
+                    "session_id": session_payload.get("session_id", payload.get("entity_id")),
+                    "salesperson_id": session_payload.get("salesperson_id", payload.get("salesperson_id")),
+                    "mode": session_payload.get("mode", "chat"),
+                    "summary": session_payload.get("summary", ""),
+                    "created_at": session_payload.get("created_at"),
+                    "updated_at": session_payload.get("updated_at"),
+                }
+            )
+
+        sessions.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+        return sessions[:limit]
 
 
 # =============================================================================
@@ -520,7 +751,7 @@ def create_memory_repo(use_agentbase: bool = False) -> MemoryRepo:
     Returns:
         MemoryRepo implementation
     """
-    if use_agentbase:
+    if use_agentbase or os.getenv("AGENTBASE_MEMORY_ID"):
         try:
             return AgentBaseMemoryRepo()
         except ValueError:
@@ -578,7 +809,7 @@ def get_memory_repo() -> MemoryRepo:
     """Get the default memory repository."""
     global _default_repo
     if _default_repo is None:
-        _default_repo = create_memory_repo(use_agentbase=False)
+        _default_repo = create_memory_repo(use_agentbase=True)
     return _default_repo
 
 
