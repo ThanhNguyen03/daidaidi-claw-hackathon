@@ -19,7 +19,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.runnables import RunnableConfig
 
-from schemas.state import SalesCaseState
+from schemas.state import SalesCaseState, AgentOutput
 from agents.base import BaseAgent
 from agents.registry import get_registry
 from agents.sales_orchestrator_agent.agent import get_sales_orchestrator
@@ -375,7 +375,6 @@ class SimpleAgentRunner:
     async def run(self, state: SalesCaseState) -> tuple[SalesCaseState, list[dict]]:
         from repos.memory_repo import get_memory_repo
         from memory.constraint_injection import get_constraints_for_agent
-        from schemas.state import AgentOutput
 
         stream_events: list[dict] = []
         state.outputs = {}
@@ -393,9 +392,35 @@ class SimpleAgentRunner:
             "status": "thinking", "message": "Validating brief…",
         })
 
-        validation_output, should_dispatch = await self.orchestrator.validate_before_dispatch(state)
+        try:
+            validation_output, should_dispatch = await self.orchestrator.validate_before_dispatch(state)
+        except Exception as exc:
+            print(f"Error in validate_before_dispatch: {exc}")
+            error_msg = "Xin lỗi, có lỗi xảy ra khi xử lý yêu cầu. Vui lòng thử lại."
+            validation_output = AgentOutput(
+                agent="sales_orchestrator",
+                status="FAILED",
+                payload={"error": str(exc)},
+                summary=error_msg,
+                confidence=0.0,
+            )
+            state.outputs["sales_orchestrator"] = validation_output
+            stream_events.append({
+                "type": "assistant_message",
+                "agent": "sales_orchestrator",
+                "content": error_msg,
+            })
+            stream_events.append({"type": "done"})
+            return state, stream_events
+
         if not should_dispatch:
             state.outputs["sales_orchestrator"] = validation_output
+            if validation_output.summary:
+                stream_events.append({
+                    "type": "assistant_message",
+                    "agent": "sales_orchestrator",
+                    "content": validation_output.summary,
+                })
             stream_events.append({
                 "type": "agent_status", "agent": "scoping",
                 "status": "completed" if validation_output.status == "NEEDS_INPUT" else "failed",
@@ -421,7 +446,7 @@ class SimpleAgentRunner:
         })
 
         if not state.plan or not state.plan.tasks:
-            state.plan = self.orchestrator._create_execution_plan(state)
+            state.plan = await self.orchestrator._create_execution_plan(state)
 
         task_names = [t.agent_name for t in state.plan.tasks]
         stream_events.append({

@@ -17,10 +17,12 @@ Legacy modules re-export from here for backward compatibility only.
 from __future__ import annotations
 
 import json
+import asyncio
 import uuid
 from typing import Optional
 
 from agents.registry import get_registry
+from repos.kb_repo import get_kb_repo
 from schemas.state import (
     AgentOutput,
     AgentTask,
@@ -42,6 +44,53 @@ class Orchestrator:
 
     def __init__(self, max_hop_depth: int = DEFAULT_MAX_HOP_DEPTH):
         self.max_hop_depth = max_hop_depth
+
+    async def _rag_search(
+        self, query: str, doc_type: str, top_k: int
+    ) -> list[object]:
+        """Search the KB for orchestrator-specific skill/knowledge context."""
+        try:
+            kb = get_kb_repo()
+            return await kb.search(
+                query,
+                top_k=top_k,
+                filters={"agent": "sales_orchestrator", "type": doc_type},
+            )
+        except Exception as exc:
+            print(f"Warning: KB {doc_type} search failed for sales_orchestrator: {exc}")
+            return []
+
+    async def build_required_skill_context(
+        self,
+        query: str,
+        skill_top_k: int = 1,
+        knowledge_top_k: int = 3,
+    ) -> str:
+        """Build orchestrator skill/knowledge context with at least one skill hit."""
+        skills, knowledge = await asyncio.gather(
+            self._rag_search(query, "skill", skill_top_k),
+            self._rag_search(query, "knowledge", knowledge_top_k),
+        )
+
+        if not skills:
+            print("Warning: No skill context retrieved for sales_orchestrator, falling back to knowledge-only context")
+
+        parts: list[str] = []
+        if skills:
+            parts.append("\n\n" + "=" * 60)
+            parts.append("RELEVANT SKILL / PROCEDURE:")
+            parts.append("=" * 60)
+            for r in skills:
+                parts.append(f"\n[{r.source}]\n{r.content}")
+
+        if knowledge:
+            parts.append("\n\n" + "=" * 60)
+            parts.append("RELEVANT KNOWLEDGE:")
+            parts.append("=" * 60)
+            for r in knowledge:
+                parts.append(f"\n[{r.source}]\n{r.content}")
+
+        return "\n".join(parts) if parts else ""
 
     def _latest_user_message(self, state: SalesCaseState) -> str:
         for msg in reversed(state.messages):
@@ -113,8 +162,7 @@ class Orchestrator:
                 "assistant_reply": "Hi, mình có thể giúp bạn bắt đầu một brief hoặc trả lời câu hỏi sales.",
             }
 
-        orchestrator_agent = self._orchestrator_agent()
-        rag_context = await orchestrator_agent.build_required_skill_context(
+        rag_context = await self.build_required_skill_context(
             f"Classify the latest user message for sales routing.\nMessage: {message}",
             skill_top_k=1,
             knowledge_top_k=2,
@@ -187,8 +235,7 @@ Session context:
 
     async def _extract_brief_from_message(self, message: str) -> Brief:
         """Use the LLM to extract a structured brief from free-form user text."""
-        orchestrator_agent = self._orchestrator_agent()
-        rag_context = await orchestrator_agent.build_required_skill_context(
+        rag_context = await self.build_required_skill_context(
             f"Extract a structured sales brief from this user message.\nMessage: {message}",
             skill_top_k=1,
             knowledge_top_k=3,
@@ -204,17 +251,21 @@ Session context:
             "If a field is absent, use null or []. No markdown, no extra text."
         )
 
-        response = client.create_completion(
-            messages=[
-                {"role": "system", "content": system + "\n\n" + rag_context},
-                {"role": "user", "content": f"Parse this brief:\n{message}"},
-            ],
-            stream=False,
-            max_tokens=600,
-            temperature=0.1,
-        )
+        try:
+            response = client.create_completion(
+                messages=[
+                    {"role": "system", "content": system + "\n\n" + rag_context},
+                    {"role": "user", "content": f"Parse this brief:\n{message}"},
+                ],
+                stream=False,
+                max_tokens=600,
+                temperature=0.1,
+            )
+            raw = response.choices[0].message.content.strip() if response.choices else "{}"
+        except Exception as exc:
+            print(f"Warning: brief extraction LLM call failed: {exc}")
+            return Brief(additional_context=message[:1000])
 
-        raw = response.choices[0].message.content.strip() if response.choices else "{}"
         if "```" in raw:
             raw = raw.split("```", 1)[1]
             if raw.startswith("json"):
@@ -238,8 +289,7 @@ Session context:
 
     async def _extract_desired_outputs(self, message: str) -> list[str]:
         """Use the LLM to infer the requested output formats from user text."""
-        orchestrator_agent = self._orchestrator_agent()
-        rag_context = await orchestrator_agent.build_required_skill_context(
+        rag_context = await self.build_required_skill_context(
             f"Infer requested deliverables from this user message.\nMessage: {message}",
             skill_top_k=1,
             knowledge_top_k=2,
@@ -449,7 +499,7 @@ Message:
             return validation_output
 
         if not state.plan or not state.plan.tasks:
-            state.plan = self._create_execution_plan(state)
+            state.plan = await self._create_execution_plan(state)
 
         if not state.plan.tasks:
             return AgentOutput(
@@ -523,8 +573,123 @@ Message:
             ),
         )
 
-    def _create_execution_plan(self, state: SalesCaseState) -> ExecutionPlan:
-        """Build a guarded execution plan from the current brief and desired outputs."""
+    async def _create_execution_plan(self, state: SalesCaseState) -> ExecutionPlan:
+        """Use LLM reasoning to decide which agents to dispatch and in what order."""
+        registry = get_registry()
+        available_agents = [
+            a for a in registry.all() if a.name != "sales_orchestrator"
+        ]
+        agent_descriptions = "\n".join(
+            f"- {a.name}: {a.role_description}" for a in available_agents
+        )
+
+        message = self._latest_user_message(state) or ""
+        brief_parts = []
+        if state.brief:
+            b = state.brief
+            if b.industry: brief_parts.append(f"Industry: {b.industry}")
+            if b.goal: brief_parts.append(f"Goal: {b.goal}")
+            if b.target_audience: brief_parts.append(f"Target audience: {b.target_audience}")
+            if b.budget_vnd: brief_parts.append(f"Budget: {b.budget_vnd:,} VND")
+            if b.timeline: brief_parts.append(f"Timeline: {b.timeline}")
+            if b.specific_requirements:
+                brief_parts.append(f"Requirements: {', '.join(b.specific_requirements)}")
+            if b.constraints:
+                brief_parts.append(f"Constraints: {', '.join(b.constraints)}")
+            if b.additional_context:
+                brief_parts.append(f"Context: {b.additional_context[:300]}")
+        brief_summary = "\n".join(brief_parts) if brief_parts else "(no structured brief yet)"
+        desired_outputs = ", ".join(state.desired_outputs) if state.desired_outputs else "not specified"
+
+        rag_context = await self.build_required_skill_context(
+            f"Plan agent dispatch for: {message[:200]}",
+            skill_top_k=1,
+            knowledge_top_k=2,
+        )
+
+        prompt = f"""You are the orchestrator of a multi-agent sales assistant. Your only job here is to decide WHICH specialist agents to dispatch, in what order and grouping, based on what the user actually needs.
+
+Available specialist agents:
+{agent_descriptions}
+
+User message: {message[:500]}
+
+Brief summary:
+{brief_summary}
+
+Desired output formats: {desired_outputs}
+
+Orchestrator skill context:
+{rag_context}
+
+Instructions:
+1. Choose ONLY the agents genuinely needed for this request. Fewer is better when the request is narrow.
+2. requirement_elicitation MUST always run first (parallel_group=1, is_critical=true).
+3. Agents in the same parallel_group run concurrently. Higher group numbers run after lower ones.
+4. Write a specific task_description per agent grounded in the actual brief, not generic descriptions.
+5. Include design/client_simulator only when the user explicitly requests deliverables (pptx, deck, wireframe, userflow).
+
+Return ONLY a JSON array — no markdown, no extra text:
+[
+  {{
+    "agent_name": "requirement_elicitation",
+    "task_description": "...",
+    "parallel_group": 1,
+    "is_critical": true
+  }},
+  ...
+]
+"""
+
+        client = get_validation_service().client
+        try:
+            response = client.create_completion(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a routing orchestrator for a multi-agent sales system. Return only valid JSON.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                stream=False,
+                temperature=0.1,
+                max_tokens=800,
+            )
+            content = response.choices[0].message.content if response.choices else "[]"
+            if "```json" in content:
+                content = content.split("```json", 1)[1].split("```", 1)[0]
+            elif "```" in content:
+                content = content.split("```", 1)[1].split("```", 1)[0]
+
+            raw_tasks = json.loads(content.strip() or "[]")
+            tasks: list[AgentTask] = []
+            for raw_task in raw_tasks:
+                agent_name = str(raw_task.get("agent_name", "")).strip()
+                if not agent_name or not registry.get(agent_name):
+                    continue
+                if any(t.agent_name == agent_name for t in tasks):
+                    continue
+                tasks.append(AgentTask(
+                    agent_name=agent_name,
+                    task_description=str(raw_task.get("task_description", f"Process request for {agent_name}")),
+                    depends_on=[],
+                    is_critical=bool(raw_task.get("is_critical", False)),
+                    parallel_group=int(raw_task.get("parallel_group", 1)),
+                ))
+
+            if tasks:
+                return ExecutionPlan(
+                    tasks=tasks,
+                    execution_mode="hybrid",
+                    estimated_duration_minutes=len(tasks) * 3,
+                )
+        except Exception as exc:
+            print(f"Warning: LLM execution plan failed, using default plan: {exc}")
+
+        return self._create_default_execution_plan(state)
+
+    def _create_default_execution_plan(self, state: SalesCaseState) -> ExecutionPlan:
+        """Fallback hard-coded execution plan when LLM-based planning fails."""
         registry = get_registry()
         tasks: list[AgentTask] = []
         requested_outputs = set(state.desired_outputs or [])
@@ -541,7 +706,6 @@ Message:
                     )
                 )
 
-        # Core chain: validate needs, map the opportunity, check risk, and produce the solution.
         _add(
             "requirement_elicitation",
             "Translate the brief into a structured requirement summary, surface unknowns, and request missing context only when needed",

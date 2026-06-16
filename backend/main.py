@@ -880,6 +880,14 @@ async def process_with_agents(
         # Run the agent system
         final_state, stream_events = await runner.run(state)
 
+        # Check if stream_events already contains an assistant-visible message
+        # (e.g. casual_chat reply, NEEDS_INPUT prompt, question_card)
+        # so we don't emit a duplicate fallback below.
+        already_has_assistant = any(
+            e.get("type") in ("assistant_message", "question_card")
+            for e in stream_events
+        )
+
         # Stream status events but hold the "done" until after content
         for event in stream_events:
             if event.get("type") != "done":
@@ -912,7 +920,7 @@ async def process_with_agents(
                 }
             )
 
-        if not emitted_agent_message:
+        if not emitted_agent_message and not already_has_assistant:
             fallback_summary = ""
             orch_output = final_state.outputs.get("sales_orchestrator")
             if orch_output and getattr(orch_output, "summary", ""):
@@ -1265,79 +1273,98 @@ async def chat_stream(request: Request, payload: ChatRequest):
     state.hop_depth = 0
 
     async def event_generator():
-        # Send session info first
-        yield _sse_data({'type': 'session', 'session_id': state.session_id})
+        try:
+            # Send session info first
+            yield _sse_data({'type': 'session', 'session_id': state.session_id})
 
-        # Send user message event
-        yield _sse_data({'type': 'user_message', 'content': payload.message})
+            # Send user message event
+            yield _sse_data({'type': 'user_message', 'content': payload.message})
+            assistant_emitted = False
 
-        feedback_extractor = get_feedback_extractor()
-        memory_repo = get_memory_repo()
-        profile_manager = get_profile_manager()
+            feedback_extractor = get_feedback_extractor()
+            memory_repo = get_memory_repo()
+            profile_manager = get_profile_manager()
 
-        # Check if message contains feedback
-        if feedback_extractor.is_feedback_message(payload.message):
-            rule = feedback_extractor.extract(
-                payload.message,
-                {"salesperson_id": state.salesperson_id}
-            )
-            if rule:
-                # Save the feedback rule
-                await memory_repo.save_feedback_rule(rule)
+            # Check if message contains feedback
+            if feedback_extractor.is_feedback_message(payload.message):
+                rule = feedback_extractor.extract(
+                    payload.message,
+                    {"salesperson_id": state.salesperson_id}
+                )
+                if rule:
+                    # Save the feedback rule
+                    await memory_repo.save_feedback_rule(rule)
 
-                # Update profile with constraint
-                profile = await memory_repo.load_profile(state.salesperson_id)
-                if not profile:
-                    profile = profile_manager.create_profile(state.salesperson_id)
-                profile = profile_manager.add_constraint(profile, rule.rule_id)
+                    # Update profile with constraint
+                    profile = await memory_repo.load_profile(state.salesperson_id)
+                    if not profile:
+                        profile = profile_manager.create_profile(state.salesperson_id)
+                    profile = profile_manager.add_constraint(profile, rule.rule_id)
+                    await memory_repo.save_profile(profile)
+
+                    # Notify about new constraint
+                    yield _sse_data({'type': 'constraint_added', 'constraint': rule.model_dump(mode="json")})
+
+            # D.3: Also check for frustration in message
+            profile = await memory_repo.load_profile(state.salesperson_id)
+            if not profile:
+                profile = profile_manager.create_profile(state.salesperson_id)
+            if profile_manager.detect_frustration(profile, payload.message):
                 await memory_repo.save_profile(profile)
 
-                # Notify about new constraint
-                yield _sse_data({'type': 'constraint_added', 'constraint': rule.model_dump(mode="json")})
+            done_chunk = _sse_data({'type': 'done'})
+            async for chunk in process_with_agents(state, payload.message):
+                if chunk != done_chunk:
+                    if '"type": "assistant_message"' in chunk or '"type": "agent_message"' in chunk or '"type": "content"' in chunk:
+                        assistant_emitted = True
+                    yield chunk
 
-        # D.3: Also check for frustration in message
-        profile = await memory_repo.load_profile(state.salesperson_id)
-        if not profile:
-            profile = profile_manager.create_profile(state.salesperson_id)
-        if profile_manager.detect_frustration(profile, payload.message):
-            await memory_repo.save_profile(profile)
+            if not assistant_emitted:
+                yield _sse_data({
+                    'type': 'assistant_message',
+                    'agent': 'sales_orchestrator',
+                    'content': 'Mình cần thêm chút thông tin trước khi tiếp tục.',
+                })
 
-        async for chunk in process_with_agents(state, payload.message):
-            yield chunk
+            # Day 5: Check if we need to create a checkpoint
+            # This runs after agents complete, looking for quote/plan outputs
+            # Guard with try-except to prevent reviewer errors from breaking the stream
+            try:
+                checkpoint = await _maybe_create_checkpoint(state)
+            except Exception as e:
+                print(f"Warning: Failed to create checkpoint: {e}")
+                checkpoint = None
 
-        # Day 5: Check if we need to create a checkpoint
-        # This runs after agents complete, looking for quote/plan outputs
-        # Guard with try-except to prevent reviewer errors from breaking the stream
-        try:
-            checkpoint = await _maybe_create_checkpoint(state)
-        except Exception as e:
-            print(f"Warning: Failed to create checkpoint: {e}")
-            checkpoint = None
+            if checkpoint:
+                # Convert checkpoint to dict with datetime serialization
+                checkpoint_dict = checkpoint.model_dump()
+                for dt_field in ['created_at', 'updated_at', 'decided_at']:
+                    if checkpoint_dict.get(dt_field) and hasattr(checkpoint_dict[dt_field], 'isoformat'):
+                        checkpoint_dict[dt_field] = checkpoint_dict[dt_field].isoformat()
+                yield _sse_data({'type': 'checkpoint_card', 'checkpoint': checkpoint_dict})
 
-        if checkpoint:
-            # Convert checkpoint to dict with datetime serialization
-            checkpoint_dict = checkpoint.model_dump()
-            for dt_field in ['created_at', 'updated_at', 'decided_at']:
-                if checkpoint_dict.get(dt_field) and hasattr(checkpoint_dict[dt_field], 'isoformat'):
-                    checkpoint_dict[dt_field] = checkpoint_dict[dt_field].isoformat()
-            yield _sse_data({'type': 'checkpoint_card', 'checkpoint': checkpoint_dict})
+            # Save final state to in-memory store
+            update_session(state)
 
-        # Save final state to in-memory store
-        update_session(state)
+            # Day 4: Also persist to database for cross-session resume
+            try:
+                memory_repo = get_memory_repo()
+                await memory_repo.save_session(state)
+            except Exception as e:
+                print(f"Warning: Failed to persist session: {e}")
 
-        # Day 4: Also persist to database for cross-session resume
-        try:
-            memory_repo = get_memory_repo()
-            await memory_repo.save_session(state)
-        except Exception as e:
-            print(f"Warning: Failed to persist session: {e}")
-
-        # Send session update
-        # Serialize brief with datetime handling
-        brief_dict = None
-        if state.brief:
-            brief_dict = state.brief.model_dump(mode="json")
-        yield _sse_data({'type': 'session_updated', 'session_id': state.session_id, 'brief': brief_dict})
+            # Send session update
+            # Serialize brief with datetime handling
+            brief_dict = None
+            if state.brief:
+                brief_dict = state.brief.model_dump(mode="json")
+            yield _sse_data({'type': 'session_updated', 'session_id': state.session_id, 'brief': brief_dict})
+            yield done_chunk
+        except Exception as exc:
+            print(f"Error in chat stream: {exc}")
+            yield _sse_data({'type': 'error', 'error': str(exc)})
+            yield _sse_data({'type': 'done'})
+            return
 
     return StreamingResponse(
         event_generator(),

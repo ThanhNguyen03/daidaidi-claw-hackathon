@@ -202,7 +202,7 @@ Respond helpfully and professionally."""
         )
 
         if not skills:
-            raise RuntimeError(f"No skill context retrieved for agent {self.name}")
+            print(f"Warning: No skill context retrieved for agent {self.name}, proceeding with available context")
 
         return self._format_rag_context(skills, knowledge)
 
