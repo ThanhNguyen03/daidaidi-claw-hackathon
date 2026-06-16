@@ -282,7 +282,7 @@ async def persist_session_best_effort(state: SalesCaseState, context: str) -> No
 def serialize_workflow_state(state: SalesCaseState) -> dict[str, Any]:
     """Return the standard FE payload after a workflow mutation."""
     return {
-        "brief": state.brief.model_dump() if state.brief else None,
+        "brief": state.brief.model_dump(mode="json") if state.brief else None,
         "validation_status": state.validation_status,
     }
 
@@ -1340,7 +1340,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 yield f"data: {json.dumps({'type': 'question_card', 'questions': [question_to_dict(q) for q in validation_output.questions]})}\n\n"
 
             update_session(state)
-            brief_data = state.brief.model_dump() if state.brief else None
+            brief_data = state.brief.model_dump(mode="json") if state.brief else None
             yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'validation_status': state.validation_status, 'brief': brief_data})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
@@ -1419,11 +1419,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
         # Serialize brief with datetime handling
         brief_dict = None
         if state.brief:
-            brief_dict = state.brief.model_dump()
-            # Convert any datetime fields
-            for key, value in brief_dict.items():
-                if hasattr(value, 'isoformat'):
-                    brief_dict[key] = value.isoformat()
+            brief_dict = state.brief.model_dump(mode="json")
         yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'brief': brief_dict})}\n\n"
 
     return StreamingResponse(
