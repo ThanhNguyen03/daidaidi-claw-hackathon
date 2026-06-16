@@ -1,4 +1,4 @@
-"""
+﻿"""
 Main FastAPI Application
 ========================
 Entry point for the multi-agent sales assistant backend.
@@ -416,12 +416,12 @@ async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
                 "filename": f"proposal_{client_name}.pptx",
                 "media_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
                 "type": "pptx",
-                "title": f"PPTX Proposal — {client_name}",
+                "title": f"PPTX Proposal â€” {client_name}",
             }
             result["artifact_id"] = artifact_id
             result["download_url"] = f"/artifact/{artifact_id}"
         elif result.get("fallback"):
-            # python-pptx not available — save fallback text
+            # python-pptx not available â€” save fallback text
             content = (result.get("preview") or "").encode("utf-8")
             _artifact_store[artifact_id] = {
                 "storage": "memory",
@@ -429,7 +429,7 @@ async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
                 "filename": f"proposal_{params.get('client_name', 'Client')}.md",
                 "media_type": "text/markdown",
                 "type": "pptx",
-                "title": f"Proposal (text fallback) — {params.get('client_name', 'Client')}",
+                "title": f"Proposal (text fallback) â€” {params.get('client_name', 'Client')}",
             }
             result["artifact_id"] = artifact_id
             result["download_url"] = f"/artifact/{artifact_id}"
@@ -480,7 +480,7 @@ async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
                 "filename": "wireframe.html",
                 "media_type": "text/html",
                 "type": "wireframe",
-                "title": f"Wireframe — {params.get('brand_name', 'Brand')}",
+                "title": f"Wireframe â€” {params.get('brand_name', 'Brand')}",
             }
             result["artifact_id"] = artifact_id
             result["download_url"] = f"/artifact/{artifact_id}"
@@ -646,7 +646,7 @@ def _extract_agent_content(agent_name: str, output) -> str:
         if isinstance(findings, str):
             return findings
         if isinstance(findings, list):
-            lines = [f"**Compliance Review — {agent_name}**\n"]
+            lines = [f"**Compliance Review â€” {agent_name}**\n"]
             for f in findings:
                 if isinstance(f, dict):
                     severity = f.get("severity", "info").upper()
@@ -657,7 +657,7 @@ def _extract_agent_content(agent_name: str, output) -> str:
 
     # client_simulator: structured adversarial review
     if "objections" in payload:
-        lines = [f"**Client Simulator Review — {agent_name}**\n"]
+        lines = [f"**Client Simulator Review â€” {agent_name}**\n"]
         scores = payload.get("scores", {})
         if scores:
             score_str = " | ".join(f"{k.replace('_', ' ').title()}: {v}/5" for k, v in scores.items())
@@ -666,9 +666,9 @@ def _extract_agent_content(agent_name: str, output) -> str:
             if isinstance(obj, dict):
                 lines.append(f"- [{obj.get('severity','').upper()}] {obj.get('text', str(obj))}")
         for wp in payload.get("weak_points", []):
-            lines.append(f"⚠ {wp}")
+            lines.append(f"âš  {wp}")
         for risk in payload.get("risks", []):
-            lines.append(f"🚨 {risk}")
+            lines.append(f"ðŸš¨ {risk}")
         if payload.get("recommendations"):
             lines.append("\n**Recommendations before AE review:**")
             for rec in payload["recommendations"]:
@@ -703,36 +703,36 @@ def _extract_agent_content(agent_name: str, output) -> str:
 
     if "pricing_breakdown" in payload:
         pricing = payload["pricing_breakdown"] or {}
-        lines = [f"**Báo giá / Solution**\n"]
+        lines = [f"**BÃ¡o giÃ¡ / Solution**\n"]
         for item in pricing.get("items", []):
             price = item.get("price", 0)
             lines.append(
                 f"- {item.get('name', '?')}: **{price:,.0f} VND** / {item.get('unit', '')}"
-                + (" *(ước tính)*" if item.get("is_estimate") else "")
+                + (" *(Æ°á»›c tÃ­nh)*" if item.get("is_estimate") else "")
             )
         if pricing.get("subtotal") is not None:
             lines.append(f"\n**Subtotal:** {pricing.get('subtotal'):,.0f} VND")
         if pricing.get("total_vnd") is not None:
-            lines.append(f"**Tổng cộng:** {pricing.get('total_vnd'):,.0f} VND")
+            lines.append(f"**Tá»•ng cá»™ng:** {pricing.get('total_vnd'):,.0f} VND")
         if pricing.get("valid_until"):
-            lines.append(f"Hiệu lực đến: {pricing['valid_until']}")
+            lines.append(f"Hiá»‡u lá»±c Ä‘áº¿n: {pricing['valid_until']}")
         return "\n".join(lines)
 
     # product solution / quote: render as markdown table
     if "quote_id" in payload:
-        lines = [f"**Báo giá #{payload['quote_id']}**\n"]
+        lines = [f"**BÃ¡o giÃ¡ #{payload['quote_id']}**\n"]
         for item in payload.get("items", []):
             price = item.get("price", 0)
             lines.append(
                 f"- {item.get('name', '?')}: **{price:,.0f} VND** / {item.get('unit', '')} "
-                + ("*(ước tính)*" if item.get("is_estimate") else "")
+                + ("*(Æ°á»›c tÃ­nh)*" if item.get("is_estimate") else "")
             )
         total = payload.get("total_vnd", 0)
-        lines.append(f"\n**Tổng cộng: {total:,.0f} VND**")
+        lines.append(f"\n**Tá»•ng cá»™ng: {total:,.0f} VND**")
         if payload.get("valid_until"):
-            lines.append(f"Hiệu lực đến: {payload['valid_until']}")
+            lines.append(f"Hiá»‡u lá»±c Ä‘áº¿n: {payload['valid_until']}")
         if payload.get("payment_terms"):
-            lines.append(f"Điều khoản thanh toán: {payload['payment_terms']}")
+            lines.append(f"Äiá»u khoáº£n thanh toÃ¡n: {payload['payment_terms']}")
         return "\n".join(lines)
 
     # fallback: use summary
@@ -768,11 +768,6 @@ async def process_with_agents(
             },
         ]
     )
-
-    if not state.brief:
-        extracted = await _extract_brief_from_text(message)
-        if extracted:
-            state.brief = extracted
 
     # Day 7: Handle modes differently
     # chat mode: simple processing (no agents), handled in process_simple
@@ -891,6 +886,7 @@ async def process_with_agents(
                 yield _sse_data(event)
 
         # Stream each completed agent's real output as a separate agent_message
+        emitted_agent_message = False
         for agent_name, output in final_state.outputs.items():
             if agent_name == "sales_orchestrator":
                 continue
@@ -904,6 +900,7 @@ async def process_with_agents(
                 continue
 
             yield _sse_data({'type': 'agent_message', 'agent': agent_name, 'content': content_text})
+            emitted_agent_message = True
 
             # Record in session history
             state.messages.append(
@@ -915,10 +912,25 @@ async def process_with_agents(
                 }
             )
 
+        if not emitted_agent_message:
+            fallback_summary = ""
+            orch_output = final_state.outputs.get("sales_orchestrator")
+            if orch_output and getattr(orch_output, "summary", ""):
+                fallback_summary = str(orch_output.summary)
+            elif final_state.summary:
+                fallback_summary = str(final_state.summary)
+
+            if fallback_summary:
+                yield _sse_data({
+                    'type': 'assistant_message',
+                    'agent': 'sales_orchestrator',
+                    'content': fallback_summary,
+                })
+
         # Update state
         state.outputs = final_state.outputs
         state.summary = (
-            f"User: {message[:30]}... → Agents: {', '.join(final_state.outputs.keys())}"
+            f"User: {message[:30]}... â†’ Agents: {', '.join(final_state.outputs.keys())}"
         )
 
         yield _sse_data({'type': 'done'})
@@ -928,7 +940,7 @@ async def process_with_agents(
 # Simple LLM Processing (Day 1 fallback)
 # =============================================================================
 
-ORCHESTRATOR_SYSTEM_PROMPT = """You are a Sales AI Assistant â€” a knowledgeable advisor for sales teams.
+ORCHESTRATOR_SYSTEM_PROMPT = """You are a Sales AI Assistant Ã¢â‚¬â€ a knowledgeable advisor for sales teams.
 
 ## Your Role
 
@@ -954,7 +966,7 @@ comprehensive, direct response with only grounded information.
 
 ## Response Guidelines
 
-- Be helpful, professional, and thorough â€” give real substance, not placeholders
+- Be helpful, professional, and thorough Ã¢â‚¬â€ give real substance, not placeholders
 - Respond in the user's language (Vietnamese if they write in Vietnamese)
 - Use markdown headers and bullet points for readability
 - Never promise future actions you cannot take in this turn
@@ -966,10 +978,10 @@ class _ThinkFilter:
     """Streaming filter that strips <think>...</think> blocks from LLM output.
 
     Emits (type, content) tuples:
-      ("think_start", "")  — first <think> tag encountered
-      ("think", content)   — text inside a <think> block (caller may discard)
-      ("think_end", "")    — closing </think> tag
-      ("content", content) — regular response text to stream to the client
+      ("think_start", "")  â€” first <think> tag encountered
+      ("think", content)   â€” text inside a <think> block (caller may discard)
+      ("think_end", "")    â€” closing </think> tag
+      ("content", content) â€” regular response text to stream to the client
     """
 
     OPEN = "<think>"
@@ -1156,21 +1168,46 @@ async def chat(request: ChatRequest):
     if request.brief:
         state.brief = request.brief
 
-    # For Day 2, we'll use simple response (non-streaming)
-    # The full agent dispatch would be implemented later
-    client = get_llm_client("sales_orchestrator")
-    messages = [{"role": "user", "content": request.message}]
+    state.messages.append(
+        {
+            "role": "user",
+            "content": request.message,
+            "timestamp": datetime.now().isoformat(),
+        }
+    )
 
     try:
-        response = client.create_completion(
-            messages=messages,
-            stream=False,
-            temperature=0.7,
-            max_tokens=2000,
+        orchestrator = get_sales_orchestrator()
+        validation_output, should_dispatch = await orchestrator.validate_before_dispatch(
+            state
         )
-        response_text = (
-            response.choices[0].message.content if response.choices else "No response"
-        )
+
+        if not should_dispatch:
+            response_text = validation_output.summary or ""
+        else:
+            runner = get_simple_runner()
+            final_state, _ = await runner.run(state)
+            response_text = ""
+
+            for agent_name, output in final_state.outputs.items():
+                if agent_name == "sales_orchestrator":
+                    continue
+                if not output or getattr(output, "status", None) != "COMPLETE":
+                    continue
+                response_text = _extract_agent_content(agent_name, output)
+                if response_text:
+                    break
+
+            if not response_text:
+                orch_output = final_state.outputs.get("sales_orchestrator")
+                if orch_output and getattr(orch_output, "summary", ""):
+                    response_text = str(orch_output.summary)
+                else:
+                    response_text = (
+                        final_state.summary
+                        or validation_output.summary
+                        or "No response"
+                    )
     except Exception as e:
         response_text = f"Error: {str(e)}"
 
@@ -1180,127 +1217,6 @@ async def chat(request: ChatRequest):
         agent="sales_orchestrator",
         done=True,
     )
-
-
-# =============================================================================
-# Brief auto-detection helpers
-# =============================================================================
-
-_BRIEF_KEYWORDS = [
-    "brief", "làm brief", "objective", "target audience", "target_audience",
-    "ta:", " ta ", "brand:", "brand ", "yêu cầu", "chiến dịch", "campaign",
-    "kpi", "budget", "timeline", "insight", "proposal", "use agent",
-    "dùng agent", "dùng sales agent", "industry", "ngành", "khách hàng mục tiêu",
-    "ngân sách", "mục tiêu", "thương hiệu",
-]
-
-
-def _looks_like_brief(message: str) -> bool:
-    """Return True if the message contains enough brief-like signals."""
-    lower = message.lower()
-    hit_count = sum(1 for kw in _BRIEF_KEYWORDS if kw in lower)
-    # Long message with at least 1 keyword, or short message with 2+ keywords
-    return (len(message) > 200 and hit_count >= 1) or hit_count >= 2
-
-
-def _should_send_chat_opening(state: SalesCaseState, message: str) -> bool:
-    """Send an intro/suggestion opening for the first non-brief chat turn."""
-    if _looks_like_brief(message):
-        return False
-
-    user_turns = sum(1 for msg in state.messages if msg.get("role") == "user")
-    return user_turns == 1
-
-
-def _build_chat_opening_messages() -> list[dict[str, str]]:
-    """Return a short intro plus a prompt that nudges the user toward a brief."""
-    return [
-        {
-            "role": "assistant",
-            "agent": "sales_orchestrator",
-            "content": (
-                "Mình là Sales AI Assistant. Mình có thể giúp bạn biến một ý tưởng "
-                "thành brief, proposal, deck, quote hoặc flow làm việc."
-            ),
-        },
-        {
-            "role": "assistant",
-            "agent": "sales_orchestrator",
-            "content": (
-                "Nếu bạn chưa có brief, hãy gửi ngắn gọn: ngành, mục tiêu, budget, "
-                "timeline và target audience. Mình sẽ hỏi tiếp từng phần cho rõ."
-            ),
-        },
-    ]
-
-
-async def _extract_brief_from_text(message: str):
-    """Use LLM to extract a structured Brief from a free-text message."""
-    try:
-        from llm.greennode import get_llm_client
-        from schemas.state import Brief
-
-        client = get_llm_client("validation")
-
-        system = (
-            "You are a brief parser for a sales AI system. "
-            "Extract structured campaign/sales brief data from the user message. "
-            "Return ONLY a JSON object with these optional fields:\n"
-            '{"industry": str|null, "goal": str|null, "target_audience": str|null, '
-            '"budget_vnd": int|null, "timeline": str|null, '
-            '"specific_requirements": [str], "constraints": [str], "additional_context": str|null}\n'
-            "If a field is absent, use null or []. No markdown, no extra text."
-        )
-
-        response = client.create_completion(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": f"Parse this brief:\n{message}"},
-            ],
-            stream=False,
-            max_tokens=600,
-            temperature=0.1,
-        )
-
-        raw = response.choices[0].message.content.strip()
-        # Strip markdown code fences if present
-        if "```" in raw:
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-
-        data = json.loads(raw)
-        return Brief(
-            industry=data.get("industry"),
-            goal=data.get("goal"),
-            target_audience=data.get("target_audience"),
-            budget_vnd=data.get("budget_vnd"),
-            timeline=data.get("timeline"),
-            specific_requirements=data.get("specific_requirements") or [],
-            constraints=data.get("constraints") or [],
-            additional_context=data.get("additional_context"),
-        )
-    except Exception as exc:
-        print(f"[brief_extract] failed: {exc}")
-        # Return a minimal Brief so agents still have the raw message as context
-        from schemas.state import Brief as BriefModel
-        return BriefModel(additional_context=message[:1000])
-
-
-def _auto_detect_outputs(message: str) -> list[str]:
-    """Infer desired output types from the brief text."""
-    lower = message.lower()
-    outputs = []
-    if any(w in lower for w in ["pptx", "powerpoint", "slide", "deck", "presentation"]):
-        outputs.append("pptx")
-    if any(w in lower for w in ["figma", "figmajam", "wireframe", "mockup"]):
-        outputs.append("figma")
-    if any(w in lower for w in ["diagram", "flow", "userflow", "mermaid"]):
-        outputs.append("userflow")
-    if any(w in lower for w in ["quote", "quotation", "pricing", "price", "cost", "product solution"]):
-        outputs.append("quote")
-    return outputs
-
 
 @app.post("/chat/stream")
 @limiter.limit("10/minute")  # Rate limit: 10 requests per minute
@@ -1337,87 +1253,24 @@ async def chat_stream(request: Request, payload: ChatRequest):
     if payload.brief:
         state.brief = payload.brief
 
-    # Always sync the mode on the session — user may have switched modes
+    # Always sync the mode on the session â€” user may have switched modes
     # between requests while keeping the same session (brief/history carries over).
     state.mode = ACTIVE_MODE
-
-    # Determine processing mode based on request.
-    # planning/execute use the full multi-agent system.
-    # chat uses a direct LLM call (process_simple) — the system prompt
-    # guides the LLM to answer comprehensively without promising agent dispatch.
-    use_agents = True
 
     # Reset per-request agent state so agents re-run on every new message.
     # Without this, state.plan and state.visited accumulate across turns and
     # _get_next_task returns None on the 2nd+ message (all agents "visited").
-    if use_agents:
-        state.plan = None
-        state.visited = []
-        state.hop_depth = 0
+    state.plan = None
+    state.visited = []
+    state.hop_depth = 0
 
     async def event_generator():
-        nonlocal use_agents
-
         # Send session info first
         yield _sse_data({'type': 'session', 'session_id': state.session_id})
 
         # Send user message event
         yield _sse_data({'type': 'user_message', 'content': payload.message})
 
-        if _should_send_chat_opening(state, payload.message):
-            for opening in _build_chat_opening_messages():
-                state.messages.append(
-                    {
-                        "role": opening["role"],
-                        "content": opening["content"],
-                        "agent": opening.get("agent"),
-                        "timestamp": datetime.now().isoformat(),
-                    }
-                )
-                yield _sse_data({'type': 'assistant_message', 'agent': opening.get("agent", "sales_orchestrator"), 'content': opening["content"]})
-
-        # ── Brief auto-detection: switch chat → execute when user pastes a brief ──
-        # This is the main fix for "only sales_orchestrator responds" — when a user types
-        # a full campaign brief in chat mode, we auto-route to the multi-agent pipeline.
-        if not use_agents and _looks_like_brief(payload.message):
-            extracted = await _extract_brief_from_text(payload.message)
-            if extracted:
-                state.brief = extracted
-                state.mode = "execute"
-                use_agents = True
-                # Reset per-request agent state (not done above since was chat mode)
-                state.plan = None
-                state.visited = []
-                state.hop_depth = 0
-                # Pre-fill desired_outputs so the output-format gate doesn't fire
-                if not state.desired_outputs:
-                    state.desired_outputs = _auto_detect_outputs(payload.message)
-                # Don't show brief detected as content - just log
-# yield _sse_data({'type': 'content', 'content': '> **Brief detected** — dispatching specialist agents in Execute mode...\\n\\n'})
-
-        # C.5 §3: Validation gate - check before any agent dispatch
-        orchestrator = get_sales_orchestrator()
-        validation_output, should_dispatch = (
-            await orchestrator.validate_before_dispatch(state)
-        )
-
-        if not should_dispatch:
-            if validation_output.status == "FAILED":
-                yield _sse_data({'type': 'error', 'error': validation_output.summary})
-            elif validation_output.questions:
-                def question_to_dict(q):
-                    return q.model_dump(mode="json")
-
-                yield _sse_data({'type': 'question_card', 'questions': [question_to_dict(q) for q in validation_output.questions]})
-
-            update_session(state)
-            brief_data = state.brief.model_dump(mode="json") if state.brief else None
-            yield _sse_data({'type': 'session_updated', 'session_id': state.session_id, 'validation_status': state.validation_status, 'brief': brief_data})
-            yield _sse_data({'type': 'done'})
-            return
-
-        # Validation passed - proceed with agent dispatch
-        # D.2: Check for feedback in the message and extract rules
         feedback_extractor = get_feedback_extractor()
         memory_repo = get_memory_repo()
         profile_manager = get_profile_manager()
@@ -1449,15 +1302,8 @@ async def chat_stream(request: Request, payload: ChatRequest):
         if profile_manager.detect_frustration(profile, payload.message):
             await memory_repo.save_profile(profile)
 
-        # Process based on mode
-        if use_agents:
-            # Use multi-agent system
-            async for chunk in process_with_agents(state, payload.message):
-                yield chunk
-        else:
-            # Use simple LLM call
-            async for chunk in process_simple(state, payload.message):
-                yield chunk
+        async for chunk in process_with_agents(state, payload.message):
+            yield chunk
 
         # Day 5: Check if we need to create a checkpoint
         # This runs after agents complete, looking for quote/plan outputs
@@ -1664,7 +1510,7 @@ class WorkflowInteractionRequest(BaseModel):
 @limiter.limit("20/minute")
 async def answer_question(request: Request, payload: AnswerQuestionRequest):
     """
-    C.5 §2: Answer a question from the QuestionStack.
+    C.5 Â§2: Answer a question from the QuestionStack.
     Maps answer to brief field, re-validates, returns updated question list.
     """
     state = await get_session_or_404(payload.session_id)
@@ -1674,16 +1520,7 @@ async def answer_question(request: Request, payload: AnswerQuestionRequest):
 
     # Special case: desired_output question routes to state.desired_outputs, not the brief
     if payload.question_id == "desired_output":
-        answer_lower = payload.answer.lower()
-        outputs = []
-        if "pptx" in answer_lower or "powerpoint" in answer_lower or "slide" in answer_lower or "presentation" in answer_lower:
-            outputs.append("pptx")
-        if "figma" in answer_lower or "wireframe" in answer_lower or "design" in answer_lower or "ui" in answer_lower:
-            outputs.append("figma")
-        if "userflow" in answer_lower or "diagram" in answer_lower or "flow" in answer_lower or "mermaid" in answer_lower:
-            outputs.append("userflow")
-        if "quote" in answer_lower or "pricing" in answer_lower or "quotation" in answer_lower or "proposal" in answer_lower:
-            outputs.append("quote")
+        outputs = await orchestrator.extract_desired_outputs(payload.answer)
         if not outputs:
             outputs = ["pptx"]  # default fallback
         state.desired_outputs = outputs
@@ -1694,7 +1531,7 @@ async def answer_question(request: Request, payload: AnswerQuestionRequest):
             print(f"Warning: failed to persist session after desired_output answer: {exc}")
         return {
             "status": "ready",
-            "message": f"Got it — will generate: {', '.join(outputs)}. Send your next message to proceed.",
+            "message": f"Got it â€” will generate: {', '.join(outputs)}. Send your next message to proceed.",
             "questions": [],
             "validation_status": state.validation_status,
             "brief": state.brief.model_dump() if state.brief else None,
@@ -1736,7 +1573,7 @@ async def answer_question(request: Request, payload: AnswerQuestionRequest):
 @limiter.limit("20/minute")
 async def skip_question(request: Request, payload: SkipQuestionRequest):
     """
-    C.5 §6: Skip an optional question.
+    C.5 Â§6: Skip an optional question.
     Records the assumption as implicit approval.
     """
     state = await get_session_or_404(payload.session_id)
@@ -1779,7 +1616,7 @@ async def skip_question(request: Request, payload: SkipQuestionRequest):
 @app.post("/chat/answer_free_text")
 async def answer_free_text(request: ChatRequest):
     """
-    C.5 §5: Answer multiple questions with free text.
+    C.5 Â§5: Answer multiple questions with free text.
     The backend maps the free text to appropriate brief fields.
     """
     if not request.session_id:
@@ -1834,16 +1671,7 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
         orchestrator = get_sales_orchestrator()
 
         if payload.question_id == "desired_output":
-            answer_lower = payload.answer.lower()
-            outputs = []
-            if any(token in answer_lower for token in ["pptx", "powerpoint", "slide", "presentation"]):
-                outputs.append("pptx")
-            if any(token in answer_lower for token in ["figma", "wireframe", "design", "ui"]):
-                outputs.append("figma")
-            if any(token in answer_lower for token in ["userflow", "diagram", "flow", "mermaid"]):
-                outputs.append("userflow")
-            if any(token in answer_lower for token in ["quote", "pricing", "quotation", "proposal"]):
-                outputs.append("quote")
+            outputs = await orchestrator.extract_desired_outputs(payload.answer)
             if not outputs:
                 outputs = ["pptx"]
             state.desired_outputs = outputs
@@ -2290,3 +2118,4 @@ if __name__ == "__main__":
         port=port,
         reload=DEBUG,
     )
+

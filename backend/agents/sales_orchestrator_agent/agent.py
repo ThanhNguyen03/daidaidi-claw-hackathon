@@ -16,6 +16,7 @@ Legacy modules re-export from here for backward compatibility only.
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Optional
 
@@ -55,31 +56,285 @@ class Orchestrator:
             question_manager.restore_stack(state.question_stack)
         return question_manager
 
+    def _orchestrator_agent(self):
+        agent = get_registry().get("sales_orchestrator")
+        if agent is None:
+            raise RuntimeError("sales_orchestrator agent is not registered")
+        return agent
+
+    def _requirement_agent(self):
+        agent = get_registry().get("requirement_elicitation")
+        if agent is None:
+            raise RuntimeError("requirement_elicitation agent is not registered")
+        return agent
+
+    def _brief_has_substance(self, brief: Optional[Brief]) -> bool:
+        if not brief:
+            return False
+
+        return any(
+            getattr(brief, field, None)
+            for field in [
+                "industry",
+                "goal",
+                "target_audience",
+                "budget_vnd",
+                "timeline",
+                "specific_requirements",
+                "constraints",
+            ]
+        )
+
+    def _merge_brief(self, base: Optional[Brief], extracted: Brief) -> Brief:
+        base = base or Brief()
+        merged = base.model_dump(mode="python")
+        extracted_data = extracted.model_dump(mode="python")
+
+        for field, value in extracted_data.items():
+            if value in (None, "", [], {}):
+                continue
+            if field in {"specific_requirements", "constraints"}:
+                existing = list(merged.get(field) or [])
+                for item in value:
+                    if item not in existing:
+                        existing.append(item)
+                merged[field] = existing
+            else:
+                merged[field] = value
+
+        return Brief.model_validate(merged)
+
+    async def _classify_user_message(self, state: SalesCaseState) -> dict[str, str]:
+        """Use the LLM to decide whether a message is casual chat or a sales request."""
+        message = self._latest_user_message(state).strip()
+        if not message:
+            return {
+                "intent": "casual_chat",
+                "assistant_reply": "Hi, mình có thể giúp bạn bắt đầu một brief hoặc trả lời câu hỏi sales.",
+            }
+
+        orchestrator_agent = self._orchestrator_agent()
+        rag_context = await orchestrator_agent.build_required_skill_context(
+            f"Classify the latest user message for sales routing.\nMessage: {message}",
+            skill_top_k=1,
+            knowledge_top_k=2,
+        )
+        client = get_validation_service().client
+        context = []
+        if state.brief:
+            if self._brief_has_substance(state.brief):
+                context.append("The session already contains a real brief.")
+            elif state.brief.additional_context:
+                context.append("The session only has raw additional_context so far.")
+
+        prompt = f"""
+Classify the user's latest message for a sales assistant.
+
+Return JSON only with:
+{{
+  "intent": "casual_chat" | "sales_request",
+  "assistant_reply": "short friendly reply when intent is casual_chat, otherwise empty",
+  "reason": "brief explanation"
+}}
+
+Rules:
+- casual_chat: greeting, thanks, small talk, one-line non-sales message, or anything not asking for sales help.
+- sales_request: the user is asking for a brief, proposal, quote, deck, strategy, or providing project details.
+- If the message is ambiguous but looks like a sales request, choose sales_request.
+- Keep assistant_reply short, friendly, and useful. Do not mention internal routing.
+
+Relevant orchestrator skill/knowledge:
+{rag_context}
+
+Latest message:
+{message}
+
+Session context:
+{chr(10).join(context) if context else "none"}
+"""
+
+        try:
+            response = client.create_completion(
+                messages=[
+                    {"role": "system", "content": "You are a routing classifier for a sales assistant."},
+                    {"role": "user", "content": prompt},
+                ],
+                stream=False,
+                temperature=0.1,
+                max_tokens=300,
+            )
+            content = response.choices[0].message.content if response.choices else "{}"
+            if "```json" in content:
+                content = content.split("```json", 1)[1].split("```", 1)[0]
+            elif "```" in content:
+                content = content.split("```", 1)[1].split("```", 1)[0]
+            data = json.loads(content.strip() or "{}")
+            intent = str(data.get("intent", "sales_request")).strip()
+            if intent not in {"casual_chat", "sales_request"}:
+                intent = "sales_request"
+            return {
+                "intent": intent,
+                "assistant_reply": str(data.get("assistant_reply", "")).strip(),
+                "reason": str(data.get("reason", "")).strip(),
+            }
+        except Exception as exc:
+            print(f"Warning: message classification failed, defaulting to sales_request: {exc}")
+            return {
+                "intent": "sales_request",
+                "assistant_reply": "",
+                "reason": "classifier_error",
+            }
+
+    async def _extract_brief_from_message(self, message: str) -> Brief:
+        """Use the LLM to extract a structured brief from free-form user text."""
+        orchestrator_agent = self._orchestrator_agent()
+        rag_context = await orchestrator_agent.build_required_skill_context(
+            f"Extract a structured sales brief from this user message.\nMessage: {message}",
+            skill_top_k=1,
+            knowledge_top_k=3,
+        )
+        client = get_validation_service().client
+        system = (
+            "You are a brief parser for a sales AI system. "
+            "Extract structured campaign/sales brief data from the user message. "
+            "Return ONLY a JSON object with these optional fields:\n"
+            '{"industry": str|null, "goal": str|null, "target_audience": str|null, '
+            '"budget_vnd": int|null, "timeline": str|null, '
+            '"specific_requirements": [str], "constraints": [str], "additional_context": str|null}\n'
+            "If a field is absent, use null or []. No markdown, no extra text."
+        )
+
+        response = client.create_completion(
+            messages=[
+                {"role": "system", "content": system + "\n\n" + rag_context},
+                {"role": "user", "content": f"Parse this brief:\n{message}"},
+            ],
+            stream=False,
+            max_tokens=600,
+            temperature=0.1,
+        )
+
+        raw = response.choices[0].message.content.strip() if response.choices else "{}"
+        if "```" in raw:
+            raw = raw.split("```", 1)[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return Brief(additional_context=message[:1000])
+
+        return Brief(
+            industry=data.get("industry"),
+            goal=data.get("goal"),
+            target_audience=data.get("target_audience"),
+            budget_vnd=data.get("budget_vnd"),
+            timeline=data.get("timeline"),
+            specific_requirements=data.get("specific_requirements") or [],
+            constraints=data.get("constraints") or [],
+            additional_context=data.get("additional_context"),
+        )
+
+    async def _extract_desired_outputs(self, message: str) -> list[str]:
+        """Use the LLM to infer the requested output formats from user text."""
+        orchestrator_agent = self._orchestrator_agent()
+        rag_context = await orchestrator_agent.build_required_skill_context(
+            f"Infer requested deliverables from this user message.\nMessage: {message}",
+            skill_top_k=1,
+            knowledge_top_k=2,
+        )
+        client = get_validation_service().client
+        prompt = f"""
+Infer which deliverables the user wants from this message.
+
+Return JSON only in this shape:
+{{
+  "outputs": ["pptx" | "figma" | "userflow" | "quote"]
+}}
+
+Rules:
+- Include only outputs explicitly requested or clearly implied.
+- Use an empty array if no deliverable is requested.
+- Do not add any extra text.
+
+Message:
+{message}
+"""
+
+        try:
+            response = client.create_completion(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You extract requested deliverables from sales chat.\n\n"
+                        + rag_context,
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                stream=False,
+                temperature=0.1,
+                max_tokens=200,
+            )
+            content = response.choices[0].message.content if response.choices else "{}"
+            if "```json" in content:
+                content = content.split("```json", 1)[1].split("```", 1)[0]
+            elif "```" in content:
+                content = content.split("```", 1)[1].split("```", 1)[0]
+            data = json.loads(content.strip() or "{}")
+            outputs = []
+            for item in data.get("outputs", []):
+                item = str(item).strip().lower()
+                if item in {"pptx", "figma", "userflow", "quote"} and item not in outputs:
+                    outputs.append(item)
+            return outputs
+        except Exception as exc:
+            print(f"Warning: desired output extraction failed: {exc}")
+            return []
+
+    async def extract_desired_outputs(self, message: str) -> list[str]:
+        """Public wrapper for desired output inference."""
+        return await self._extract_desired_outputs(message)
+
     async def validate_before_dispatch(
         self, state: SalesCaseState
     ) -> tuple[AgentOutput, bool]:
         """Validate the brief before dispatching any agent."""
         question_manager = self._question_manager_for_state(state)
 
-        if not state.brief:
-            # Seed raw user text as context instead of inventing structure.
-            state.brief = Brief(additional_context=self._latest_user_message(state) or None)
-
-        if question_manager.stack.has_mandatory_unanswered():
-            state.validation_status = "PENDING"
-            questions = question_manager.stack.next_batch()
-            state.question_stack = question_manager.stack.items
+        classification = await self._classify_user_message(state)
+        if classification.get("intent") == "casual_chat":
+            state.validation_status = "READY"
             return (
                 AgentOutput(
                     agent="sales_orchestrator",
-                    status="NEEDS_INPUT",
-                    payload={"validation_status": "PENDING", "question_count": len(questions)},
-                    summary="Please answer the pending questions to proceed.",
-                    confidence=1.0,
-                    questions=questions,
+                    status="COMPLETE",
+                    payload={
+                        "intent": "casual_chat",
+                        "assistant_reply": classification.get("assistant_reply", ""),
+                        "reason": classification.get("reason", ""),
+                    },
+                    summary=classification.get(
+                        "assistant_reply",
+                        "Hi, mình có thể giúp bạn bắt đầu một brief hoặc trả lời câu hỏi sales.",
+                    ),
+                    confidence=0.9,
                 ),
                 False,
             )
+
+        if not self._brief_has_substance(state.brief):
+            # Seed raw user text as context instead of inventing structure.
+            state.brief = await self._extract_brief_from_message(
+                self._latest_user_message(state) or ""
+            )
+
+        if not state.desired_outputs:
+            inferred_outputs = await self._extract_desired_outputs(
+                self._latest_user_message(state) or ""
+            )
+            if inferred_outputs:
+                state.desired_outputs = inferred_outputs
 
         validation_service = get_validation_service()
         validation_report = await validation_service.validate(
@@ -106,47 +361,29 @@ class Orchestrator:
             )
 
         if validation_report.status == "PENDING":
-            from agents.requirement_elicitation_agent.agent import get_requirement_elicitation_agent
-
-            elicitor = get_requirement_elicitation_agent()
-            try:
-                questions = await elicitor.generate_questions(
-                    state,
-                    validation_missing=validation_report.missing_required,
-                    validation_ambiguities=validation_report.ambiguities,
-                )
-            except Exception as exc:
-                print(f"Warning: requirement elicitation failed without fallback questions: {exc}")
-                questions = []
-
-            if not questions:
-                return (
-                    AgentOutput(
-                        agent="sales_orchestrator",
-                        status="NEEDS_INPUT",
-                        payload={
-                            "validation_status": "PENDING",
-                            "missing_required": validation_report.missing_required,
-                            "ambiguities": [amb.model_dump() for amb in validation_report.ambiguities],
-                        },
-                        summary="Need more context before proceeding.",
-                        confidence=0.7,
-                        questions=[],
-                    ),
-                    False,
-                )
-
-            question_manager.stack.push(questions)
-            state.question_stack = question_manager.stack.items
-            batch = question_manager.stack.next_batch()
+            requirement_agent = self._requirement_agent()
+            questions = await requirement_agent.generate_questions(
+                state,
+                validation_missing=validation_report.missing_required,
+                validation_ambiguities=validation_report.ambiguities,
+            )
+            if questions:
+                question_manager.stack.push(questions)
+                state.question_stack = question_manager.stack.items
+            else:
+                state.question_stack = question_manager.stack.items
             return (
                 AgentOutput(
                     agent="sales_orchestrator",
                     status="NEEDS_INPUT",
-                    payload={"validation_status": "PENDING"},
-                    summary="Please answer the following questions before proceeding.",
-                    confidence=0.8,
-                    questions=batch,
+                    payload={
+                        "validation_status": "PENDING",
+                        "missing_required": validation_report.missing_required,
+                        "ambiguities": [amb.model_dump() for amb in validation_report.ambiguities],
+                    },
+                    summary="Need a bit more context before dispatching.",
+                    confidence=0.85,
+                    questions=questions,
                 ),
                 False,
             )
@@ -169,9 +406,8 @@ class Orchestrator:
         """Apply user answers to the brief and revalidate."""
         question_manager = self._question_manager_for_state(state)
         if len(answers) == 1 and "free_text" in answers:
-            state.brief = question_manager.map_free_text_answer(
-                answers["free_text"], state.brief or Brief()
-            )
+            extracted = await self._extract_brief_from_message(answers["free_text"])
+            state.brief = self._merge_brief(state.brief, extracted)
         else:
             state.brief = question_manager.map_answers(answers, state.brief or Brief())
 
@@ -292,7 +528,6 @@ class Orchestrator:
         registry = get_registry()
         tasks: list[AgentTask] = []
         requested_outputs = set(state.desired_outputs or [])
-        user_text = self._latest_user_message(state).lower()
 
         def _add(name: str, description: str, group: int, critical: bool = False):
             if registry.get(name) and not any(task.agent_name == name for task in tasks):
@@ -330,26 +565,7 @@ class Orchestrator:
             group=2,
         )
 
-        # Add artifact-producing agents when the request indicates output work.
-        wants_artifacts = bool(requested_outputs) or any(
-            keyword in user_text
-            for keyword in [
-                "proposal",
-                "presentation",
-                "pptx",
-                "slide",
-                "deck",
-                "figma",
-                "wireframe",
-                "diagram",
-                "userflow",
-                "quotation",
-                "quote",
-                "pricing",
-            ]
-        )
-
-        if wants_artifacts or not requested_outputs:
+        if requested_outputs:
             _add(
                 "design",
                 "Wireframe and slide outline - deck structure, section order, visual hints",

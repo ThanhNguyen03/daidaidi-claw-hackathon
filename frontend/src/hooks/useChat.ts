@@ -334,6 +334,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           {
             const questionCardData = data.questions as Question[];
             if (questionCardData) {
+              setIsThinking(false);
               setPendingQuestions(questionCardData);
             }
           }

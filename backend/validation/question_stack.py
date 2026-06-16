@@ -96,54 +96,6 @@ class QuestionManager:
         return brief
 
     def map_free_text_answer(self, free_text: str, brief: Brief) -> Brief:
-        free_text_lower = free_text.lower()
-
-        industries = [
-            "f&b",
-            "food",
-            " beverage",
-            "retail",
-            "tech",
-            "technology",
-            "healthcare",
-            "education",
-            "finance",
-            "manufacturing",
-        ]
-        for ind in industries:
-            if ind in free_text_lower:
-                brief.industry = ind.title() if ind != "f&b" else "F&B"
-                break
-
-        budget_match = re.search(r"(\d+)\s*(triệu|million|billion|tỷ)?", free_text_lower)
-        if budget_match:
-            amount = int(budget_match.group(1))
-            unit = budget_match.group(2) or "triệu"
-            if unit in ["triệu", "million"]:
-                brief.budget_vnd = amount * 1_000_000
-            elif unit in ["billion", "tỷ"]:
-                brief.budget_vnd = amount * 1_000_000_000
-
-        if "launch" in free_text_lower or "ra mắt" in free_text_lower:
-            brief.goal = "product launch"
-        elif "tăng trưởng" in free_text_lower or "growth" in free_text_lower:
-            brief.goal = "growth"
-
-        for question in self.stack.items:
-            if question.answered:
-                continue
-
-            target_field = question.target_field
-            if target_field == "industry" and brief.industry:
-                question.answer = brief.industry
-                question.answered = True
-            elif target_field == "budget_vnd" and brief.budget_vnd:
-                question.answer = str(brief.budget_vnd)
-                question.answered = True
-            elif target_field == "goal" and brief.goal:
-                question.answer = brief.goal
-                question.answered = True
-
         return brief
 
     def _convert_and_set_field(self, brief: Brief, field: str, value: str) -> Brief:
