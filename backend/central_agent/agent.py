@@ -1,13 +1,16 @@
 """
 Central Agent
 =============
-Single central intelligence that:
-1. Classifies user intent (casual chat vs sales task)
-2. Elicits requirements when brief is incomplete
-3. Plans and dispatches to specialized skills
-4. Synthesizes skill outputs into a coherent response
+Single entry point that:
+1. Parses the user message and extracts brief fields
+2. Picks relevant skills based on message content (keyword + LLM)
+3. Executes all chosen skills in parallel
+4. Streams a synthesized final response
 
-Replaces the multi-agent orchestration with a cleaner skill-based model.
+Design principles:
+- NEVER block on missing info -- always execute with what we have
+- If planning LLM call fails, fall back to running all core skills
+- Skills run concurrently; synthesis streams tokens as they arrive
 """
 
 from __future__ import annotations
@@ -16,7 +19,6 @@ import asyncio
 import json
 import os
 import re
-import uuid
 from datetime import datetime
 from typing import Any, AsyncGenerator, Optional
 
@@ -47,83 +49,93 @@ _CENTRAL_SKILL = _load_central_skill()
 
 
 # ---------------------------------------------------------------------------
-# Planning prompt helper
+# Planning prompt
 # ---------------------------------------------------------------------------
 
-_PLANNING_SYSTEM = _CENTRAL_SKILL + """
+_PLANNING_SYSTEM = """You are the AdtimaBox Sales AI planning engine.
+Given a user message, return a JSON object with:
+1. Extracted brief fields (use null for anything not mentioned)
+2. Which skills to call and what task to give each
 
----
+Available skills:
+- market_strategy: market analysis, campaign ideas, audience insight, Zalo strategy, case studies
+- product_solution: MiniApp architecture, pricing/quote, CShub packages, integration design, userflow
+- compliance: Zalo policy, PDPL, advertising law, risk flags
+- client_simulator: buyer objections, competitor defense, pitch coaching
+- design: wireframes, UI screens, Mermaid diagrams
 
-## Output Format
+Rules:
+- ALWAYS set ready_to_execute: true -- never block on missing info
+- For any sales brief or campaign request, ALWAYS include at least market_strategy and product_solution
+- Include compliance if campaign involves data collection or advertising
+- Group skills that can run in parallel in the same sub-array
+- task string: be specific and include all context from the message so skill can run without extra info
 
-Return ONLY valid JSON (no markdown wrapping). Choose ONE of these schemas:
-
-### If the message is casual chat or a greeting:
+Return ONLY valid JSON, no markdown fences:
 {
-  "type": "casual_chat",
-  "response": "<warm, natural response in user's language>"
-}
-
-### If information is missing before skills can execute:
-{
-  "type": "sales_task",
   "brief_update": {
     "industry": null,
     "goal": null,
     "target_audience": null,
     "budget_vnd": null,
     "timeline": null,
-    "specific_requirements": [],
-    "constraints": [],
     "additional_context": null
-  },
-  "ready_to_execute": false,
-  "questions": [
-    {
-      "id": "q_<field>",
-      "text": "<user-friendly question in user's language>",
-      "target_field": "<brief field name>",
-      "is_mandatory": true
-    }
-  ]
-}
-
-### If the brief is complete enough to execute skills:
-{
-  "type": "sales_task",
-  "brief_update": {
-    "industry": "<if extracted from message>",
-    "goal": "<if extracted>",
-    "target_audience": "<if extracted>",
-    "budget_vnd": <number or null>,
-    "timeline": "<if extracted>",
-    "specific_requirements": [],
-    "constraints": [],
-    "additional_context": "<if extracted>"
   },
   "ready_to_execute": true,
   "skill_plan": [
     [
-      {"skill": "<skill_name>", "task": "<specific task description for this skill>"}
-    ],
-    [
-      {"skill": "<skill_name>", "task": "<specific task description>"}
+      {"skill": "market_strategy", "task": "<detailed task>"},
+      {"skill": "product_solution", "task": "<detailed task>"},
+      {"skill": "compliance", "task": "<detailed task>"}
     ]
   ]
-}
+}"""
 
-Rules:
-- brief_update: only include fields that were mentioned in the current message; use null for others
-- questions: max 3, only the most blocking ones, in user's language
-- skill_plan: group parallel skills in same sub-array; skills needing prior output in later groups
-- task: be specific — include industry, goal, context so skill can execute without additional context
-"""
+
+# ---------------------------------------------------------------------------
+# Keyword-based fallback skill picker
+# ---------------------------------------------------------------------------
+
+def _pick_skills_from_message(message: str) -> list[dict[str, str]]:
+    """Fallback: pick skills by keyword scan without LLM."""
+    msg = message.lower()
+    skills = []
+
+    # Always include market_strategy for any sales/campaign mention
+    if any(w in msg for w in ["brief", "campaign", "chien dich", "chien luoc", "market", "strategy",
+                               "idea", "y tuong", "zalo", "brand", "audience", "ta:", "target"]):
+        skills.append({"skill": "market_strategy", "task": f"Analyze and develop market strategy for this request: {message[:500]}"})
+
+    # Product solution for pricing/solution/proposal/userflow mentions
+    if any(w in msg for w in ["proposal", "bao gia", "bao gi", "price", "gia", "quote", "solution",
+                               "product", "miniapp", "mini app", "userflow", "flow", "package"]):
+        skills.append({"skill": "product_solution", "task": f"Develop product solution, pricing, and userflow for: {message[:500]}"})
+
+    # Compliance for data/privacy/advertising mentions
+    if any(w in msg for w in ["data", "collect", "thu thap", "pdpl", "policy", "compliance",
+                               "legal", "advertising", "quang cao", "zalo oa"]):
+        skills.append({"skill": "compliance", "task": f"Check compliance requirements for: {message[:500]}"})
+
+    # Design for wireframe/UI/screen mentions
+    if any(w in msg for w in ["wireframe", "design", "ui", "screen", "man hinh", "giao dien", "figma"]):
+        skills.append({"skill": "design", "task": f"Design wireframes/UI for: {message[:500]}"})
+
+    # Client simulator for objection/competitor mentions
+    if any(w in msg for w in ["objection", "competitor", "pitch", "client sim", "simulate"]):
+        skills.append({"skill": "client_simulator", "task": f"Simulate client perspective for: {message[:500]}"})
+
+    # Default: if nothing matched, run the core three
+    if not skills:
+        skills = [
+            {"skill": "market_strategy", "task": f"Analyze and provide market insights for: {message[:500]}"},
+            {"skill": "product_solution", "task": f"Develop solution and pricing for: {message[:500]}"},
+        ]
+
+    return skills
 
 
 class CentralAgent:
-    """
-    Central agent that coordinates all skill dispatch and conversation management.
-    """
+    """Central agent: classify intent, extract brief, dispatch skills, synthesize."""
 
     def __init__(self):
         self.name = "central_agent"
@@ -140,87 +152,47 @@ class CentralAgent:
     async def run(
         self, state: SalesCaseState, message: str
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """
-        Process a user message and yield SSE event dicts.
-        Caller wraps events in _sse_data() before sending to client.
-        """
-        # Step 1: Plan (single LLM call)
-        try:
-            plan = await self._plan(state, message)
-        except Exception as e:
-            print(f"[CentralAgent] Planning failed: {e}")
-            yield {"type": "content", "content": "Xin lỗi, đã xảy ra lỗi. Bạn vui lòng thử lại."}
+        """Process a user message. Always executes skills -- never blocks on missing info."""
+
+        # Step 1: Quick check -- is this just a greeting/casual chat?
+        if self._is_casual(message):
+            response = await self._casual_reply(message)
+            yield {"type": "content", "content": response}
+            state.messages.append({
+                "role": "assistant", "content": response,
+                "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+            })
             yield {"type": "done"}
             return
 
-        # Step 2: Handle casual chat
-        if plan.get("type") == "casual_chat":
-            response = plan.get("response", "")
-            if response:
-                yield {"type": "content", "content": response}
-                state.messages.append({
-                    "role": "assistant",
-                    "content": response,
-                    "agent": "central_agent",
-                    "timestamp": datetime.now().isoformat(),
-                })
-            yield {"type": "done"}
-            return
-
-        # Step 3: Update brief from extracted info
+        # Step 2: Plan (LLM extracts brief + picks skills) with fallback
+        plan = await self._plan_with_fallback(state, message)
         self._apply_brief_update(state, plan.get("brief_update") or {})
 
-        # Step 4: Handle needs-questions
-        if not plan.get("ready_to_execute"):
-            questions = plan.get("questions") or []
-            if questions:
-                # Store questions in state
-                q_objects = []
-                for q_data in questions:
-                    q = Question(
-                        id=q_data.get("id", f"q_{uuid.uuid4().hex[:6]}"),
-                        text=q_data.get("text", ""),
-                        target_field=q_data.get("target_field", "additional_context"),
-                        is_mandatory=q_data.get("is_mandatory", True),
-                        priority=1,
-                    )
-                    q_objects.append(q)
-                state.question_stack = q_objects
-                yield {
-                    "type": "question_card",
-                    "questions": [q.model_dump() for q in q_objects],
-                }
-            else:
-                yield {
-                    "type": "content",
-                    "content": "Mình cần thêm thông tin để hỗ trợ bạn tốt hơn. Bạn có thể chia sẻ thêm về yêu cầu không?",
-                }
-            yield {"type": "done"}
-            return
-
-        # Step 5: Execute skills
-        skill_plan = plan.get("skill_plan") or []
+        skill_plan: list[list[dict]] = plan.get("skill_plan") or []
         if not skill_plan:
-            yield {"type": "content", "content": "Mình chưa xác định được yêu cầu cụ thể. Bạn có thể mô tả chi tiết hơn?"}
-            yield {"type": "done"}
-            return
+            # Hard fallback -- keyword-based skill selection
+            skill_plan = [_pick_skills_from_message(message)]
 
+        # Step 3: Execute all skill groups
         skill_registry = get_skill_registry()
         all_outputs: dict[str, SkillOutput] = {}
 
-        for group_idx, group in enumerate(skill_plan):
+        for group in skill_plan:
             if not group:
                 continue
-            tasks = []
+
+            coroutines = []
+            names = []
             for item in group:
-                skill_name = item.get("skill")
-                task_desc = item.get("task", "")
+                skill_name = item.get("skill", "")
+                task_desc = item.get("task", message)
                 skill = skill_registry.get(skill_name)
                 if not skill:
-                    print(f"[CentralAgent] Skill not found: {skill_name}")
+                    print(f"[CentralAgent] Skill not found: {skill_name}, skipping")
                     continue
-
-                context = SkillContext(
+                names.append(skill_name)
+                ctx = SkillContext(
                     task=task_desc,
                     brief=state.brief,
                     messages=state.messages[-8:],
@@ -231,44 +203,47 @@ class CentralAgent:
                     constraints=state.constraints,
                     session_id=state.session_id,
                 )
-                tasks.append((skill_name, skill.execute(context)))
+                coroutines.append(skill.execute(ctx))
 
-            if not tasks:
+            if not names:
                 continue
 
-            # Emit status — thinking
-            for skill_name, _ in tasks:
-                yield {"type": "agent_status", "agent": skill_name, "status": "thinking"}
+            for n in names:
+                yield {"type": "agent_status", "agent": n, "status": "thinking"}
 
-            results = await asyncio.gather(*[t for _, t in tasks], return_exceptions=True)
+            results = await asyncio.gather(*coroutines, return_exceptions=True)
 
-            for (skill_name, _), result in zip(tasks, results):
+            for skill_name, result in zip(names, results):
                 if isinstance(result, Exception):
-                    print(f"[CentralAgent] Skill {skill_name} raised: {result}")
-                    yield {"type": "agent_status", "agent": skill_name, "status": "failed"}
+                    print(f"[CentralAgent] Skill {skill_name} error: {result}")
+                    yield {"type": "agent_status", "agent": skill_name, "status": "failed",
+                           "message": str(result)}
                     continue
 
-                skill_out: SkillOutput = result
-                all_outputs[skill_name] = skill_out
+                out: SkillOutput = result
+                all_outputs[skill_name] = out
 
-                # Store in state.outputs as AgentOutput (for checkpoint compat)
+                # Store as AgentOutput for checkpoint compatibility
                 state.outputs[skill_name] = AgentOutput(
                     agent=skill_name,
-                    status="COMPLETE" if skill_out.status == "COMPLETE" else "FAILED",
-                    payload=skill_out.payload,
-                    summary=skill_out.summary,
-                    confidence=skill_out.confidence,
+                    status="COMPLETE" if out.status == "COMPLETE" else "FAILED",
+                    payload=out.payload,
+                    summary=out.summary,
+                    confidence=out.confidence,
                 )
 
                 yield {"type": "agent_status", "agent": skill_name, "status": "completed"}
 
-                if skill_out.content:
-                    yield {"type": "agent_message", "agent": skill_name, "content": skill_out.content}
+                # Stream skill content immediately so user sees progress
+                if out.content:
+                    yield {"type": "agent_message", "agent": skill_name, "content": out.content}
 
-        # Step 6: Synthesize final response
+        # Step 4: Synthesize final response
         if all_outputs:
             async for event in self._synthesize(state, message, all_outputs):
                 yield event
+        else:
+            yield {"type": "content", "content": "Xin loi, cac skill khong tra ve ket qua. Vui long thu lai."}
 
         yield {"type": "done"}
 
@@ -276,34 +251,41 @@ class CentralAgent:
     # Planning
     # ------------------------------------------------------------------
 
+    async def _plan_with_fallback(self, state: SalesCaseState, message: str) -> dict[str, Any]:
+        """Call planning LLM. On any failure, return a keyword-based fallback plan."""
+        try:
+            return await self._plan(state, message)
+        except Exception as e:
+            print(f"[CentralAgent] Planning LLM failed ({e}), using keyword fallback")
+            return {
+                "brief_update": {},
+                "ready_to_execute": True,
+                "skill_plan": [_pick_skills_from_message(message)],
+            }
+
     async def _plan(self, state: SalesCaseState, message: str) -> dict[str, Any]:
-        """Single LLM call: classify → extract → plan skills."""
+        """Single LLM call: extract brief fields + pick skills."""
         from llm.greennode import get_llm_client
 
-        client = get_llm_client("sales_orchestrator")
+        client = get_llm_client("central_agent")
 
         brief_block = self._format_brief(state.brief)
-        history_block = self._format_history(state.messages[-8:])
+        history_block = self._format_history(state.messages[-4:])
 
         user_prompt = ""
         if history_block:
             user_prompt += f"## Conversation History\n{history_block}\n\n"
-        if brief_block:
+        if brief_block and brief_block != "No brief yet.":
             user_prompt += f"## Current Brief\n{brief_block}\n\n"
-        if state.question_stack:
-            answered = [q for q in state.question_stack if q.answered]
-            if answered:
-                ans_block = "\n".join(f"- {q.target_field}: {q.answer}" for q in answered)
-                user_prompt += f"## Answered Questions\n{ans_block}\n\n"
-        user_prompt += f"## User Message\n{message}\n\nReturn JSON planning decision."
+        user_prompt += f"## User Message\n{message}\n\nReturn JSON planning decision (ready_to_execute must be true)."
 
         response = client.create_completion(
             messages=[
                 {"role": "system", "content": _PLANNING_SYSTEM},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.3,
-            max_tokens=1500,
+            temperature=0.2,
+            max_tokens=1200,
             stream=False,
         )
 
@@ -311,12 +293,13 @@ class CentralAgent:
         raw = strip_think_blocks(raw)
         raw = extract_json_block(raw)
 
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as e:
-            print(f"[CentralAgent] JSON parse failed: {e}\nRaw: {raw[:300]}")
-            # Fallback: treat as casual chat
-            return {"type": "casual_chat", "response": raw[:500] or "Mình hiểu yêu cầu của bạn. Bạn có thể cung cấp thêm thông tin về chiến dịch không?"}
+        result = json.loads(raw)
+        # Safety: always force ready_to_execute = true
+        result["ready_to_execute"] = True
+        # Safety: ensure skill_plan exists
+        if not result.get("skill_plan"):
+            result["skill_plan"] = [_pick_skills_from_message(message)]
+        return result
 
     # ------------------------------------------------------------------
     # Synthesis
@@ -332,37 +315,46 @@ class CentralAgent:
         from llm.greennode import get_llm_client
         from main import _ThinkFilter
 
-        if not skill_outputs:
-            return
-
-        outputs_block = ""
-        for skill_name, out in skill_outputs.items():
-            if out.content:
-                outputs_block += f"\n\n### {skill_name}\n{out.content}"
-
+        outputs_block = "\n\n".join(
+            f"### {name}\n{out.content}"
+            for name, out in skill_outputs.items()
+            if out.content
+        )
         if not outputs_block.strip():
             return
 
-        system = """You are the AdtimaBox Sales Agent synthesizer.
-Given the outputs from specialized skills, create a single coherent, well-structured response.
-- Use markdown with headers and bullet points
-- Match the user's language (Vietnamese if they wrote in Vietnamese)
-- Highlight key insights, recommendations, and next steps
-- Be concise but comprehensive — no padding, no filler text
-- Do not mention skill names or internal pipeline details"""
-
-        user_msg = f"## Original Request\n{original_message}\n\n## Skill Outputs{outputs_block}\n\nSynthesize into a single comprehensive response."
-
-        client = get_llm_client("sales_orchestrator")
-        stream = client.create_completion(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_msg},
-            ],
-            temperature=0.6,
-            max_tokens=3000,
-            stream=True,
+        system = (
+            "You are the AdtimaBox Sales Agent synthesizer. "
+            "Given outputs from specialist skills, write ONE coherent, comprehensive response. "
+            "Use markdown (headers, bullet points). Match user's language (Vietnamese if they wrote in Vietnamese). "
+            "Highlight key insights, recommendations, pricing, and next steps. "
+            "Do NOT mention skill names or internal pipeline details. Be thorough but avoid filler."
         )
+
+        user_msg = (
+            f"## Original Request\n{original_message}\n\n"
+            f"## Specialist Outputs\n{outputs_block}\n\n"
+            "Synthesize into a single comprehensive response for the user."
+        )
+
+        client = get_llm_client("central_agent")
+        try:
+            stream = client.create_completion(
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_msg},
+                ],
+                temperature=0.5,
+                max_tokens=4000,
+                stream=True,
+            )
+        except Exception as e:
+            print(f"[CentralAgent] Synthesis stream failed: {e}")
+            # Fallback: emit skill outputs directly
+            for name, out in skill_outputs.items():
+                if out.content:
+                    yield {"type": "content", "content": f"\n\n## {name.replace('_', ' ').title()}\n{out.content}"}
+            return
 
         tf = _ThinkFilter()
         accumulated = ""
@@ -393,86 +385,73 @@ Given the outputs from specialized skills, create a single coherent, well-struct
             })
 
     # ------------------------------------------------------------------
-    # Validation response handling (for /chat/answer endpoint)
+    # Casual chat
+    # ------------------------------------------------------------------
+
+    _CASUAL_PATTERNS = re.compile(
+        r"^(hi|hello|hey|xin chao|chao|chao ban|ok|okay|cam on|thank|thanks|"
+        r"good morning|good afternoon|good evening|buoi sang|buoi chieu|buoi toi)[\s!.?]*$",
+        re.IGNORECASE,
+    )
+
+    def _is_casual(self, message: str) -> bool:
+        stripped = message.strip()
+        return bool(self._CASUAL_PATTERNS.match(stripped)) and len(stripped) < 40
+
+    async def _casual_reply(self, message: str) -> str:
+        return (
+            "Xin chao! Minh la AdtimaBox Sales AI. "
+            "Ban co the chia se brief hoac yeu cau cua ban, minh se phan tich va de xuat giai phap phu hop."
+        )
+
+    # ------------------------------------------------------------------
+    # Compat endpoints (for /chat/answer, /chat/skip_question)
     # ------------------------------------------------------------------
 
     async def handle_validation_response(
         self, state: SalesCaseState, answers: dict[str, str]
     ) -> AgentOutput:
-        """Map user answers back to brief fields and clear answered questions."""
         if not state.brief:
             state.brief = Brief()
-
         for q in state.question_stack:
             if q.id in answers and answers[q.id]:
                 q.mark_answered(answers[q.id])
                 self._apply_field(state.brief, q.target_field, answers[q.id])
-
-        # Handle free_text: use LLM to map to brief
         free_text = answers.get("free_text")
         if free_text:
             self._apply_brief_update(state, await self._extract_brief_from_text(state, free_text))
-
-        # Check if all mandatory questions answered
-        unanswered_mandatory = [
-            q for q in state.question_stack
-            if q.is_mandatory and not q.answered
-        ]
-        if unanswered_mandatory:
-            state.validation_status = "PENDING"
-            return AgentOutput(
-                agent="central_agent",
-                status="NEEDS_INPUT",
-                payload={},
-                summary=f"{len(unanswered_mandatory)} question(s) still pending",
-                confidence=0.5,
-                questions=unanswered_mandatory,
-            )
-
         state.validation_status = "READY"
         state.question_stack = []
         return AgentOutput(
-            agent="central_agent",
-            status="COMPLETE",
-            payload={},
-            summary="All questions answered. Ready to proceed.",
-            confidence=0.9,
-            questions=[],
+            agent="central_agent", status="COMPLETE", payload={},
+            summary="Ready to proceed.", confidence=0.9, questions=[],
         )
 
     async def extract_desired_outputs(self, answer: str) -> list[str]:
-        """Extract desired output types from user answer."""
-        answer_lower = answer.lower()
+        lower = answer.lower()
         outputs = []
-        if any(w in answer_lower for w in ["pptx", "powerpoint", "slide", "presentation", "deck"]):
+        if any(w in lower for w in ["pptx", "powerpoint", "slide", "deck"]):
             outputs.append("pptx")
-        if any(w in answer_lower for w in ["figma", "design", "ui", "wireframe", "wire"]):
+        if any(w in lower for w in ["figma", "wireframe", "wire", "ui"]):
             outputs.append("figma")
-        if any(w in answer_lower for w in ["flow", "diagram", "mermaid", "userflow", "user flow"]):
+        if any(w in lower for w in ["flow", "diagram", "mermaid", "userflow"]):
             outputs.append("userflow")
-        if any(w in answer_lower for w in ["quote", "pricing", "price", "cost", "budget", "quotation", "báo giá"]):
+        if any(w in lower for w in ["quote", "pricing", "price", "cost", "bao gia"]):
             outputs.append("quote")
         return outputs or ["pptx"]
 
     async def validate_before_dispatch(self, state: SalesCaseState):
-        """Lightweight validation check (for skip_question endpoint compat)."""
-        has_industry = bool(state.brief and state.brief.industry)
-        has_goal = bool(state.brief and state.brief.goal)
-        mandatory_unanswered = [
-            q for q in state.question_stack if q.is_mandatory and not q.answered
-        ]
-        should_dispatch = has_industry and has_goal and not mandatory_unanswered
-        if should_dispatch:
-            state.validation_status = "READY"
+        has_brief = bool(state.brief and (state.brief.industry or state.brief.goal))
         output = AgentOutput(
             agent="central_agent",
-            status="COMPLETE" if should_dispatch else "NEEDS_INPUT",
+            status="COMPLETE",
             payload={},
-            summary="Ready" if should_dispatch else "Needs more information",
-            confidence=0.9 if should_dispatch else 0.5,
-            questions=state.question_stack if not should_dispatch else [],
+            summary="Ready",
+            confidence=0.9,
+            questions=[],
         )
-        return output, should_dispatch
+        state.validation_status = "READY"
+        return output, True
 
     # ------------------------------------------------------------------
     # Helpers
@@ -483,10 +462,9 @@ Given the outputs from specialized skills, create a single coherent, well-struct
             return
         if not state.brief:
             state.brief = Brief()
-        b = state.brief
         for field, value in brief_update.items():
             if value is not None:
-                self._apply_field(b, field, value)
+                self._apply_field(state.brief, field, value)
 
     @staticmethod
     def _apply_field(brief: Brief, field: str, value: Any) -> None:
@@ -506,32 +484,25 @@ Given the outputs from specialized skills, create a single coherent, well-struct
         elif field == "timeline" and not brief.timeline:
             brief.timeline = str(value)
         elif field == "additional_context":
-            brief.additional_context = (brief.additional_context or "") + " " + str(value)
+            brief.additional_context = ((brief.additional_context or "") + " " + str(value)).strip()
         elif field == "specific_requirements" and isinstance(value, list):
             brief.specific_requirements = list(brief.specific_requirements or []) + value
         elif field == "constraints" and isinstance(value, list):
             brief.constraints = list(brief.constraints or []) + value
 
     async def _extract_brief_from_text(self, state: SalesCaseState, text: str) -> dict:
-        """Use LLM to extract brief fields from free text."""
         from llm.greennode import get_llm_client
-
-        client = get_llm_client("sales_orchestrator")
-        brief_block = self._format_brief(state.brief)
-
-        response = client.create_completion(
-            messages=[
-                {"role": "system", "content": "Extract brief fields from text. Return JSON only with keys: industry, goal, target_audience, budget_vnd (number or null), timeline, specific_requirements (array), constraints (array), additional_context."},
-                {"role": "user", "content": f"Current brief:\n{brief_block}\n\nNew text:\n{text}\n\nReturn JSON with only newly mentioned fields."},
-            ],
-            temperature=0.1,
-            max_tokens=500,
-            stream=False,
-        )
-        raw = strip_think_blocks(response.choices[0].message.content or "{}")
-        raw = extract_json_block(raw)
+        client = get_llm_client("central_agent")
         try:
-            return json.loads(raw)
+            response = client.create_completion(
+                messages=[
+                    {"role": "system", "content": "Extract brief fields from text. Return JSON only: industry, goal, target_audience, budget_vnd (number|null), timeline, additional_context."},
+                    {"role": "user", "content": text},
+                ],
+                temperature=0.1, max_tokens=300, stream=False,
+            )
+            raw = strip_think_blocks(response.choices[0].message.content or "{}")
+            return json.loads(extract_json_block(raw))
         except Exception:
             return {}
 
@@ -540,26 +511,23 @@ Given the outputs from specialized skills, create a single coherent, well-struct
         if not brief:
             return "No brief yet."
         parts = []
-        if brief.industry:
-            parts.append(f"Industry: {brief.industry}")
-        if brief.goal:
-            parts.append(f"Goal: {brief.goal}")
-        if brief.target_audience:
-            parts.append(f"Audience: {brief.target_audience}")
+        for label, val in [
+            ("Industry", brief.industry), ("Goal", brief.goal),
+            ("Audience", brief.target_audience), ("Timeline", brief.timeline),
+            ("Context", brief.additional_context),
+        ]:
+            if val:
+                parts.append(f"{label}: {val}")
         if brief.budget_vnd:
             parts.append(f"Budget: {brief.budget_vnd:,} VND")
-        if brief.timeline:
-            parts.append(f"Timeline: {brief.timeline}")
-        if brief.additional_context:
-            parts.append(f"Context: {brief.additional_context}")
         return "\n".join(parts) if parts else "No brief yet."
 
     @staticmethod
     def _format_history(messages: list[dict]) -> str:
         lines = []
-        for m in messages[-6:]:
+        for m in messages[-4:]:
             role = m.get("role", "")
-            content = m.get("content", "")[:200]
+            content = (m.get("content") or "")[:200]
             if role and content:
                 lines.append(f"{role.upper()}: {content}")
         return "\n".join(lines)

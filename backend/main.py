@@ -782,7 +782,7 @@ async def process_with_central_agent(
 # Simple LLM Processing (Day 1 fallback)
 # =============================================================================
 
-ORCHESTRATOR_SYSTEM_PROMPT = """You are a Sales AI Assistant Ã¢â‚¬â€  a knowledgeable advisor for sales teams.
+ORCHESTRATOR_SYSTEM_PROMPT = """You are a Sales AI Assistant --  a knowledgeable advisor for sales teams.
 
 ## Your Role
 
@@ -808,7 +808,7 @@ comprehensive, direct response with only grounded information.
 
 ## Response Guidelines
 
-- Be helpful, professional, and thorough Ã¢â‚¬â€  give real substance, not placeholders
+- Be helpful, professional, and thorough --  give real substance, not placeholders
 - Respond in the user's language (Vietnamese if they write in Vietnamese)
 - Use markdown headers and bullet points for readability
 - Never promise future actions you cannot take in this turn
