@@ -1098,32 +1098,33 @@ async def chat_stream(request: Request, payload: ChatRequest):
             memory_repo = get_memory_repo()
             profile_manager = get_profile_manager()
 
-            # Check if message contains feedback
-            if feedback_extractor.is_feedback_message(payload.message):
-                rule = feedback_extractor.extract(
-                    payload.message,
-                    {"salesperson_id": state.salesperson_id}
-                )
-                if rule:
-                    # Save the feedback rule
-                    await memory_repo.save_feedback_rule(rule)
+            # Check if message contains feedback (non-critical, swallow errors)
+            try:
+                if feedback_extractor.is_feedback_message(payload.message):
+                    rule = feedback_extractor.extract(
+                        payload.message,
+                        {"salesperson_id": state.salesperson_id}
+                    )
+                    if rule:
+                        await memory_repo.save_feedback_rule(rule)
+                        profile = await memory_repo.load_profile(state.salesperson_id)
+                        if not profile:
+                            profile = profile_manager.create_profile(state.salesperson_id)
+                        profile = profile_manager.add_constraint(profile, rule.rule_id)
+                        await memory_repo.save_profile(profile)
+                        yield _sse_data({'type': 'constraint_added', 'constraint': rule.model_dump(mode="json")})
+            except Exception as _mem_e:
+                print(f"Warning: feedback/constraint update failed (non-fatal): {_mem_e}")
 
-                    # Update profile with constraint
-                    profile = await memory_repo.load_profile(state.salesperson_id)
-                    if not profile:
-                        profile = profile_manager.create_profile(state.salesperson_id)
-                    profile = profile_manager.add_constraint(profile, rule.rule_id)
+            # Check for frustration in message (non-critical, swallow errors)
+            try:
+                profile = await memory_repo.load_profile(state.salesperson_id)
+                if not profile:
+                    profile = profile_manager.create_profile(state.salesperson_id)
+                if profile_manager.detect_frustration(profile, payload.message):
                     await memory_repo.save_profile(profile)
-
-                    # Notify about new constraint
-                    yield _sse_data({'type': 'constraint_added', 'constraint': rule.model_dump(mode="json")})
-
-            # D.3: Also check for frustration in message
-            profile = await memory_repo.load_profile(state.salesperson_id)
-            if not profile:
-                profile = profile_manager.create_profile(state.salesperson_id)
-            if profile_manager.detect_frustration(profile, payload.message):
-                await memory_repo.save_profile(profile)
+            except Exception as _mem_e:
+                print(f"Warning: profile frustration check failed (non-fatal): {_mem_e}")
 
             done_chunk = _sse_data({'type': 'done'})
             async for chunk in process_with_central_agent(state, payload.message):
