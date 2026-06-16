@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import os
 import uuid
 from typing import Optional
 
@@ -46,6 +47,16 @@ class Orchestrator:
         self.name = "sales_orchestrator"
         self.role_description = "Supervisor that validates briefs, asks clarifying questions, and routes tasks to specialists"
         self.max_hop_depth = max_hop_depth
+
+        # Load SKILL.md directly from file — always available, never depends on KB being populated
+        _here = os.path.dirname(os.path.abspath(__file__))
+        skill_path = os.path.join(_here, "SKILL.md")
+        self._skill_content: str = ""
+        try:
+            with open(skill_path, "r", encoding="utf-8") as _f:
+                self._skill_content = _f.read()
+        except Exception as _e:
+            print(f"Warning: Could not load orchestrator SKILL.md from {skill_path}: {_e}")
 
     async def _rag_search(
         self, query: str, doc_type: str, top_k: int
@@ -123,7 +134,7 @@ class Orchestrator:
         if not brief:
             return False
 
-        return any(
+        has_structured = any(
             getattr(brief, field, None)
             for field in [
                 "industry",
@@ -135,6 +146,11 @@ class Orchestrator:
                 "constraints",
             ]
         )
+        if has_structured:
+            return True
+        # Rich free-text context counts as substance (e.g. when extraction LLM failed)
+        additional = getattr(brief, "additional_context", None) or ""
+        return len(additional) > 50
 
     def _merge_brief(self, base: Optional[Brief], extracted: Brief) -> Brief:
         base = base or Brief()
@@ -192,11 +208,8 @@ Rules:
 - casual_chat: greeting, thanks, small talk, one-line non-sales message, or anything not asking for sales help.
 - sales_request: the user is asking for a brief, proposal, quote, deck, strategy, or providing project details.
 - If the message is ambiguous but looks like a sales request, choose sales_request.
-- For casual_chat assistant_reply: Use the company name, product, and agent persona from the knowledge context below to write a warm, on-brand reply. Introduce yourself naturally using that identity (e.g. company name, product name). Reply in the same language as the user's message. Keep it concise (1-3 sentences).
-- Do not mention internal routing, pipeline stages, or layer names.
-
-Relevant skill/knowledge context (use for persona and brand identity):
-{rag_context}
+- For casual_chat assistant_reply: Use the company name, product, and agent persona from your system context to write a warm, on-brand reply. Introduce yourself naturally (e.g. AdtimaBox Sales Agent). Reply in the same language as the user's message. Keep it concise (1-3 sentences).
+- Do not mention internal routing, pipeline stages, agent names, or layer names.
 
 Latest message:
 {message}
@@ -205,10 +218,15 @@ Session context:
 {chr(10).join(context) if context else "none"}
 """
 
+        # Use SKILL.md loaded from file as base system prompt — guaranteed available even when KB empty
+        classify_system = self._skill_content or "You are a routing classifier for a sales assistant."
+        if rag_context:
+            classify_system = classify_system + "\n\n" + rag_context
+
         try:
             response = client.create_completion(
                 messages=[
-                    {"role": "system", "content": "You are a routing classifier for a sales assistant."},
+                    {"role": "system", "content": classify_system},
                     {"role": "user", "content": prompt},
                 ],
                 stream=False,
@@ -350,6 +368,105 @@ Message:
         """Public wrapper for desired output inference."""
         return await self._extract_desired_outputs(message)
 
+    async def _generate_questions(
+        self,
+        state: SalesCaseState,
+        missing_fields: list[str],
+        ambiguities: list,
+    ) -> list[Question]:
+        """Generate clarifying questions using orchestrator's SKILL.md + LLM reasoning."""
+        if not missing_fields and not ambiguities:
+            return []
+
+        rag_context = await self.build_required_skill_context(
+            f"Clarifying questions for sales brief missing: {', '.join(missing_fields)}",
+            skill_top_k=1,
+            knowledge_top_k=2,
+        )
+        system_prompt = self._skill_content or "You are a sales assistant orchestrator."
+        if rag_context:
+            system_prompt = system_prompt + "\n\n" + rag_context
+
+        brief = state.brief
+        message = self._latest_user_message(state) or ""
+
+        brief_parts: list[str] = []
+        if brief:
+            for field in ["industry", "goal", "target_audience", "budget_vnd", "timeline"]:
+                val = getattr(brief, field, None)
+                if val:
+                    brief_parts.append(f"{field}: {val}")
+            if brief.additional_context:
+                brief_parts.append(f"context: {brief.additional_context[:300]}")
+        brief_summary = "\n".join(brief_parts) or "(no structured brief)"
+
+        ambiguity_text = ""
+        if ambiguities:
+            ambiguity_text = "\nAmbiguous fields: " + ", ".join(
+                getattr(a, "field", str(a)) for a in ambiguities
+            )
+
+        prompt = f"""Generate at most 3 concise clarifying questions to get the information needed to proceed with this sales brief.
+
+Missing required fields: {", ".join(missing_fields)}
+{ambiguity_text}
+
+Current brief:
+{brief_summary}
+
+User's latest message:
+{message[:500]}
+
+Rules:
+- Ask only what is truly blocking the next step. Fewer questions is better.
+- Write questions in plain language, matching the user's language (Vietnamese or English).
+- Do NOT mention internal terms: Layer, Gate, pipeline stages, agent names, or framework terms.
+- Do NOT assume or invent values.
+
+Return JSON only:
+{{"questions": [{{"field": "...", "text": "...", "priority": 1, "is_mandatory": true, "options": null}}]}}
+"""
+
+        client = get_validation_service().client
+        try:
+            response = client.create_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                stream=False,
+                temperature=0.2,
+                max_tokens=600,
+            )
+            content = response.choices[0].message.content if response.choices else "{}"
+            if "```json" in content:
+                content = content.split("```json", 1)[1].split("```", 1)[0]
+            elif "```" in content:
+                content = content.split("```", 1)[1].split("```", 1)[0]
+
+            data = json.loads(content.strip() or "{}")
+            questions: list[Question] = []
+            for item in data.get("questions", [])[:3]:
+                field = item.get("field")
+                text = item.get("text")
+                if not field or not text:
+                    continue
+                questions.append(
+                    Question(
+                        id=f"orchestrator_{field}",
+                        text=text,
+                        priority=int(item.get("priority", 1)),
+                        is_mandatory=bool(item.get("is_mandatory", True)),
+                        assumption=None,
+                        target_field=field,
+                        options=item.get("options"),
+                    )
+                )
+            return questions
+        except Exception as exc:
+            print(f"Warning: orchestrator question generation failed: {exc}")
+            return []
+
     async def validate_before_dispatch(
         self, state: SalesCaseState
     ) -> tuple[AgentOutput, bool]:
@@ -415,17 +532,22 @@ Message:
             )
 
         if validation_report.status == "PENDING":
-            requirement_agent = self._requirement_agent()
-            questions = await requirement_agent.generate_questions(
+            questions = await self._generate_questions(
                 state,
-                validation_missing=validation_report.missing_required,
-                validation_ambiguities=validation_report.ambiguities,
+                missing_fields=validation_report.missing_required or [],
+                ambiguities=validation_report.ambiguities or [],
             )
             if questions:
                 question_manager.stack.push(questions)
                 state.question_stack = question_manager.stack.items
             else:
                 state.question_stack = question_manager.stack.items
+
+            if validation_report.missing_required:
+                summary = f"Mình cần thêm thông tin về: {', '.join(validation_report.missing_required)}."
+            else:
+                summary = "Mình cần thêm một chút thông tin để tiếp tục."
+
             return (
                 AgentOutput(
                     agent="sales_orchestrator",
@@ -435,7 +557,7 @@ Message:
                         "missing_required": validation_report.missing_required,
                         "ambiguities": [amb.model_dump() for amb in validation_report.ambiguities],
                     },
-                    summary="Need a bit more context before dispatching.",
+                    summary=summary,
                     confidence=0.85,
                     questions=questions,
                 ),

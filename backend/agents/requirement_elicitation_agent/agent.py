@@ -149,9 +149,56 @@ Rules:
             if questions:
                 return questions
         except Exception as exc:
-            print(f"Warning: requirement question synthesis failed, falling back to templates: {exc}")
+            print(f"Warning: requirement question synthesis failed, retrying with simplified prompt: {exc}")
 
-        return []
+        # Fallback: retry with a stripped-down prompt (no RAG, no system prompt overhead)
+        # The agent's SKILL.md still drives the tone via system_prompt
+        if not missing_fields:
+            return []
+        try:
+            client = get_llm_client(self.name)
+            retry_prompt = (
+                f"Generate up to {min(len(missing_fields), 3)} clarifying questions "
+                f"for a sales brief that is missing these fields: {', '.join(missing_fields)}.\n"
+                "Return JSON only:\n"
+                '{"questions": [{"field": "...", "text": "...", "priority": 1, "is_mandatory": true}]}'
+            )
+            response = client.create_completion(
+                messages=[
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": retry_prompt},
+                ],
+                stream=False,
+                temperature=0.2,
+                max_tokens=400,
+            )
+            content = response.choices[0].message.content if response.choices else "{}"
+            if "```json" in content:
+                content = content.split("```json", 1)[1].split("```", 1)[0]
+            elif "```" in content:
+                content = content.split("```", 1)[1].split("```", 1)[0]
+            data = json.loads(content.strip() or "{}")
+            retry_questions: list[Question] = []
+            for item in data.get("questions", [])[:3]:
+                field = item.get("field")
+                text = item.get("text")
+                if not field or not text:
+                    continue
+                retry_questions.append(
+                    Question(
+                        id=f"requirement_{field}",
+                        text=text,
+                        priority=int(item.get("priority", 1)),
+                        is_mandatory=bool(item.get("is_mandatory", True)),
+                        assumption=None,
+                        target_field=field,
+                        options=None,
+                    )
+                )
+            return retry_questions
+        except Exception as exc2:
+            print(f"Warning: requirement question retry also failed: {exc2}")
+            return []
 
     async def generate_questions(
         self,
