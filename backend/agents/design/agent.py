@@ -8,9 +8,6 @@ from pathlib import Path
 from schemas.state import AgentOutput, SalesCaseState
 from agents.base import BaseAgent
 
-# Import design backend - use relative import
-from pathlib import Path
-
 # Add project root to path for design backend
 import sys
 import os
@@ -34,9 +31,9 @@ class DesignAgent(BaseAgent):
             name="design",
             model_key="MODEL_DESIGN",
             role_description="Design & Slide Creator - generates PPTX presentations and Figma wireframes",
-            prompt_path="backend/agents/design/prompt.md",
-            knowledge_dir="backend/agents/design/knowledge",
-            skills_dir="backend/agents/design/skills",
+            prompt_path=str(_agent_dir / "prompt.md"),
+            knowledge_dir=str(_agent_dir / "knowledge"),
+            skills_dir=str(_agent_dir / "skills"),
         )
         # Initialize design backend
         self.design_backend = create_design_backend()
