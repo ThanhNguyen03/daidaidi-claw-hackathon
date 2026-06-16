@@ -12,7 +12,9 @@ const nextConfig = {
   // Ensure proper handling of env vars
   env: {
     // These will be available client-side
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
+    NEXT_PUBLIC_API_URL:
+      process.env.NEXT_PUBLIC_API_URL ||
+      "https://endpoint-3a16ebff-db7e-4961-bafc-6ae01f0bdd74.agentbase-runtime.aiplatform.vngcloud.vn",
   },
   // Images configuration for production
   images: {

@@ -24,6 +24,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import type { ChatMode } from '../lib/types';
+import { getApiBaseUrl } from '../lib/api';
 
 interface SidebarProps {
   currentMode: ChatMode;
@@ -121,7 +122,7 @@ export function Sidebar({
       setLoadingAgents(true);
       try {
         const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/debug/agents`
+          `${getApiBaseUrl()}/debug/agents`
         );
         if (res.ok) {
           const data = await res.json();

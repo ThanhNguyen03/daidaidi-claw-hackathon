@@ -10,6 +10,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Users, X, Plus, MessageCircle, Lock, Unlock, Clock, AlertCircle, Loader2 } from 'lucide-react';
+import { getApiBaseUrl } from '../lib/api';
 
 interface BrainstormParticipant {
   agent_name: string;
@@ -58,7 +59,7 @@ function AddMemberModal({
       setLoading(true);
       try {
         const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/debug/agents`
+          `${getApiBaseUrl()}/debug/agents`
         );
         if (res.ok) {
           const data = await res.json();

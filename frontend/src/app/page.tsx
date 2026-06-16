@@ -14,6 +14,7 @@ import { ContextPanel } from '../components/ContextPanel';
 import { MobileNav } from '../components/MobileNav';
 import { useChat } from '../hooks/useChat';
 import type { ChatMode } from '../lib/types';
+import { getApiBaseUrl } from '../lib/api';
 
 export default function Home() {
   // Identity state (demo mode - simple name input)
@@ -103,7 +104,7 @@ export default function Home() {
     const checkConnection = async () => {
       try {
         const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/health`
+          `${getApiBaseUrl()}/health`
         );
         const data = await res.json();
         setIsConnected(data.kb_configured || data.llm_configured || false);
@@ -251,7 +252,7 @@ export default function Home() {
         artifacts={artifacts}
         onDownloadArtifact={(artifact) => {
           const backendUrl =
-            process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+            getApiBaseUrl();
 
           // Binary artifacts served directly by the backend (PPTX, quote, etc.)
           if (artifact.download_url) {

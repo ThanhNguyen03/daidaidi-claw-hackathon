@@ -6,8 +6,9 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { ChatRequest, Message, Brief, ChatMode, Question, Checkpoint, FeedbackRule, SalespersonProfile } from '../lib/types';
+import { getApiBaseUrl } from '../lib/api';
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const BACKEND_URL = getApiBaseUrl();
 
 interface UseChatOptions {
   salespersonId: string;

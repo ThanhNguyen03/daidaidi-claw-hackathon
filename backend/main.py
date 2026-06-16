@@ -2189,18 +2189,24 @@ async def download_artifact(artifact_id: str):
 @app.get("/debug/agents")
 async def debug_agents():
     """Debug endpoint to list all agents."""
-    registry = get_registry()
-    return {
-        "agents": [
-            {
-                "name": agent.name,
-                "role": agent.role_description,
-                "model": agent.model_path,
-                "enabled": agent.enabled,
-            }
-            for agent in registry.all()
-        ]
-    }
+    try:
+        registry = get_registry()
+        agents = []
+        for name in registry.all_names():
+            agent = registry.get(name)
+            if not agent:
+                continue
+            agents.append(
+                {
+                    "name": getattr(agent, "name", name),
+                    "role": getattr(agent, "role_description", ""),
+                    "enabled": bool(getattr(agent, "enabled", True)),
+                }
+            )
+        return {"agents": agents}
+    except Exception as exc:
+        print(f"Warning: /debug/agents failed: {exc}")
+        return {"agents": []}
 
 
 # =============================================================================

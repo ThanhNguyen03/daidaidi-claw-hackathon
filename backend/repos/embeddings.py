@@ -114,6 +114,8 @@ class GreenNodeEmbeddingProvider(EmbeddingProvider):
             (api_key or os.getenv("KB_EMBEDDING_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
         )
         self._client: Optional[AsyncOpenAI] = None
+        self._fallback_provider: Optional[EmbeddingProvider] = None
+        self._warned_model_fallback = False
 
     def _get_client(self) -> AsyncOpenAI:
         if self._client is None:
@@ -130,17 +132,45 @@ class GreenNodeEmbeddingProvider(EmbeddingProvider):
             )
         return self._client
 
+    def _get_fallback_provider(self) -> EmbeddingProvider:
+        """Local embedding fallback used when the hosted model is unavailable."""
+        if self._fallback_provider is None:
+            self._fallback_provider = LocalSentenceTransformerEmbeddingProvider(
+                self.model_name
+            )
+        return self._fallback_provider
+
+    @staticmethod
+    def _is_model_not_found_error(exc: Exception) -> bool:
+        """Detect provider/model-missing errors without masking unrelated failures."""
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 404:
+            return True
+        message = str(exc).lower()
+        return "requested model is not found" in message or "model not found" in message
+
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
 
         client = self._get_client()
-        response = await client.embeddings.create(
-            model=self.model_name,
-            input=texts,
-        )
-        # Preserve provider output order and normalize for cosine retrieval.
-        return [_normalize_vector(item.embedding) for item in response.data]
+        try:
+            response = await client.embeddings.create(
+                model=self.model_name,
+                input=texts,
+            )
+            # Preserve provider output order and normalize for cosine retrieval.
+            return [_normalize_vector(item.embedding) for item in response.data]
+        except Exception as exc:
+            if self._is_model_not_found_error(exc):
+                if not self._warned_model_fallback:
+                    print(
+                        f"Warning: hosted embedding model '{self.model_name}' was not found. "
+                        "Falling back to local embeddings for this session."
+                    )
+                    self._warned_model_fallback = True
+                return await self._get_fallback_provider().embed_texts(texts)
+            raise
 
 
 def create_embedding_provider() -> EmbeddingProvider:
