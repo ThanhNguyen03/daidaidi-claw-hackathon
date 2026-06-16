@@ -69,6 +69,7 @@ class ComplianceAgent(BaseAgent):
         )
 
     async def advisory_query(self, query: str, state: SalesCaseState) -> AgentOutput:
+        rag_context = await self.build_required_skill_context(query, skill_top_k=2, knowledge_top_k=5)
         kb_results = await self.retrieve_knowledge(query, top_k=5)
         kb_context = self.format_knowledge_context(kb_results)
         client = get_llm_client(self.name)
@@ -102,7 +103,10 @@ Output as JSON:
 """
         try:
             response = client.create_completion(
-                messages=[{"role": "user", "content": prompt}],
+                messages=[
+                    {"role": "system", "content": self.system_prompt + rag_context},
+                    {"role": "user", "content": prompt},
+                ],
                 stream=False,
                 temperature=0.3,
                 max_tokens=1000,
@@ -199,7 +203,9 @@ Output as JSON:
         )
 
     async def _llm_review(self, action: Checkpoint, preview: dict[str, Any]) -> list[ComplianceFinding]:
-        kb_results = await self.retrieve_knowledge(f"compliance {action.type} {action.description}", top_k=3)
+        query = f"compliance {action.type} {action.description}"
+        rag_context = await self.build_required_skill_context(query, skill_top_k=2, knowledge_top_k=3)
+        kb_results = await self.retrieve_knowledge(query, top_k=3)
         if not kb_results:
             return []
         kb_context = self.format_knowledge_context(kb_results)
@@ -235,7 +241,10 @@ If no issues found, return {{"findings": []}}.
 """
         try:
             response = client.create_completion(
-                messages=[{"role": "user", "content": prompt}],
+                messages=[
+                    {"role": "system", "content": self.system_prompt + rag_context},
+                    {"role": "user", "content": prompt},
+                ],
                 stream=False,
                 temperature=0.2,
                 max_tokens=1000,

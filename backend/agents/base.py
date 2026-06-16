@@ -183,6 +183,29 @@ Respond helpfully and professionally."""
         )
         return self._format_rag_context(skills, knowledge)
 
+    async def build_required_skill_context(
+        self,
+        query: str,
+        skill_top_k: int = 1,
+        knowledge_top_k: int = 3,
+    ) -> str:
+        """
+        Build a grounded context block that must include at least one skill hit.
+
+        Execute agents call this helper so they never answer from prompt-only
+        assumptions. If the agent's own skill documents are not retrievable,
+        the agent should fail fast rather than inventing a response.
+        """
+        skills, knowledge = await asyncio.gather(
+            self.retrieve_skill(query, top_k=skill_top_k),
+            self.retrieve_knowledge(query, top_k=knowledge_top_k),
+        )
+
+        if not skills:
+            raise RuntimeError(f"No skill context retrieved for agent {self.name}")
+
+        return self._format_rag_context(skills, knowledge)
+
     def _format_rag_context(
         self, skills: list[Any], knowledge: list[Any]
     ) -> str:

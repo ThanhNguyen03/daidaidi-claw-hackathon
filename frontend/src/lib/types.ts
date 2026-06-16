@@ -1,7 +1,7 @@
 /**
  * Shared TypeScript Types
  * ======================
- * Type definitions shared between frontend and backend (BFF layer).
+ * Type definitions shared between frontend and backend.
  */
 
 // =============================================================================

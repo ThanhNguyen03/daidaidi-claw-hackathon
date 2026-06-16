@@ -117,7 +117,7 @@ class ClientSimulatorAgent(BaseAgent):
             state.brief.goal if state.brief and state.brief.goal else "",
             user_message,
         ]).strip()
-        rag_context = await self.build_rag_context(query, skill_top_k=2, knowledge_top_k=3)
+        rag_context = await self.build_required_skill_context(query, skill_top_k=2, knowledge_top_k=3)
         system_prompt = self.system_prompt + rag_context
 
         prompt = f"""You are a skeptical client reviewing a sales proposal.

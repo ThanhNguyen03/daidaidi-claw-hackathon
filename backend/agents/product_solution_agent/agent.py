@@ -93,7 +93,7 @@ class ProductSolutionAgent(BaseAgent):
                 " ".join(constraints or []),
             ]
         ).strip()
-        rag_context = await self.build_rag_context(query, skill_top_k=2, knowledge_top_k=4)
+        rag_context = await self.build_required_skill_context(query, skill_top_k=2, knowledge_top_k=4)
 
         market_output = state.outputs.get("market_strategy")
         compliance_output = state.outputs.get("compliance")
@@ -208,4 +208,3 @@ def get_product_solution_agent() -> ProductSolutionAgent:
     if _instance is None:
         _instance = ProductSolutionAgent()
     return _instance
-

@@ -106,12 +106,36 @@ class Orchestrator:
             )
 
         if validation_report.status == "PENDING":
-            questions = question_manager.generate_questions_from_validation(
-                brief=state.brief,
-                mode=state.mode,
-                validation_missing=validation_report.missing_required,
-                validation_ambiguities=validation_report.ambiguities,
-            )
+            from agents.requirement_elicitation_agent.agent import get_requirement_elicitation_agent
+
+            elicitor = get_requirement_elicitation_agent()
+            try:
+                questions = await elicitor.generate_questions(
+                    state,
+                    validation_missing=validation_report.missing_required,
+                    validation_ambiguities=validation_report.ambiguities,
+                )
+            except Exception as exc:
+                print(f"Warning: requirement elicitation failed without fallback questions: {exc}")
+                questions = []
+
+            if not questions:
+                return (
+                    AgentOutput(
+                        agent="sales_orchestrator",
+                        status="NEEDS_INPUT",
+                        payload={
+                            "validation_status": "PENDING",
+                            "missing_required": validation_report.missing_required,
+                            "ambiguities": [amb.model_dump() for amb in validation_report.ambiguities],
+                        },
+                        summary="Need more context before proceeding.",
+                        confidence=0.7,
+                        questions=[],
+                    ),
+                    False,
+                )
+
             question_manager.stack.push(questions)
             state.question_stack = question_manager.stack.items
             batch = question_manager.stack.next_batch()

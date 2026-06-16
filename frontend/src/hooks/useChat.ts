@@ -7,9 +7,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { ChatRequest, Message, Brief, ChatMode, Question, Checkpoint, FeedbackRule, SalespersonProfile } from '../lib/types';
 
-// Use BFF route ( Next.js API route) to keep API key server-side
-// Fall back to direct backend call if BFF is not available
-const BFF_URL = '/api/chat';
 const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 interface UseChatOptions {
@@ -177,26 +174,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         brief,
       });
 
-      // Try BFF first; fall back to direct backend on network error OR 5xx
       try {
-        try {
-          response = await fetch(BFF_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: requestBody,
-            signal: abortControllerRef.current.signal,
-          });
-          // BFF 5xx typically means backend is unreachable — retry directly
-          if (response.status >= 500) throw new Error('bff_unavailable');
-        } catch (bffErr) {
-          if ((bffErr as Error).name === 'AbortError') throw bffErr;
-          response = await fetch(`${BACKEND_URL}/chat/stream`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: requestBody,
-            signal: abortControllerRef.current.signal,
-          });
-        }
+        response = await fetch(`${BACKEND_URL}/chat/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: requestBody,
+          signal: abortControllerRef.current.signal,
+        });
 
         if (!response.ok) {
           throw new Error(`Server error: ${response.status}`);
@@ -497,10 +481,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
       // Send answer to backend to update brief
       try {
-        const response = await fetch(`${BACKEND_URL}/chat/answer`, {
+        const response = await fetch(`${BACKEND_URL}/workflow/interact`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            action: 'answer',
             session_id: sessionId,
             question_id: questionId,
             answer: answer,
@@ -520,6 +505,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
           // Reload session state
           const data = await response.json();
+          if (data.brief) {
+            setBrief(data.brief);
+          }
           if (data.questions && data.questions.length > 0) {
             setPendingQuestions(data.questions);
           } else {
@@ -544,10 +532,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
       // Notify backend to skip
       try {
-        const response = await fetch(`${BACKEND_URL}/chat/skip_question`, {
+        const response = await fetch(`${BACKEND_URL}/workflow/interact`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            action: 'skip_question',
             session_id: sessionId,
             question_id: questionId,
           }),
@@ -565,6 +554,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           ]);
 
           const data = await response.json();
+          if (data.brief) {
+            setBrief(data.brief);
+          }
           if (data.questions && data.questions.length > 0) {
             setPendingQuestions(data.questions);
           } else {
@@ -592,10 +584,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       setPendingQuestions([]); // Clear pending while processing
 
       try {
-        const response = await fetch(`${BACKEND_URL}/chat/answer_free_text`, {
+        const response = await fetch(`${BACKEND_URL}/workflow/interact`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            action: 'answer_free_text',
             session_id: sessionId,
             message: freeText,
             salesperson_id: salespersonId,
@@ -615,6 +608,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           ]);
 
           const data = await response.json();
+          if (data.brief) {
+            setBrief(data.brief);
+          }
           // Update pending questions if any remain
           if (data.questions && data.questions.length > 0) {
             setPendingQuestions(data.questions);
@@ -689,14 +685,16 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
     setIsLoading(true);
     try {
-      const response = await fetch(
-        `${BACKEND_URL}/checkpoint/${activeCheckpoint.id}/decision?session_id=${sessionId}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ decision: 'approve' }),
-        }
-      );
+      const response = await fetch(`${BACKEND_URL}/workflow/interact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'checkpoint_decision',
+          session_id: sessionId,
+          checkpoint_id: activeCheckpoint.id,
+          decision: 'approve',
+        }),
+      });
       if (!response.ok) throw new Error('Failed to approve checkpoint');
       const data = await response.json();
 
@@ -752,14 +750,16 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
     setIsLoading(true);
     try {
-      const response = await fetch(
-        `${BACKEND_URL}/checkpoint/${activeCheckpoint.id}/decision?session_id=${sessionId}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ decision: 'reject' }),
-        }
-      );
+      const response = await fetch(`${BACKEND_URL}/workflow/interact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'checkpoint_decision',
+          session_id: sessionId,
+          checkpoint_id: activeCheckpoint.id,
+          decision: 'reject',
+        }),
+      });
       if (!response.ok) throw new Error('Failed to reject checkpoint');
       const data = await response.json();
       setActiveCheckpoint(null);
@@ -786,14 +786,17 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
       setIsLoading(true);
       try {
-        const response = await fetch(
-          `${BACKEND_URL}/checkpoint/${activeCheckpoint.id}/decision?session_id=${sessionId}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ decision: 'edit', params }),
-          }
-        );
+        const response = await fetch(`${BACKEND_URL}/workflow/interact`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'checkpoint_decision',
+            session_id: sessionId,
+            checkpoint_id: activeCheckpoint.id,
+            decision: 'edit',
+            params,
+          }),
+        });
         if (!response.ok) throw new Error('Failed to edit checkpoint');
         const data = await response.json();
 

@@ -47,9 +47,19 @@ class DesignAgent(BaseAgent):
         # Get context from other agents
         market_output = state.outputs.get("market_strategy")
         product_output = state.outputs.get("product_solution")
+        brief = state.brief or None
+
+        query_parts = [
+            "design",
+            brief.industry if brief and brief.industry else "",
+            brief.goal if brief and brief.goal else "",
+            brief.target_audience if brief and brief.target_audience else "",
+            brief.additional_context if brief and brief.additional_context else "",
+        ]
+        rag_context = await self.build_required_skill_context(" ".join(query_parts).strip(), skill_top_k=2, knowledge_top_k=2)
 
         # Build context for artifact generation
-        context = self._build_context(state, market_output, product_output)
+        context = self._build_context(state, market_output, product_output, rag_context)
 
         # Generate PPTX
         pptx_path = await self._generate_pptx(context, state.session_id)
@@ -91,11 +101,12 @@ class DesignAgent(BaseAgent):
             questions=[],
         )
 
-    def _build_context(self, state, market_output, product_output) -> dict:
+    def _build_context(self, state, market_output, product_output, rag_context: str) -> dict:
         """Build context from other agent outputs."""
         context = {
             "session_id": state.session_id,
             "brief": state.brief.model_dump() if state.brief else {},
+            "design_guidance": rag_context,
         }
 
         if market_output and hasattr(market_output, "payload"):
@@ -213,6 +224,25 @@ class DesignAgent(BaseAgent):
                     p.font.size = Pt(18)
                     p.space_after = Pt(8)
 
+            design_guidance = context.get("design_guidance")
+            if design_guidance:
+                guidance_slide = prs.slides.add_slide(prs.slide_layouts[6])
+                title_box = guidance_slide.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(12), Inches(0.8))
+                tf = title_box.text_frame
+                tf.paragraphs[0].text = "Design Guidance"
+                tf.paragraphs[0].font.size = Pt(32)
+                tf.paragraphs[0].font.bold = True
+
+                content_box = guidance_slide.shapes.add_textbox(Inches(0.5), Inches(1.2), Inches(12), Inches(5))
+                tf = content_box.text_frame
+                tf.word_wrap = True
+                for line in str(design_guidance).splitlines()[:20]:
+                    if line.strip():
+                        p = tf.add_paragraph()
+                        p.text = line[:180]
+                        p.font.size = Pt(14)
+                        p.space_after = Pt(4)
+
             # Save
             output_dir = Path(__file__).parent.parent / "output"
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -233,9 +263,13 @@ class DesignAgent(BaseAgent):
         """Generate Figma wireframe description."""
         # This returns a description that could be used to create a Figma wireframe
         brief = context.get("brief", {})
+        design_guidance = context.get("design_guidance", "")
 
         description = f"""
 ## Figma Wireframe Concept
+
+### Design Guidance
+{design_guidance[:800] if design_guidance else "No retrieved design skill context available."}
 
 ### Page 1: Landing / Home
 - Hero section with brand logo and campaign tagline
@@ -260,3 +294,13 @@ class DesignAgent(BaseAgent):
 - "Redeem Now" CTA
 """
         return description
+
+    async def _generate_figma_wireframe(self, context: dict, session_id: str):
+        """Generate the Figma/FigJam wireframe payload."""
+        description = await self._generate_figma_description(context)
+        return {
+            "status": "success",
+            "format": "figma",
+            "session_id": session_id,
+            "content": description,
+        }

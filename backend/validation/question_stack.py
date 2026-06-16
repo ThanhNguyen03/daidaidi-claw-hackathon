@@ -6,9 +6,8 @@ Handles batching, prioritization, answer mapping, and re-validation.
 """
 
 import re
-import uuid
-from typing import Optional
 from datetime import datetime
+from typing import Optional
 
 from schemas.state import Question, Brief
 
@@ -81,96 +80,6 @@ class QuestionManager:
             else:
                 restored.append(Question.model_validate(item))
         self.stack.items = restored
-
-    def generate_questions_from_validation(
-        self,
-        brief: Brief,
-        mode: str,
-        validation_missing: list[str],
-        validation_ambiguities: list,
-    ) -> list[Question]:
-        """
-        Generate questions from validation report.
-        This layer does not impose its own required-field policy.
-        """
-        questions: list[Question] = []
-
-        for field in validation_missing:
-            question = self._create_question_for_field(field=field, is_mandatory=True)
-            if question:
-                questions.append(question)
-            else:
-                questions.append(self._create_generic_question(field, is_mandatory=True))
-
-        for amb in validation_ambiguities:
-            if hasattr(amb, "field"):
-                question = self._create_ambiguity_question(amb)
-                if question:
-                    questions.append(question)
-
-        questions.sort(key=lambda q: (not q.is_mandatory, q.priority))
-
-        seen_fields = set()
-        unique_questions = []
-        for q in questions:
-            if q.target_field not in seen_fields:
-                seen_fields.add(q.target_field)
-                unique_questions.append(q)
-
-        return unique_questions
-
-    def _create_question_for_field(self, field: str, is_mandatory: bool) -> Optional[Question]:
-        label = field.replace("_", " ").strip()
-        if not label:
-            return None
-        label = label[0].upper() + label[1:]
-
-        return Question(
-            id=f"q_{field}_{uuid.uuid4().hex[:6]}",
-            text=f"Can you clarify {label}?",
-            priority=1 if is_mandatory else 2,
-            is_mandatory=is_mandatory,
-            assumption=None,
-            target_field=field,
-            asked_count=0,
-            last_asked_at=None,
-            answered=False,
-            answer=None,
-            was_helpful=None,
-        )
-
-    def _create_generic_question(self, field: str, is_mandatory: bool) -> Question:
-        return Question(
-            id=f"q_{field}_{uuid.uuid4().hex[:6]}",
-            text=f"Can you clarify the {field.replace('_', ' ')}?",
-            priority=1 if is_mandatory else 2,
-            is_mandatory=is_mandatory,
-            assumption=None,
-            target_field=field,
-            asked_count=0,
-            last_asked_at=None,
-            answered=False,
-            answer=None,
-            was_helpful=None,
-        )
-
-    def _create_ambiguity_question(self, ambiguity) -> Optional[Question]:
-        return Question(
-            id=f"q_amb_{uuid.uuid4().hex[:6]}",
-            text=(
-                f"I noticed '{ambiguity.field}' could mean: "
-                f"{', '.join(ambiguity.interpretations[:2])}. Which one applies?"
-            ),
-            priority=1,
-            is_mandatory=True,
-            assumption=None,
-            target_field=ambiguity.field,
-            asked_count=0,
-            last_asked_at=None,
-            answered=False,
-            answer=None,
-            was_helpful=None,
-        )
 
     def map_answers(self, answers: dict[str, str], brief: Brief) -> Brief:
         for question_id, answer_text in answers.items():

@@ -9,7 +9,7 @@ import os
 import json
 import uuid
 from datetime import datetime
-from typing import Optional, AsyncGenerator, Any, List
+from typing import Optional, AsyncGenerator, Any, List, Literal
 
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -250,6 +250,42 @@ async def get_or_create_session_async(
 def update_session(state: SalesCaseState) -> None:
     """Update session in store."""
     _session_store[state.session_id] = state
+
+
+async def get_session_or_404(session_id: str) -> SalesCaseState:
+    """
+    Return a session from memory or persistent storage.
+
+    Several workflow endpoints mutate session state after the initial chat turn.
+    They must survive runtime restarts and multi-request flows, so we fall back
+    to the shared memory repo instead of only trusting the in-process dict.
+    """
+    if session_id in _session_store:
+        return _session_store[session_id]
+
+    memory_repo = get_memory_repo()
+    state = await memory_repo.load_session(session_id)
+    if state:
+        _session_store[session_id] = state
+        return state
+
+    raise HTTPException(status_code=404, detail="Session not found")
+
+
+async def persist_session_best_effort(state: SalesCaseState, context: str) -> None:
+    """Persist session state without breaking the request on storage issues."""
+    try:
+        await get_memory_repo().save_session(state)
+    except Exception as exc:
+        print(f"Warning: failed to persist session after {context}: {exc}")
+
+
+def serialize_workflow_state(state: SalesCaseState) -> dict[str, Any]:
+    """Return the standard FE payload after a workflow mutation."""
+    return {
+        "brief": state.brief.model_dump() if state.brief else None,
+        "validation_status": state.validation_status,
+    }
 
 
 # =============================================================================
@@ -1543,6 +1579,21 @@ class SkipQuestionRequest(BaseModel):
     question_id: str
 
 
+class WorkflowInteractionRequest(BaseModel):
+    """Unified workflow request for FE-driven interactions."""
+
+    action: Literal["answer", "skip_question", "answer_free_text", "checkpoint_decision"]
+    session_id: Optional[str] = None
+    question_id: Optional[str] = None
+    answer: Optional[str] = None
+    message: Optional[str] = None
+    salesperson_id: Optional[str] = None
+    checkpoint_id: Optional[str] = None
+    decision: Optional[str] = None
+    params: Optional[dict] = None
+    auto_approve: bool = False
+
+
 @app.post("/chat/answer")
 @limiter.limit("20/minute")
 async def answer_question(request: Request, payload: AnswerQuestionRequest):
@@ -1550,10 +1601,7 @@ async def answer_question(request: Request, payload: AnswerQuestionRequest):
     C.5 §2: Answer a question from the QuestionStack.
     Maps answer to brief field, re-validates, returns updated question list.
     """
-    if payload.session_id not in _session_store:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    state = _session_store[payload.session_id]
+    state = await get_session_or_404(payload.session_id)
 
     # Get sales_orchestrator to handle validation response
     orchestrator = get_sales_orchestrator()
@@ -1574,16 +1622,26 @@ async def answer_question(request: Request, payload: AnswerQuestionRequest):
             outputs = ["pptx"]  # default fallback
         state.desired_outputs = outputs
         update_session(state)
+        try:
+            await get_memory_repo().save_session(state)
+        except Exception as exc:
+            print(f"Warning: failed to persist session after desired_output answer: {exc}")
         return {
             "status": "ready",
             "message": f"Got it — will generate: {', '.join(outputs)}. Send your next message to proceed.",
             "questions": [],
             "validation_status": state.validation_status,
+            "brief": state.brief.model_dump() if state.brief else None,
         }
 
     # Handle the answer
     answers = {payload.question_id: payload.answer}
     validation_output = await orchestrator.handle_validation_response(state, answers)
+    update_session(state)
+    try:
+        await get_memory_repo().save_session(state)
+    except Exception as exc:
+        print(f"Warning: failed to persist session after answer_question: {exc}")
 
     # Get updated questions
     question_manager = get_question_manager()
@@ -1596,6 +1654,7 @@ async def answer_question(request: Request, payload: AnswerQuestionRequest):
             "message": "All questions answered. Ready to proceed.",
             "questions": [],
             "validation_status": "READY",
+            "brief": state.brief.model_dump() if state.brief else None,
         }
     else:
         return {
@@ -1603,6 +1662,7 @@ async def answer_question(request: Request, payload: AnswerQuestionRequest):
             "message": validation_output.summary,
             "questions": [q.model_dump() for q in remaining_questions],
             "validation_status": state.validation_status,
+            "brief": state.brief.model_dump() if state.brief else None,
         }
 
 
@@ -1613,10 +1673,7 @@ async def skip_question(request: Request, payload: SkipQuestionRequest):
     C.5 §6: Skip an optional question.
     Records the assumption as implicit approval.
     """
-    if payload.session_id not in _session_store:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    state = _session_store[payload.session_id]
+    state = await get_session_or_404(payload.session_id)
 
     # Get question manager and skip
     question_manager = get_question_manager()
@@ -1627,6 +1684,11 @@ async def skip_question(request: Request, payload: SkipQuestionRequest):
     validation_output, should_dispatch = await orchestrator.validate_before_dispatch(
         state
     )
+    update_session(state)
+    try:
+        await get_memory_repo().save_session(state)
+    except Exception as exc:
+        print(f"Warning: failed to persist session after skip_question: {exc}")
 
     remaining_questions = question_manager.stack.next_batch()
 
@@ -1636,6 +1698,7 @@ async def skip_question(request: Request, payload: SkipQuestionRequest):
             "message": "Optional question skipped. Ready to proceed.",
             "questions": [],
             "validation_status": "READY",
+            "brief": state.brief.model_dump() if state.brief else None,
         }
     else:
         return {
@@ -1643,6 +1706,7 @@ async def skip_question(request: Request, payload: SkipQuestionRequest):
             "message": validation_output.summary,
             "questions": [q.model_dump() for q in remaining_questions],
             "validation_status": state.validation_status,
+            "brief": state.brief.model_dump() if state.brief else None,
         }
 
 
@@ -1652,10 +1716,10 @@ async def answer_free_text(request: ChatRequest):
     C.5 §5: Answer multiple questions with free text.
     The backend maps the free text to appropriate brief fields.
     """
-    if request.session_id not in _session_store:
-        raise HTTPException(status_code=404, detail="Session not found")
+    if not request.session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
 
-    state = _session_store[request.session_id]
+    state = await get_session_or_404(request.session_id)
 
     # Get sales_orchestrator
     orchestrator = get_sales_orchestrator()
@@ -1663,6 +1727,11 @@ async def answer_free_text(request: ChatRequest):
     # Handle free text answer
     answers = {"free_text": request.message}
     validation_output = await orchestrator.handle_validation_response(state, answers)
+    update_session(state)
+    try:
+        await get_memory_repo().save_session(state)
+    except Exception as exc:
+        print(f"Warning: failed to persist session after answer_free_text: {exc}")
 
     # Get updated questions
     question_manager = get_question_manager()
@@ -1683,6 +1752,142 @@ async def answer_free_text(request: ChatRequest):
             "questions": [q.model_dump() for q in remaining_questions],
             "validation_status": state.validation_status,
         }
+
+
+@app.post("/workflow/interact")
+@limiter.limit("30/minute")
+async def workflow_interact(request: Request, payload: WorkflowInteractionRequest):
+    """
+    Unified FE workflow endpoint.
+    """
+    if payload.action == "answer":
+        if not payload.session_id or not payload.question_id or payload.answer is None:
+            raise HTTPException(status_code=400, detail="session_id, question_id, and answer are required")
+
+        state = await get_session_or_404(payload.session_id)
+        orchestrator = get_sales_orchestrator()
+
+        if payload.question_id == "desired_output":
+            answer_lower = payload.answer.lower()
+            outputs = []
+            if any(token in answer_lower for token in ["pptx", "powerpoint", "slide", "presentation"]):
+                outputs.append("pptx")
+            if any(token in answer_lower for token in ["figma", "wireframe", "design", "ui"]):
+                outputs.append("figma")
+            if any(token in answer_lower for token in ["userflow", "diagram", "flow", "mermaid"]):
+                outputs.append("userflow")
+            if any(token in answer_lower for token in ["quote", "pricing", "quotation", "proposal"]):
+                outputs.append("quote")
+            if not outputs:
+                outputs = ["pptx"]
+            state.desired_outputs = outputs
+            update_session(state)
+            await persist_session_best_effort(state, "workflow.answer desired_output")
+            return {
+                "status": "ready",
+                "message": f"Got it - will generate: {', '.join(outputs)}. Send your next message to proceed.",
+                "questions": [],
+                **serialize_workflow_state(state),
+            }
+
+        validation_output = await orchestrator.handle_validation_response(
+            state, {payload.question_id: payload.answer}
+        )
+        update_session(state)
+        await persist_session_best_effort(state, "workflow.answer")
+
+        question_manager = get_question_manager()
+        remaining_questions = question_manager.stack.next_batch()
+        return {
+            "status": "ready" if validation_output.status == "COMPLETE" else "pending",
+            "message": "All questions answered. Ready to proceed."
+            if validation_output.status == "COMPLETE"
+            else validation_output.summary,
+            "questions": [] if validation_output.status == "COMPLETE" else [q.model_dump() for q in remaining_questions],
+            **serialize_workflow_state(state),
+        }
+
+    if payload.action == "skip_question":
+        if not payload.session_id or not payload.question_id:
+            raise HTTPException(status_code=400, detail="session_id and question_id are required")
+
+        state = await get_session_or_404(payload.session_id)
+        question_manager = get_question_manager()
+        question_manager.skip_optional(payload.question_id)
+
+        orchestrator = get_sales_orchestrator()
+        validation_output, should_dispatch = await orchestrator.validate_before_dispatch(state)
+        update_session(state)
+        await persist_session_best_effort(state, "workflow.skip_question")
+
+        remaining_questions = question_manager.stack.next_batch()
+        return {
+            "status": "ready" if should_dispatch else "pending",
+            "message": "Optional question skipped. Ready to proceed."
+            if should_dispatch
+            else validation_output.summary,
+            "questions": [] if should_dispatch else [q.model_dump() for q in remaining_questions],
+            **serialize_workflow_state(state),
+        }
+
+    if payload.action == "answer_free_text":
+        if not payload.session_id or payload.message is None:
+            raise HTTPException(status_code=400, detail="session_id and message are required")
+
+        state = await get_session_or_404(payload.session_id)
+        orchestrator = get_sales_orchestrator()
+        validation_output = await orchestrator.handle_validation_response(
+            state, {"free_text": payload.message}
+        )
+        update_session(state)
+        await persist_session_best_effort(state, "workflow.answer_free_text")
+
+        question_manager = get_question_manager()
+        remaining_questions = question_manager.stack.next_batch()
+        return {
+            "status": "ready" if validation_output.status == "COMPLETE" else "pending",
+            "message": "Answers mapped successfully. Ready to proceed."
+            if validation_output.status == "COMPLETE"
+            else validation_output.summary,
+            "questions": [] if validation_output.status == "COMPLETE" else [q.model_dump() for q in remaining_questions],
+            **serialize_workflow_state(state),
+        }
+
+    if payload.action == "checkpoint_decision":
+        if not payload.session_id or not payload.checkpoint_id or not payload.decision:
+            raise HTTPException(status_code=400, detail="session_id, checkpoint_id, and decision are required")
+
+        state = await get_session_or_404(payload.session_id)
+        checkpoint = state.checkpoint
+        if not checkpoint or checkpoint.id != payload.checkpoint_id:
+            raise HTTPException(status_code=404, detail=f"Checkpoint not found: {payload.checkpoint_id}")
+
+        cpm = get_checkpoint_manager()
+        if payload.auto_approve:
+            cpm.set_auto_approve(payload.session_id, checkpoint.action.type, True)
+
+        updated = await cpm.process_decision(checkpoint, payload.decision, payload.params)
+        if payload.decision == "edit" and payload.params:
+            new_payload = await _recompute_preview(state, payload.params)
+            if new_payload:
+                updated.preview = new_payload
+                updated.action.parameters.update(payload.params)
+                if "total_vnd" in new_payload:
+                    updated.action.description = f"Generate quotation for {new_payload['total_vnd']:,} VND"
+
+        state.checkpoint = updated
+        update_session(state)
+        await persist_session_best_effort(state, "workflow.checkpoint_decision")
+
+        clarifying_question = cpm.get_clarifying_question(updated) if payload.decision == "reject" else None
+        return {
+            "checkpoint": updated.model_dump(),
+            "clarifying_question": clarifying_question,
+            "auto_approve_enabled": payload.auto_approve,
+            **serialize_workflow_state(state),
+        }
+
+    raise HTTPException(status_code=400, detail=f"Unsupported workflow action: {payload.action}")
 
 
 # =============================================================================
@@ -1866,65 +2071,58 @@ async def checkpoint_decision(
     - edit: Re-compute preview with new params
     - reject: Do not execute, post clarifying question
     """
-    # Get checkpoint from state (in production, load from store)
     print(f"[DEBUG] checkpoint_decision: session_id={session_id}, checkpoint_id={checkpoint_id}")
-    print(f"[DEBUG] Active sessions: {list(_session_store.keys())}")
 
-    if not session_id or session_id not in _session_store:
-        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
 
-    state = _session_store[session_id]
+    state = await get_session_or_404(session_id)
     checkpoint = state.checkpoint
     print(f"[DEBUG] Current checkpoint in state: {checkpoint.id if checkpoint else None}")
 
     if not checkpoint or checkpoint.id != checkpoint_id:
         raise HTTPException(status_code=404, detail=f"Checkpoint not found: {checkpoint_id} (session has {checkpoint.id if checkpoint else 'none'})")
 
-        # Handle session auto-approve
-        if request.auto_approve:
-            from checkpoint.manager import get_checkpoint_manager
+    if request.auto_approve:
+        from checkpoint.manager import get_checkpoint_manager
 
-            cpm = get_checkpoint_manager()
-            cpm.set_auto_approve(session_id, checkpoint.action.type, True)
-
-        # Process the decision
         cpm = get_checkpoint_manager()
-        updated = await cpm.process_decision(checkpoint, request.decision, request.params)
+        cpm.set_auto_approve(session_id, checkpoint.action.type, True)
 
-        # Day 5: If edit, re-compute preview with new params
-        if request.decision == "edit" and request.params:
-            # Re-run the product solution agent with updated parameters
-            new_payload = await _recompute_preview(state, request.params)
-            if new_payload:
-                # Update the checkpoint preview with new values
-                updated.preview = new_payload
-                updated.action.parameters.update(request.params)
-                # Update action description with new total
-                if "total_vnd" in new_payload:
-                    updated.action.description = f"Generate quotation for {new_payload['total_vnd']:,} VND"
+    cpm = get_checkpoint_manager()
+    updated = await cpm.process_decision(checkpoint, request.decision, request.params)
 
-        # Update state
-        state.checkpoint = updated
+    if request.decision == "edit" and request.params:
+        new_payload = await _recompute_preview(state, request.params)
+        if new_payload:
+            updated.preview = new_payload
+            updated.action.parameters.update(request.params)
+            if "total_vnd" in new_payload:
+                updated.action.description = f"Generate quotation for {new_payload['total_vnd']:,} VND"
 
-        # Generate clarifying question if rejected
-        clarifying_question = None
-        if request.decision == "reject":
-            clarifying_question = cpm.get_clarifying_question(updated)
+    state.checkpoint = updated
+    update_session(state)
+    try:
+        await get_memory_repo().save_session(state)
+    except Exception as exc:
+        print(f"Warning: failed to persist session after checkpoint_decision: {exc}")
 
-        return {
-            "checkpoint": updated.model_dump(),
-            "clarifying_question": clarifying_question,
-            "auto_approve_enabled": request.auto_approve,
-        }
+    clarifying_question = None
+    if request.decision == "reject":
+        clarifying_question = cpm.get_clarifying_question(updated)
 
-    raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "checkpoint": updated.model_dump(),
+        "clarifying_question": clarifying_question,
+        "auto_approve_enabled": request.auto_approve,
+    }
 
 
 @app.get("/checkpoint/{checkpoint_id}")
 async def get_checkpoint(checkpoint_id: str, session_id: Optional[str] = None):
     """Get checkpoint details."""
-    if session_id and session_id in _session_store:
-        state = _session_store[session_id]
+    if session_id:
+        state = await get_session_or_404(session_id)
         checkpoint = state.checkpoint
 
         if checkpoint and checkpoint.id == checkpoint_id:
