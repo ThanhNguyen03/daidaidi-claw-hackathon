@@ -5,10 +5,10 @@ Primary control plane for the multi-agent sales workflow.
 
 Responsibilities:
 - Validate the brief without assuming missing context
-- Ask targeted clarifying questions only when required
+- Continue with best-effort routing when context is incomplete
 - Build the execution plan from the actual brief and desired output
 - Dispatch to the best-fit specialist agents
-- Preserve the anti-loop guard and session question stack
+- Preserve the anti-loop guard and session state
 
 This module is the runtime source of truth for `sales_orchestrator`.
 Legacy modules re-export from here for backward compatibility only.
@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import asyncio
 import os
+import re
 import uuid
 from typing import Optional
 
@@ -38,6 +39,7 @@ from validation.validator import get_validation_service
 
 
 DEFAULT_MAX_HOP_DEPTH = 4
+DISABLE_VALIDATION_QUESTIONS = True
 
 
 class Orchestrator:
@@ -45,7 +47,7 @@ class Orchestrator:
 
     def __init__(self, max_hop_depth: int = DEFAULT_MAX_HOP_DEPTH):
         self.name = "sales_orchestrator"
-        self.role_description = "Supervisor that validates briefs, asks clarifying questions, and routes tasks to specialists"
+        self.role_description = "Supervisor that parses briefs, routes tasks, and coordinates specialist agents"
         self.max_hop_depth = max_hop_depth
 
         # Load SKILL.md directly from file — always available, never depends on KB being populated
@@ -110,6 +112,42 @@ class Orchestrator:
             if msg.get("role") == "user":
                 return msg.get("content", "")
         return ""
+
+    def _is_casual_chat_heuristic(self, message: str) -> bool:
+        normalized = re.sub(r"\s+", " ", (message or "").strip().lower())
+        if not normalized:
+            return True
+
+        casual_messages = {
+            "hi", "hello", "hey", "helo", "yo",
+            "xin chao", "xin chào", "chao", "chào",
+            "hello there", "hi there",
+            "thanks", "thank you", "cam on", "cảm ơn",
+            "ok", "okay", "oke", "vâng", "vang",
+        }
+        if normalized in casual_messages:
+            return True
+
+        sales_keywords = (
+            "brief", "proposal", "quote", "bao gia", "báo giá", "campaign",
+            "ke hoach", "kế hoạch", "idea", "userflow", "wireframe", "ppt",
+            "deck", "zalo", "oa", "voucher", "redeem", "khach hang", "khách hàng",
+            "brand", "ta", "objective", "muc tieu", "mục tiêu", "industry", "goal",
+        )
+        if any(keyword in normalized for keyword in sales_keywords):
+            return False
+
+        return len(normalized.split()) <= 3
+
+    def is_control_message(self, message: str) -> bool:
+        normalized = re.sub(r"\s+", " ", (message or "").strip().lower())
+        return normalized in {
+            "continue", "continue.",
+            "go on", "go ahead",
+            "ok continue", "okay continue",
+            "tiếp", "tiếp tục", "tiếp đi",
+            "tiep", "tiep tuc", "tiep di",
+        }
 
     def _question_manager_for_state(self, state: SalesCaseState):
         question_manager = get_question_manager()
@@ -178,6 +216,12 @@ class Orchestrator:
             return {
                 "intent": "casual_chat",
                 "assistant_reply": "Hi, mình có thể giúp bạn bắt đầu một brief hoặc trả lời câu hỏi sales.",
+                }
+        if self._is_casual_chat_heuristic(message):
+            return {
+                "intent": "casual_chat",
+                "assistant_reply": "Hi, mình là AdtimaBox Sales Agent. Bạn cứ gửi brief hoặc yêu cầu campaign, mình sẽ support tiếp.",
+                "reason": "heuristic_casual_chat",
             }
 
         # Use a dual-purpose query: routing classification + brand identity for potential greeting
@@ -532,6 +576,27 @@ Return JSON only:
             )
 
         if validation_report.status == "PENDING":
+            if DISABLE_VALIDATION_QUESTIONS:
+                state.question_stack = []
+                state.validation_status = "READY"
+                return (
+                    AgentOutput(
+                        agent="sales_orchestrator",
+                        status="COMPLETE",
+                        payload={
+                            "validation_status": "READY",
+                            "best_effort": True,
+                            "missing_required": validation_report.missing_required,
+                            "ambiguities": [
+                                amb.model_dump() for amb in validation_report.ambiguities
+                            ],
+                        },
+                        summary="Validation soft-passed - proceeding with best effort",
+                        confidence=0.75,
+                    ),
+                    True,
+                )
+
             questions = await self._generate_questions(
                 state,
                 missing_fields=validation_report.missing_required or [],

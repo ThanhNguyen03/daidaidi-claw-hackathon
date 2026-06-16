@@ -67,6 +67,7 @@ APP_VERSION = "0.6.0"  # Day 6 version
 DEBUG = os.getenv("DEBUG", "true").lower() == "true"
 ACTIVE_MODE = "chat"
 COMING_SOON_MODES = {"planning", "execute", "brainstorm"}
+DISABLE_VALIDATION_QUESTIONS = True
 
 
 def _normalize_mode(mode: Optional[str]) -> str:
@@ -758,17 +759,6 @@ async def process_with_agents(
     AgentGraph which supports interrupt-before-tool HITL and durable checkpointer
     for resume. This is needed for checkpoint functionality.
     """
-    # Add user message to state
-    state.messages.extend(
-        [
-            {
-                "role": "user",
-                "content": message,
-                "timestamp": datetime.now().isoformat(),
-            },
-        ]
-    )
-
     # Day 7: Handle modes differently
     # chat mode: simple processing (no agents), handled in process_simple
     # brainstorm mode: use BrainstormManager for multi-agent discussion
@@ -877,25 +867,21 @@ async def process_with_agents(
         # Get the simple runner (handles agent dispatch)
         runner = get_simple_runner()
 
-        # Run the agent system
-        final_state, stream_events = await runner.run(state)
-
-        # Check if stream_events already contains an assistant-visible message
-        # (e.g. casual_chat reply, NEEDS_INPUT prompt, question_card)
-        # so we don't emit a duplicate fallback below.
-        already_has_assistant = any(
-            e.get("type") in ("assistant_message", "question_card")
-            for e in stream_events
-        )
-
-        # Stream status events but hold the "done" until after content
-        for event in stream_events:
-            if event.get("type") != "done":
-                yield _sse_data(event)
-
-        # Stream each completed agent's real output as a separate agent_message
+        # Use run_stream() so SSE events are yielded as each step completes.
+        # This keeps the HTTP connection alive during long multi-agent pipelines
+        # and prevents proxy/platform idle-timeout from killing the stream.
+        already_has_assistant = False
         emitted_agent_message = False
-        for agent_name, output in final_state.outputs.items():
+
+        async for event in runner.run_stream(state):
+            if event.get("type") == "done":
+                break
+            if event.get("type") in ("assistant_message", "question_card"):
+                already_has_assistant = True
+            yield _sse_data(event)
+
+        # Stream each completed agent’s real output as a separate agent_message
+        for agent_name, output in state.outputs.items():
             if agent_name == "sales_orchestrator":
                 continue
             if not output or not hasattr(output, "status"):
@@ -907,10 +893,9 @@ async def process_with_agents(
             if not content_text:
                 continue
 
-            yield _sse_data({'type': 'agent_message', 'agent': agent_name, 'content': content_text})
+            yield _sse_data({"type": "agent_message", "agent": agent_name, "content": content_text})
             emitted_agent_message = True
 
-            # Record in session history
             state.messages.append(
                 {
                     "role": "assistant",
@@ -922,26 +907,24 @@ async def process_with_agents(
 
         if not emitted_agent_message and not already_has_assistant:
             fallback_summary = ""
-            orch_output = final_state.outputs.get("sales_orchestrator")
+            orch_output = state.outputs.get("sales_orchestrator")
             if orch_output and getattr(orch_output, "summary", ""):
                 fallback_summary = str(orch_output.summary)
-            elif final_state.summary:
-                fallback_summary = str(final_state.summary)
+            elif state.summary:
+                fallback_summary = str(state.summary)
 
             if fallback_summary:
                 yield _sse_data({
-                    'type': 'assistant_message',
-                    'agent': 'sales_orchestrator',
-                    'content': fallback_summary,
+                    "type": "assistant_message",
+                    "agent": "sales_orchestrator",
+                    "content": fallback_summary,
                 })
 
-        # Update state
-        state.outputs = final_state.outputs
         state.summary = (
-            f"User: {message[:30]}... â†’ Agents: {', '.join(final_state.outputs.keys())}"
+            f"User: {message[:30]}... -> Agents: {', '.join(state.outputs.keys())}"
         )
 
-        yield _sse_data({'type': 'done'})
+        yield _sse_data({"type": "done"})
 
 
 # =============================================================================
@@ -1167,7 +1150,7 @@ async def health_check():
 async def chat(request: ChatRequest):
     """Chat endpoint - non-streaming."""
     # Get or create session
-    state = get_or_create_session(
+    state = await get_or_create_session_async(
         session_id=request.session_id,
         salesperson_id=request.salesperson_id,
         mode=request.mode,
@@ -1252,7 +1235,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
         )
 
     # Get or create session
-    state = get_or_create_session(
+    state = await get_or_create_session_async(
         session_id=payload.session_id,
         salesperson_id=payload.salesperson_id,
         mode=payload.mode,
@@ -1280,6 +1263,16 @@ async def chat_stream(request: Request, payload: ChatRequest):
             # Send user message event
             yield _sse_data({'type': 'user_message', 'content': payload.message})
             assistant_emitted = False
+
+            # Persist the latest user turn onto the session before any validation,
+            # so follow-up answers can be merged against the existing pending brief.
+            state.messages.append(
+                {
+                    "role": "user",
+                    "content": payload.message,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
 
             feedback_extractor = get_feedback_extractor()
             memory_repo = get_memory_repo()
@@ -1313,6 +1306,85 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 await memory_repo.save_profile(profile)
 
             done_chunk = _sse_data({'type': 'done'})
+            question_manager = get_question_manager()
+            question_manager.ensure_session(state.session_id)
+            if state.question_stack:
+                question_manager.restore_stack(state.question_stack)
+
+            has_pending_validation = (
+                not DISABLE_VALIDATION_QUESTIONS
+                and (
+                    state.validation_status == "PENDING"
+                    or bool(question_manager.stack.next_batch())
+                )
+            )
+
+            if has_pending_validation and not payload.brief:
+                orchestrator = get_sales_orchestrator()
+                pending_questions = question_manager.stack.next_batch()
+                if orchestrator.is_control_message(payload.message):
+                    summary = "Mình vẫn cần bạn trả lời các câu hỏi còn thiếu trước khi tiếp tục."
+                    yield _sse_data({
+                        'type': 'assistant_message',
+                        'agent': 'sales_orchestrator',
+                        'content': summary,
+                    })
+                    assistant_emitted = True
+                    yield _sse_data({
+                        'type': 'agent_status',
+                        'agent': 'scoping',
+                        'status': 'completed',
+                        'message': summary,
+                    })
+                    if pending_questions:
+                        yield _sse_data({
+                            'type': 'question_card',
+                            'questions': [q.model_dump() for q in pending_questions],
+                        })
+
+                    brief_dict = None
+                    if state.brief:
+                        brief_dict = state.brief.model_dump(mode="json")
+                    yield _sse_data({'type': 'session_updated', 'session_id': state.session_id, 'brief': brief_dict})
+                    yield done_chunk
+                    return
+
+                validation_output = await orchestrator.handle_validation_response(
+                    state, {"free_text": payload.message}
+                )
+
+                if validation_output.status != "COMPLETE":
+                    yield _sse_data({
+                        'type': 'assistant_message',
+                        'agent': 'sales_orchestrator',
+                        'content': validation_output.summary,
+                    })
+                    assistant_emitted = True
+                    yield _sse_data({
+                        'type': 'agent_status',
+                        'agent': 'scoping',
+                        'status': 'completed',
+                        'message': validation_output.summary,
+                    })
+                    if validation_output.questions:
+                        yield _sse_data({
+                            'type': 'question_card',
+                            'questions': [q.model_dump() for q in validation_output.questions],
+                        })
+
+                    update_session(state)
+                    try:
+                        await memory_repo.save_session(state)
+                    except Exception as e:
+                        print(f"Warning: Failed to persist session after free-text answer: {e}")
+
+                    brief_dict = None
+                    if state.brief:
+                        brief_dict = state.brief.model_dump(mode="json")
+                    yield _sse_data({'type': 'session_updated', 'session_id': state.session_id, 'brief': brief_dict})
+                    yield done_chunk
+                    return
+
             async for chunk in process_with_agents(state, payload.message):
                 if chunk != done_chunk:
                     if '"type": "assistant_message"' in chunk or '"type": "agent_message"' in chunk or '"type": "content"' in chunk:
@@ -1360,10 +1432,15 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 brief_dict = state.brief.model_dump(mode="json")
             yield _sse_data({'type': 'session_updated', 'session_id': state.session_id, 'brief': brief_dict})
             yield done_chunk
-        except Exception as exc:
-            print(f"Error in chat stream: {exc}")
-            yield _sse_data({'type': 'error', 'error': str(exc)})
-            yield _sse_data({'type': 'done'})
+        except BaseException as exc:
+            # Catch BaseException (not just Exception) so asyncio.CancelledError
+            # from platform/proxy timeouts is also logged and gracefully terminated.
+            print(f"Error in chat stream ({type(exc).__name__}): {exc}")
+            try:
+                yield _sse_data({'type': 'error', 'error': str(exc)})
+                yield _sse_data({'type': 'done'})
+            except Exception:
+                pass
             return
 
     return StreamingResponse(

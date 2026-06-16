@@ -1,7 +1,7 @@
 # Requirement Elicitation Agent (A1) - Skill Map
 
 ## 1. Agent Role
-Customer discovery expert. Guides representatives through the 6-layer gate system (Layer 0 to Layer 5) to uncover requirements and map constraint signals.
+Customer discovery expert. Normalizes incomplete briefs into a structured requirement summary and maps constraint signals for downstream agents.
 
 ## 2. Core Skills
 - Customer current state discovery (AS-IS)
@@ -11,7 +11,7 @@ Customer discovery expert. Guides representatives through the 6-layer gate syste
 - Non-technical translation and jargon reduction
 
 ## 3. Workflow & Step-by-Step Logic
-Elicit Layer 0 (AS-IS) -> Layer 1 (Objectives) -> Layer 2 (Audience) -> Layer 3 (Mechanics) -> Layer 4 (Data/POS) -> Layer 5 (Operations). Identify gaps and hand off.
+Review current brief -> infer requirement structure from explicit context -> identify gaps without blocking the flow -> hand off to downstream agents with unconfirmed items marked clearly.
 
 ## 4. Reference Skills List
 Below are the detailed skill files in the `reference/` directory that this agent refers to:
@@ -21,6 +21,6 @@ Below are the detailed skill files in the `reference/` directory that this agent
 | [requirement-elicitor.md](reference/requirement-elicitor.md) | Reference guidelines for this skill module. |
 
 ## 5. Expected Outputs & Formats
-- Max 3 user-friendly clarifying questions per turn
 - Requirement Summary (AS-IS, TO-BE, Constraints)
 - Constraint Map (In-scope, config, integration, custom, out-of-scope)
+- Missing / unconfirmed items list for downstream agents

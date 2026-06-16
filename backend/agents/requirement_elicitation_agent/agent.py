@@ -210,25 +210,13 @@ Rules:
 
     async def run(self, state: SalesCaseState) -> AgentOutput:
         brief = state.brief
-        questions = await self._missing_questions(state)
-        if questions:
-            return AgentOutput(
-                agent=self.name,
-                status="NEEDS_INPUT",
-                payload={
-                    "missing_context": [q.target_field for q in questions],
-                    "next_questions": [q.model_dump() for q in questions],
-                },
-                summary="Need a little more context before normalizing the brief.",
-                confidence=0.9,
-                questions=questions,
-            )
 
         industry = brief.industry if brief else ""
         goal = brief.goal if brief else ""
         audience = brief.target_audience if brief else ""
         reqs = brief.specific_requirements if brief else []
         constraints = brief.constraints if brief else []
+        additional_context = brief.additional_context if brief else ""
 
         query = " ".join(
             [
@@ -238,6 +226,7 @@ Rules:
                 audience or "",
                 " ".join(reqs or []),
                 " ".join(constraints or []),
+                additional_context or "",
             ]
         ).strip()
         rag_context = await self.build_required_skill_context(query, skill_top_k=2, knowledge_top_k=3)
@@ -256,6 +245,7 @@ Brief:
 - Audience: {audience}
 - Requirements: {', '.join(reqs) if reqs else 'None'}
 - Constraints: {', '.join(constraints) if constraints else 'None'}
+- Additional context: {additional_context or 'None'}
 
 Return JSON-like content with:
 1. requirement_summary
@@ -263,6 +253,7 @@ Return JSON-like content with:
 3. to_be
 4. constraint_map
 5. unresolved_questions
+6. missing_or_unconfirmed_items
 """
         try:
             client = get_llm_client(self.name)
@@ -273,7 +264,7 @@ Return JSON-like content with:
                 ],
                 stream=False,
                 temperature=0.3,
-                max_tokens=1800,
+                max_tokens=900,
             )
             content = response.choices[0].message.content if response.choices else ""
             return AgentOutput(
@@ -284,6 +275,8 @@ Return JSON-like content with:
                     "industry": industry,
                     "goal": goal,
                     "target_audience": audience,
+                    "missing_context": [],
+                    "missing_or_unconfirmed_items": [],
                     "rag_used": bool(rag_context),
                 },
                 summary="Requirement summary prepared",

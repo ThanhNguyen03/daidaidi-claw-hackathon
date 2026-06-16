@@ -1,18 +1,18 @@
 ---
 name: adtimabox-requirement-elicitor
 description: >
-  AdtimaBox requirement elicitation advisor — activate when a sales rep or agent needs to deeply understand a client's business problem before recommending a solution. Input: client brief, partial info, or open-ended client statement. Output: structured set of elicitation questions, requirement summary, and translated spec ready to hand off to adtimabox-case-studies or adtimabox-product-advisor. Triggers include: "client wants loyalty", "brand needs data collection", "client has POS wants points", "not sure which package", "brief is vague", or any situation where client needs are not yet clear enough to recommend a solution.
+  AdtimaBox requirement elicitation advisor — activate when a sales rep or agent needs to deeply understand a client's business problem before recommending a solution. Input: client brief, partial info, or open-ended client statement. Output: requirement summary, translated spec, and a clear list of missing or unconfirmed items ready to hand off to adtimabox-case-studies or adtimabox-product-advisor.
 ---
 
 # AdtimaBox Requirement Elicitor
 
-**Scope:** Help sales/agent ask the right questions to uncover what the client actually needs — then translate into a structured requirement ready for solution matching.
+**Scope:** Help sales/agent uncover what the client actually needs from the existing brief, then translate it into a structured requirement ready for solution matching without blocking the runtime.
 
 **Does NOT do:** Recommend specific packages (→ adtimabox-product-advisor), match case studies (→ adtimabox-case-studies), explain user flows (→ adtimabox-miniapp-specialist), or assess tech integration (→ adtimabox-integration).
 
 **Output always includes:**
-1. Clarifying questions grouped by layer
-2. Requirement summary once answers are known
+1. Requirement summary from the current brief
+2. Missing or unconfirmed items that downstream agents must respect
 3. Flag any scope that may require custom build or integration
 
 ---
@@ -295,7 +295,7 @@ HANDOFF TO:
 - Do not recommend a specific package before completing Layer 0 and Layer 1
 - Do not confirm whether a custom flow is feasible — flag and refer to tech team
 - Do not quote pricing in this skill — hand off to adtimabox-product-advisor
-- Do not ask more than 3 questions at once — prioritize the most blocking unknowns first
+- Do not block the runtime just because information is missing
 - Do not assume the same solution works for different actor types (B2C ≠ B2B ≠ HCP)
 
 ---

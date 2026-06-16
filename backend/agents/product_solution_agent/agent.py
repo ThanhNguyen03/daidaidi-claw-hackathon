@@ -6,7 +6,7 @@ integration hints, and pricing references.
 
 This agent is conservative by design:
 - Uses only provided brief, prior agent outputs, and internal references
-- Returns NEEDS_INPUT when required context is missing
+- Continues with best effort when required context is missing
 - Never invents pricing or capability claims beyond internal knowledge
 """
 
@@ -67,15 +67,6 @@ class ProductSolutionAgent(BaseAgent):
     async def run(self, state: SalesCaseState) -> AgentOutput:
         brief = state.brief
         questions = self._required_questions(brief)
-        if questions:
-            return AgentOutput(
-                agent=self.name,
-                status="NEEDS_INPUT",
-                payload={"missing_context": [q.target_field for q in questions]},
-                summary="Need more context before proposing the product solution and pricing.",
-                confidence=0.9,
-                questions=questions,
-            )
 
         industry = brief.industry if brief else ""
         goal = brief.goal if brief else ""
@@ -139,6 +130,9 @@ Return JSON-like content with:
 4. pricing_breakdown
 5. timeline_estimate
 6. confirmation_flags
+
+Missing or unconfirmed context:
+{", ".join(q.target_field for q in questions) if questions else "None"}
 """
 
         try:
@@ -180,10 +174,11 @@ Return JSON-like content with:
                     "confirmation_flags": [
                         "Any custom integration or data sync needs tech confirmation",
                         "Any unsupported product capability must be clarified before proposal output",
-                    ],
+                    ] + [f"{q.target_field} is still unconfirmed" for q in questions],
+                    "missing_context": [q.target_field for q in questions],
                     "rag_used": bool(rag_context),
                 },
-                summary=f"Product solution prepared for {industry or 'client'}",
+                summary=f"Product solution prepared for {industry or 'client'}" + (" with pending confirmations noted" if questions else ""),
                 confidence=0.8 if rag_context else 0.6,
                 needs=None,
                 questions=[],

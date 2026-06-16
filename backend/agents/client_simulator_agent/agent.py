@@ -99,17 +99,7 @@ class ClientSimulatorAgent(BaseAgent):
     async def run(self, state: SalesCaseState) -> AgentOutput:
         context = self._gather_context(state)
         user_message = self._latest_user_message(state)
-
-        if not any(context.values()):
-            return AgentOutput(
-                agent=self.name,
-                status="NEEDS_INPUT",
-                payload={"missing_context": ["market_strategy", "product_solution", "design"]},
-                summary="Need proposal context or generated artifacts before simulating client objections.",
-                confidence=0.9,
-                needs=None,
-                questions=[],
-            )
+        missing_context = [k for k, v in context.items() if not v]
 
         query = " ".join([
             "client simulator",
@@ -137,6 +127,8 @@ Return JSON with:
 - risks: list of deal-killing or pitch-risk items
 - scores: object with clarity, credibility, value_prop, pricing scores from 1 to 5
 - recommendations: actionable fixes
+
+If proposal context is incomplete, still review what exists and explicitly mention the missing areas.
 """
 
         try:
@@ -159,6 +151,7 @@ Return JSON with:
                         "review": content,
                         "rag_used": bool(rag_context),
                         "context_keys": [k for k, v in context.items() if v],
+                        "missing_context": missing_context,
                     },
                     summary="Client simulation completed",
                     confidence=0.85 if rag_context else 0.7,
@@ -176,6 +169,7 @@ Return JSON with:
                 **fallback,
                 "rag_used": bool(rag_context),
                 "context_keys": [k for k, v in context.items() if v],
+                "missing_context": missing_context,
                 "mode": "fallback",
             },
             summary="Client simulation completed with fallback review",

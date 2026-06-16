@@ -100,23 +100,23 @@ export default function Home() {
   });
 
   // Check backend connection on mount
-  useEffect(() => {
-    const checkConnection = async () => {
-      try {
-        const res = await fetch(
-          `${getApiBaseUrl()}/health`
-        );
-        const data = await res.json();
-        setIsConnected(data.kb_configured || data.llm_configured || false);
-      } catch {
-        setIsConnected(false);
-      }
-    };
+  // useEffect(() => {
+  //   const checkConnection = async () => {
+  //     try {
+  //       const res = await fetch(
+  //         `${getApiBaseUrl()}/health`
+  //       );
+  //       const data = await res.json();
+  //       setIsConnected(data.kb_configured || data.llm_configured || false);
+  //     } catch {
+  //       setIsConnected(false);
+  //     }
+  //   };
 
-    checkConnection();
-    const interval = setInterval(checkConnection, 30000);
-    return () => clearInterval(interval);
-  }, []);
+  //   checkConnection();
+  //   const interval = setInterval(checkConnection, 30000);
+  //   return () => clearInterval(interval);
+  // }, []);
 
   // Load constraints and profile when identified
   useEffect(() => {

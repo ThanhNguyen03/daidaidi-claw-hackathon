@@ -33,18 +33,29 @@ class MarketStrategyAgent(BaseAgent):
                 return msg.get("content", "")
         return ""
 
+    def _build_missing_context_notes(self, state: SalesCaseState) -> tuple[list[str], str]:
+        brief = state.brief
+        missing_fields: list[str] = []
+        if not brief:
+            missing_fields = ["industry", "goal", "target_audience"]
+        else:
+            for field in ["industry", "goal", "target_audience"]:
+                if not getattr(brief, field, None):
+                    missing_fields.append(field)
+
+        if not missing_fields:
+            return [], ""
+
+        notes = (
+            "Missing or unconfirmed context: "
+            + ", ".join(missing_fields)
+            + ". Proceed with best effort only and label unsupported points as pending confirmation."
+        )
+        return missing_fields, notes
+
     async def run(self, state: SalesCaseState) -> AgentOutput:
         brief = state.brief
-        if not brief or (not brief.industry and not brief.goal and not brief.target_audience):
-            return AgentOutput(
-                agent=self.name,
-                status="NEEDS_INPUT",
-                payload={"missing_context": ["industry", "goal", "target_audience"]},
-                summary="Need more brief context before building a grounded market strategy.",
-                confidence=0.9,
-                needs=None,
-                questions=[],
-            )
+        missing_fields, missing_notes = self._build_missing_context_notes(state)
 
         industry = brief.industry if brief else ""
         goal = brief.goal if brief else ""
@@ -82,6 +93,7 @@ Return a concise but useful strategy with:
 6. Recommended next steps
 
 Do not invent unsupported market facts. If something is not in the provided context, label it as unconfirmed or pending confirmation.
+{missing_notes}
 """
 
         try:
@@ -104,9 +116,10 @@ Do not invent unsupported market facts. If something is not in the provided cont
                     "industry": industry,
                     "goal": goal,
                     "target_audience": audience,
+                    "missing_context": missing_fields,
                     "rag_used": bool(rag_context),
                 },
-                summary=f"Market strategy completed for {industry or 'client'}",
+                summary=f"Market strategy completed for {industry or 'client'}" + (" with best-effort constraints noted" if missing_fields else ""),
                 confidence=0.85 if rag_context else 0.65,
                 needs=None,
                 questions=[],

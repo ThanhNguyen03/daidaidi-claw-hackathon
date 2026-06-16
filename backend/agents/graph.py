@@ -24,6 +24,9 @@ from agents.base import BaseAgent
 from agents.registry import get_registry
 from agents.sales_orchestrator_agent.agent import get_sales_orchestrator
 
+AGENT_TIMEOUT_SECONDS = 45
+PARALLEL_HEARTBEAT_SECONDS = 5
+
 # =============================================================================
 # Graph Node Functions
 # =============================================================================
@@ -333,7 +336,6 @@ class SimpleAgentRunner:
         """Run one agent with constraint injection. Returns AgentOutput."""
         from agents.registry import get_agent
         from memory.constraint_injection import get_constraints_for_agent
-        from schemas.state import AgentOutput
 
         agent = get_agent(agent_name)
         if agent is None:
@@ -352,7 +354,23 @@ class SimpleAgentRunner:
         agent._base_prompt = agent.get_prompt_with_constraints(agent_constraints)
 
         try:
-            result = await agent.run(state)
+            print(f"[agent-runner] starting agent={agent_name}")
+            result = await asyncio.wait_for(
+                agent.run(state),
+                timeout=AGENT_TIMEOUT_SECONDS,
+            )
+            print(f"[agent-runner] completed agent={agent_name} status={result.status}")
+        except asyncio.TimeoutError:
+            result = AgentOutput(
+                agent=agent_name,
+                status="FAILED",
+                payload={"error": f"Agent timed out after {AGENT_TIMEOUT_SECONDS}s"},
+                summary=f"Agent timeout after {AGENT_TIMEOUT_SECONDS}s",
+                confidence=0.0,
+                needs=None,
+                questions=[],
+            )
+            print(f"[agent-runner] timeout agent={agent_name}")
         except Exception as exc:
             result = AgentOutput(
                 agent=agent_name,
@@ -363,23 +381,28 @@ class SimpleAgentRunner:
                 needs=None,
                 questions=[],
             )
+            print(f"[agent-runner] failed agent={agent_name} error={exc}")
         finally:
             agent._base_prompt = original_prompt
 
         return result
 
     # ------------------------------------------------------------------
-    # Main run loop
+    # Streaming run — yields events as each step completes
+    # This keeps the SSE connection alive throughout long pipelines.
     # ------------------------------------------------------------------
 
-    async def run(self, state: SalesCaseState) -> tuple[SalesCaseState, list[dict]]:
+    async def run_stream(self, state: SalesCaseState):
+        """
+        Async-generator version of run().
+        Yields SSE event dicts as each pipeline step completes so the HTTP
+        connection stays alive and intermediary status reaches the client in
+        real-time — preventing proxy/platform idle-connection timeouts.
+        """
         from repos.memory_repo import get_memory_repo
-        from memory.constraint_injection import get_constraints_for_agent
 
-        stream_events: list[dict] = []
         state.outputs = {}
 
-        # Load per-salesperson feedback rules for constraint injection
         memory_repo = get_memory_repo()
         constraints = await memory_repo.load_feedback_rules(
             state.salesperson_id, active_only=True
@@ -387,73 +410,43 @@ class SimpleAgentRunner:
         state.constraints = constraints
 
         # ── A1: Scoping & validation ──────────────────────────────────────
-        stream_events.append({
-            "type": "agent_status", "agent": "scoping",
-            "status": "thinking", "message": "Validating brief…",
-        })
+        yield {"type": "agent_status", "agent": "scoping", "status": "thinking", "message": "Validating brief…"}
 
         try:
             validation_output, should_dispatch = await self.orchestrator.validate_before_dispatch(state)
         except Exception as exc:
             print(f"Error in validate_before_dispatch: {exc}")
             error_msg = "Xin lỗi, có lỗi xảy ra khi xử lý yêu cầu. Vui lòng thử lại."
-            validation_output = AgentOutput(
-                agent="sales_orchestrator",
-                status="FAILED",
-                payload={"error": str(exc)},
-                summary=error_msg,
-                confidence=0.0,
+            state.outputs["sales_orchestrator"] = AgentOutput(
+                agent="sales_orchestrator", status="FAILED",
+                payload={"error": str(exc)}, summary=error_msg, confidence=0.0,
             )
-            state.outputs["sales_orchestrator"] = validation_output
-            stream_events.append({
-                "type": "assistant_message",
-                "agent": "sales_orchestrator",
-                "content": error_msg,
-            })
-            stream_events.append({"type": "done"})
-            return state, stream_events
+            yield {"type": "assistant_message", "agent": "sales_orchestrator", "content": error_msg}
+            yield {"type": "done"}
+            return
 
         if not should_dispatch:
             state.outputs["sales_orchestrator"] = validation_output
             if validation_output.summary:
-                stream_events.append({
-                    "type": "assistant_message",
-                    "agent": "sales_orchestrator",
-                    "content": validation_output.summary,
-                })
-            stream_events.append({
-                "type": "agent_status", "agent": "scoping",
-                "status": "completed" if validation_output.status == "NEEDS_INPUT" else "failed",
-                "message": validation_output.summary,
-            })
+                yield {"type": "assistant_message", "agent": "sales_orchestrator", "content": validation_output.summary}
+            # COMPLETE = casual chat (valid, no dispatch), NEEDS_INPUT = waiting for answers
+            scoping_status = "completed" if validation_output.status in ("COMPLETE", "NEEDS_INPUT") else "failed"
+            yield {"type": "agent_status", "agent": "scoping", "status": scoping_status, "message": validation_output.summary}
             if validation_output.questions:
-                stream_events.append({
-                    "type": "question_card",
-                    "questions": [q.model_dump() for q in validation_output.questions],
-                })
-            stream_events.append({"type": "done"})
-            return state, stream_events
+                yield {"type": "question_card", "questions": [q.model_dump() for q in validation_output.questions]}
+            yield {"type": "done"}
+            return
 
-        stream_events.append({
-            "type": "agent_status", "agent": "scoping",
-            "status": "completed", "message": "Brief validated ✓",
-        })
+        yield {"type": "agent_status", "agent": "scoping", "status": "completed", "message": "Brief validated ✓"}
 
         # ── A2: Orchestrator — pure routing, no execution ─────────────────
-        stream_events.append({
-            "type": "agent_status", "agent": "sales_orchestrator",
-            "status": "thinking", "message": "Building execution plan…",
-        })
+        yield {"type": "agent_status", "agent": "sales_orchestrator", "status": "thinking", "message": "Building execution plan…"}
 
         if not state.plan or not state.plan.tasks:
             state.plan = await self.orchestrator._create_execution_plan(state)
 
         task_names = [t.agent_name for t in state.plan.tasks]
-        stream_events.append({
-            "type": "agent_status", "agent": "sales_orchestrator",
-            "status": "completed",
-            "message": f"Plan ready → {', '.join(task_names)}",
-        })
+        yield {"type": "agent_status", "agent": "sales_orchestrator", "status": "completed", "message": f"Plan ready → {', '.join(task_names)}"}
 
         # ── Execute tasks grouped by parallel_group ───────────────────────
         group_map: dict[int, list] = {}
@@ -466,59 +459,78 @@ class SimpleAgentRunner:
             if not eligible:
                 continue
 
-            # Mark all agents in this group as visited before execution
             for task in eligible:
                 state.visited.append(task.agent_name)
                 state.hop_depth += 1
-                stream_events.append({
+                yield {
                     "type": "agent_status", "agent": task.agent_name,
                     "status": "thinking",
-                    "message": task.task_description
-                    + (" [parallel]" if len(eligible) > 1 else ""),
-                })
+                    "message": task.task_description + (" [parallel]" if len(eligible) > 1 else ""),
+                }
 
-            if len(eligible) == 1:
-                # Sequential — single agent
-                task = eligible[0]
-                result = await self._run_agent(
-                    task.agent_name, task.task_description, state, constraints
+            pending = {
+                asyncio.create_task(
+                    self._run_agent(
+                        task.agent_name,
+                        task.task_description,
+                        state,
+                        constraints,
+                    )
+                ): task
+                for task in eligible
+            }
+
+            while pending:
+                done, _ = await asyncio.wait(
+                    pending.keys(),
+                    timeout=PARALLEL_HEARTBEAT_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-                state.outputs[task.agent_name] = result
-                stream_events.append({
-                    "type": "agent_status", "agent": task.agent_name,
-                    "status": "completed" if result.status == "COMPLETE" else "failed",
-                    "message": result.summary,
-                })
-            else:
-                # Parallel — asyncio.gather across the whole group
-                results = await asyncio.gather(
-                    *[
-                        self._run_agent(t.agent_name, t.task_description, state, constraints)
-                        for t in eligible
-                    ],
-                    return_exceptions=True,
-                )
-                for task, result in zip(eligible, results):
-                    if isinstance(result, Exception):
-                        err = AgentOutput(
-                            agent=task.agent_name, status="FAILED",
-                            payload={"error": str(result)}, summary=str(result),
-                            confidence=0.0, needs=None, questions=[],
+
+                if not done:
+                    pending_names = [task.agent_name for task in pending.values()]
+                    yield {
+                        "type": "agent_status",
+                        "agent": "sales_orchestrator",
+                        "status": "thinking",
+                        "message": "Still processing: " + ", ".join(pending_names),
+                    }
+                    continue
+
+                for future in done:
+                    task = pending.pop(future)
+                    try:
+                        result = future.result()
+                    except BaseException as exc:
+                        result = AgentOutput(
+                            agent=task.agent_name,
+                            status="FAILED",
+                            payload={"error": str(exc)},
+                            summary=str(exc),
+                            confidence=0.0,
+                            needs=None,
+                            questions=[],
                         )
-                        state.outputs[task.agent_name] = err
-                        stream_events.append({
-                            "type": "agent_status", "agent": task.agent_name,
-                            "status": "failed", "message": str(result),
-                        })
-                    else:
-                        state.outputs[task.agent_name] = result
-                        stream_events.append({
-                            "type": "agent_status", "agent": task.agent_name,
-                            "status": "completed" if result.status == "COMPLETE" else "failed",
-                            "message": result.summary,
-                        })
 
-        stream_events.append({"type": "done"})
+                    state.outputs[task.agent_name] = result
+                    yield {
+                        "type": "agent_status",
+                        "agent": task.agent_name,
+                        "status": "completed" if result.status == "COMPLETE" else "failed",
+                        "message": result.summary,
+                    }
+
+        yield {"type": "done"}
+
+    # ------------------------------------------------------------------
+    # Legacy buffered run — kept for the non-streaming /chat endpoint
+    # ------------------------------------------------------------------
+
+    async def run(self, state: SalesCaseState) -> tuple[SalesCaseState, list[dict]]:
+        """Buffered version: collects all events then returns. Used by non-streaming /chat."""
+        stream_events: list[dict] = []
+        async for event in self.run_stream(state):
+            stream_events.append(event)
         return state, stream_events
 
 

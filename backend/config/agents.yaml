@@ -16,7 +16,7 @@ agents:
   sales_orchestrator:
     name: "Sales Orchestrator"
     model: MODEL_SALES_ORCHESTRATOR
-    role: "Supervisor that validates briefs, asks clarifying questions, and routes tasks"
+    role: "Supervisor that parses briefs, routes tasks, and coordinates specialist agents"
     enabled: true
     kind: generator
     critical: true
@@ -24,7 +24,7 @@ agents:
   requirement_elicitation:
     name: "Requirement Elicitation"
     model: MODEL_REQUIREMENT_ELICITATION
-    role: "Normalize briefs, ask blocking questions, and translate requirements"
+    role: "Normalize briefs, surface gaps, and translate requirements for downstream agents"
     enabled: true
     kind: generator
     critical: true
@@ -77,4 +77,4 @@ validation:
   name: "Validation"
   model: MODEL_VALIDATION
   role: "Fast validation pre-pass"
-  description: "Gemma-4 powered validation to detect missing fields and ambiguities"
+  description: "Gemma-4 powered pre-pass to detect missing fields and ambiguities without blocking dispatch"
