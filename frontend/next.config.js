@@ -14,7 +14,7 @@ const nextConfig = {
     // These will be available client-side
     NEXT_PUBLIC_API_URL:
       process.env.NEXT_PUBLIC_API_URL ||
-      "https://endpoint-3a16ebff-db7e-4961-bafc-6ae01f0bdd74.agentbase-runtime.aiplatform.vngcloud.vn",
+      "http://localhost:8000",
   },
   // Images configuration for production
   images: {

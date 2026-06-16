@@ -171,7 +171,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         message,
         session_id: sessionId,
         salesperson_id: salespersonId,
-        mode: 'chat',
+        mode,
         brief,
       });
 
@@ -229,7 +229,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sessionId, salespersonId, resetAgentStatuses]
+    [sessionId, salespersonId, resetAgentStatuses, mode]
   );
 
   // Handle SSE events
@@ -245,6 +245,25 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
         case 'user_message':
           // User message echoed back
+          break;
+
+        case 'assistant_message':
+          {
+            const agentName = (data.agent as string) || 'sales_orchestrator';
+            const agentContent = (data.content as string) || '';
+            if (agentContent) {
+              setIsThinking(false);
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: 'assistant',
+                  content: agentContent,
+                  agent: agentName,
+                  timestamp: new Date().toISOString(),
+                },
+              ]);
+            }
+          }
           break;
 
         case 'thinking_start':

@@ -208,6 +208,7 @@ export interface ChatResponse {
 export type SSEEventType =
   | 'session'
   | 'user_message'
+  | 'assistant_message'
   | 'content'
   | 'error'
   | 'done'

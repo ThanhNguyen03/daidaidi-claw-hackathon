@@ -287,6 +287,22 @@ def serialize_workflow_state(state: SalesCaseState) -> dict[str, Any]:
     }
 
 
+def _json_default(value: Any) -> Any:
+    """Make SSE payloads resilient to datetimes and Pydantic objects."""
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, set):
+        return list(value)
+    return str(value)
+
+
+def _sse_data(payload: dict[str, Any]) -> str:
+    """Serialize a server-sent event payload safely."""
+    return f"data: {json.dumps(payload, default=_json_default)}\n\n"
+
+
 # =============================================================================
 # Agent-Based Processing (Day 2)
 # =============================================================================
@@ -663,6 +679,21 @@ def _extract_agent_content(agent_name: str, output) -> str:
     if "narrative" in payload:
         return str(payload["narrative"])
 
+    # requirement elicitation: normalized brief / clarification summary
+    if "requirement_summary" in payload:
+        return str(payload["requirement_summary"])
+
+    if "next_questions" in payload:
+        questions = payload["next_questions"]
+        if isinstance(questions, list) and questions:
+            lines = ["**Need a few clarifications before proceeding:**"]
+            for q in questions:
+                if isinstance(q, dict):
+                    lines.append(f"- {q.get('text', str(q))}")
+                else:
+                    lines.append(f"- {q}")
+            return "\n".join(lines)
+
     # product_solution / integration: integration summary
     if "integration" in payload:
         return str(payload["integration"])
@@ -778,7 +809,7 @@ async def process_with_agents(
                 participants=participants,
                 max_rounds=8
             )
-            yield f"data: {json.dumps({'type': 'brainstorm_start', 'session_id': state.session_id, 'participants': participants})}\n\n"
+            yield _sse_data({'type': 'brainstorm_start', 'session_id': state.session_id, 'participants': participants})
 
         # Add user message to brainstorm
         brain_state.add_message(speaker="user", content=message, is_user=True)
@@ -787,7 +818,7 @@ async def process_with_agents(
         next_speaker = brain_state.select_next_speaker()
 
         if next_speaker:
-            yield f"data: {json.dumps({'type': 'speaker_turn', 'speaker': next_speaker})}\n\n"
+            yield _sse_data({'type': 'speaker_turn', 'speaker': next_speaker})
 
             # Get agent response for the speaker
             runner = get_simple_runner()
@@ -803,7 +834,7 @@ async def process_with_agents(
             # Stream events and capture agent output
             agent_output = ""
             for event in stream_events:
-                yield f"data: {json.dumps(event)}\n\n"
+                yield _sse_data(event)
                 if event.get("type") == "content":
                     agent_output += event.get("content", "")
 
@@ -820,10 +851,10 @@ async def process_with_agents(
         if should_stop:
             brain_state.is_ended = True
             summary = brain_state.get_summary()
-            yield f"data: {json.dumps({'type': 'brainstorm_end', 'reason': reason, 'summary': summary})}\n\n"
+            yield _sse_data({'type': 'brainstorm_end', 'reason': reason, 'summary': summary})
         else:
             # Continue - prompt next speaker
-            yield f"data: {json.dumps({'type': 'continue', 'next_speaker': brain_state.current_speaker})}\n\n"
+            yield _sse_data({'type': 'continue', 'next_speaker': brain_state.current_speaker})
 
         return
 
@@ -837,7 +868,7 @@ async def process_with_agents(
         stream_events = []
         async for event in graph.run_stream(state, config=config):
             stream_events.append(event)
-            yield f"data: {json.dumps(event)}\n\n"
+            yield _sse_data(event)
 
         # Get final state from the graph (graph updates state in place)
         # Copy graph outputs back to our state
@@ -857,7 +888,7 @@ async def process_with_agents(
         # Stream status events but hold the "done" until after content
         for event in stream_events:
             if event.get("type") != "done":
-                yield f"data: {json.dumps(event)}\n\n"
+                yield _sse_data(event)
 
         # Stream each completed agent's real output as a separate agent_message
         for agent_name, output in final_state.outputs.items():
@@ -872,7 +903,7 @@ async def process_with_agents(
             if not content_text:
                 continue
 
-            yield f"data: {json.dumps({'type': 'agent_message', 'agent': agent_name, 'content': content_text})}\n\n"
+            yield _sse_data({'type': 'agent_message', 'agent': agent_name, 'content': content_text})
 
             # Record in session history
             state.messages.append(
@@ -890,7 +921,7 @@ async def process_with_agents(
             f"User: {message[:30]}... → Agents: {', '.join(final_state.outputs.keys())}"
         )
 
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        yield _sse_data({'type': 'done'})
 
 
 # =============================================================================
@@ -1003,7 +1034,7 @@ async def process_simple(
     try:
         client = get_llm_client("sales_orchestrator")
     except ValueError as e:
-        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+        yield _sse_data({'type': 'error', 'error': str(e)})
         return
 
     # Record user message in session history before calling the LLM
@@ -1048,18 +1079,18 @@ async def process_simple(
                 token = chunk.choices[0].delta.content
                 for kind, text in tf.push(token):
                     if kind == "think_start":
-                        yield f"data: {json.dumps({'type': 'thinking_start'})}\n\n"
+                        yield _sse_data({'type': 'thinking_start'})
                     elif kind == "think_end":
-                        yield f"data: {json.dumps({'type': 'thinking_end'})}\n\n"
+                        yield _sse_data({'type': 'thinking_end'})
                     elif kind == "content" and text:
                         accumulated += text
-                        yield f"data: {json.dumps({'type': 'content', 'content': text})}\n\n"
+                        yield _sse_data({'type': 'content', 'content': text})
                     # "think" text is silently discarded
 
         for kind, text in tf.flush():
             if kind == "content" and text:
                 accumulated += text
-                yield f"data: {json.dumps({'type': 'content', 'content': text})}\n\n"
+                yield _sse_data({'type': 'content', 'content': text})
 
         if accumulated:
             state.messages.append(
@@ -1072,9 +1103,9 @@ async def process_simple(
             )
 
     except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+        yield _sse_data({'type': 'error', 'error': str(e)})
 
-    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    yield _sse_data({'type': 'done'})
 
 
 # =============================================================================
@@ -1127,7 +1158,7 @@ async def chat(request: ChatRequest):
 
     # For Day 2, we'll use simple response (non-streaming)
     # The full agent dispatch would be implemented later
-        client = get_llm_client("sales_orchestrator")
+    client = get_llm_client("sales_orchestrator")
     messages = [{"role": "user", "content": request.message}]
 
     try:
@@ -1170,6 +1201,37 @@ def _looks_like_brief(message: str) -> bool:
     hit_count = sum(1 for kw in _BRIEF_KEYWORDS if kw in lower)
     # Long message with at least 1 keyword, or short message with 2+ keywords
     return (len(message) > 200 and hit_count >= 1) or hit_count >= 2
+
+
+def _should_send_chat_opening(state: SalesCaseState, message: str) -> bool:
+    """Send an intro/suggestion opening for the first non-brief chat turn."""
+    if _looks_like_brief(message):
+        return False
+
+    user_turns = sum(1 for msg in state.messages if msg.get("role") == "user")
+    return user_turns == 1
+
+
+def _build_chat_opening_messages() -> list[dict[str, str]]:
+    """Return a short intro plus a prompt that nudges the user toward a brief."""
+    return [
+        {
+            "role": "assistant",
+            "agent": "sales_orchestrator",
+            "content": (
+                "Mình là Sales AI Assistant. Mình có thể giúp bạn biến một ý tưởng "
+                "thành brief, proposal, deck, quote hoặc flow làm việc."
+            ),
+        },
+        {
+            "role": "assistant",
+            "agent": "sales_orchestrator",
+            "content": (
+                "Nếu bạn chưa có brief, hãy gửi ngắn gọn: ngành, mục tiêu, budget, "
+                "timeline và target audience. Mình sẽ hỏi tiếp từng phần cho rõ."
+            ),
+        },
+    ]
 
 
 async def _extract_brief_from_text(message: str):
@@ -1250,10 +1312,10 @@ async def chat_stream(request: Request, payload: ChatRequest):
     requested_mode = (payload.mode or ACTIVE_MODE).strip().lower()
     if requested_mode != ACTIVE_MODE:
         async def coming_soon_stream():
-            yield f"data: {json.dumps({'type': 'session', 'session_id': payload.session_id or f'sess_{uuid.uuid4().hex[:12]}'})}\n\n"
-            yield f"data: {json.dumps({'type': 'user_message', 'content': payload.message})}\n\n"
-            yield f"data: {json.dumps({'type': 'content', 'content': 'Planning, execute, and brainstorm modes are coming soon. Chat mode is the only active mode for now.'})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield _sse_data({'type': 'session', 'session_id': payload.session_id or f'sess_{uuid.uuid4().hex[:12]}'})
+            yield _sse_data({'type': 'user_message', 'content': payload.message})
+            yield _sse_data({'type': 'content', 'content': 'Planning, execute, and brainstorm modes are coming soon. Chat mode is the only active mode for now.'})
+            yield _sse_data({'type': 'done'})
 
         return StreamingResponse(
             coming_soon_stream(),
@@ -1297,10 +1359,22 @@ async def chat_stream(request: Request, payload: ChatRequest):
         nonlocal use_agents
 
         # Send session info first
-        yield f"data: {json.dumps({'type': 'session', 'session_id': state.session_id})}\n\n"
+        yield _sse_data({'type': 'session', 'session_id': state.session_id})
 
         # Send user message event
-        yield f"data: {json.dumps({'type': 'user_message', 'content': payload.message})}\n\n"
+        yield _sse_data({'type': 'user_message', 'content': payload.message})
+
+        if _should_send_chat_opening(state, payload.message):
+            for opening in _build_chat_opening_messages():
+                state.messages.append(
+                    {
+                        "role": opening["role"],
+                        "content": opening["content"],
+                        "agent": opening.get("agent"),
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                )
+                yield _sse_data({'type': 'assistant_message', 'agent': opening.get("agent", "sales_orchestrator"), 'content': opening["content"]})
 
         # ── Brief auto-detection: switch chat → execute when user pastes a brief ──
         # This is the main fix for "only sales_orchestrator responds" — when a user types
@@ -1319,7 +1393,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 if not state.desired_outputs:
                     state.desired_outputs = _auto_detect_outputs(payload.message)
                 # Don't show brief detected as content - just log
-# yield f"data: {json.dumps({'type': 'content', 'content': '> **Brief detected** — dispatching specialist agents in Execute mode...\\n\\n'})}\n\n"
+# yield _sse_data({'type': 'content', 'content': '> **Brief detected** — dispatching specialist agents in Execute mode...\\n\\n'})
 
         # C.5 §3: Validation gate - check before any agent dispatch
         orchestrator = get_sales_orchestrator()
@@ -1329,20 +1403,17 @@ async def chat_stream(request: Request, payload: ChatRequest):
 
         if not should_dispatch:
             if validation_output.status == "FAILED":
-                yield f"data: {json.dumps({'type': 'error', 'error': validation_output.summary})}\n\n"
+                yield _sse_data({'type': 'error', 'error': validation_output.summary})
             elif validation_output.questions:
                 def question_to_dict(q):
-                    d = q.model_dump()
-                    if d.get("last_asked_at") and hasattr(d["last_asked_at"], "isoformat"):
-                        d["last_asked_at"] = d["last_asked_at"].isoformat()
-                    return d
+                    return q.model_dump(mode="json")
 
-                yield f"data: {json.dumps({'type': 'question_card', 'questions': [question_to_dict(q) for q in validation_output.questions]})}\n\n"
+                yield _sse_data({'type': 'question_card', 'questions': [question_to_dict(q) for q in validation_output.questions]})
 
             update_session(state)
             brief_data = state.brief.model_dump(mode="json") if state.brief else None
-            yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'validation_status': state.validation_status, 'brief': brief_data})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield _sse_data({'type': 'session_updated', 'session_id': state.session_id, 'validation_status': state.validation_status, 'brief': brief_data})
+            yield _sse_data({'type': 'done'})
             return
 
         # Validation passed - proceed with agent dispatch
@@ -1369,7 +1440,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 await memory_repo.save_profile(profile)
 
                 # Notify about new constraint
-                yield f"data: {json.dumps({'type': 'constraint_added', 'constraint': rule.model_dump()})}\n\n"
+                yield _sse_data({'type': 'constraint_added', 'constraint': rule.model_dump(mode="json")})
 
         # D.3: Also check for frustration in message
         profile = await memory_repo.load_profile(state.salesperson_id)
@@ -1403,7 +1474,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
             for dt_field in ['created_at', 'updated_at', 'decided_at']:
                 if checkpoint_dict.get(dt_field) and hasattr(checkpoint_dict[dt_field], 'isoformat'):
                     checkpoint_dict[dt_field] = checkpoint_dict[dt_field].isoformat()
-            yield f"data: {json.dumps({'type': 'checkpoint_card', 'checkpoint': checkpoint_dict})}\n\n"
+            yield _sse_data({'type': 'checkpoint_card', 'checkpoint': checkpoint_dict})
 
         # Save final state to in-memory store
         update_session(state)
@@ -1420,7 +1491,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
         brief_dict = None
         if state.brief:
             brief_dict = state.brief.model_dump(mode="json")
-        yield f"data: {json.dumps({'type': 'session_updated', 'session_id': state.session_id, 'brief': brief_dict})}\n\n"
+        yield _sse_data({'type': 'session_updated', 'session_id': state.session_id, 'brief': brief_dict})
 
     return StreamingResponse(
         event_generator(),
