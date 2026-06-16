@@ -51,16 +51,19 @@ LLM_BASE_URL = os.getenv(
 )
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 
-# Per-agent model mapping (from environment)
+# Per-agent/skill model mapping (from environment)
 MODEL_MAPPING = {
+    # Legacy agent names (kept for backward compat)
     "sales_orchestrator": os.getenv("MODEL_SALES_ORCHESTRATOR", "minimax/minimax-m2.5"),
     "requirement_elicitation": os.getenv("MODEL_REQUIREMENT_ELICITATION", "qwen/qwen3-5-27b"),
+    "validation": os.getenv("MODEL_VALIDATION", "minimax/minimax-m2.5"),
+    # Multi-skills: central agent + skills
+    "central_agent": os.getenv("MODEL_CENTRAL_AGENT", os.getenv("MODEL_SALES_ORCHESTRATOR", "minimax/minimax-m2.5")),
     "market_strategy": os.getenv("MODEL_MARKET_STRATEGY", "qwen/qwen3-5-27b"),
     "product_solution": os.getenv("MODEL_PRODUCT_SOLUTION", "qwen/qwen3-5-27b"),
-    "design": os.getenv("MODEL_DESIGN", "minimax/minimax-m2.5"),
-    "validation": os.getenv("MODEL_VALIDATION", "minimax/minimax-m2.5"),
-    # New agents
     "compliance": os.getenv("MODEL_COMPLIANCE", "qwen/qwen3-5-27b"),
+    "client_simulator": os.getenv("MODEL_CLIENT_SIMULATOR", "qwen/qwen3-5-27b"),
+    "design": os.getenv("MODEL_DESIGN", "minimax/minimax-m2.5"),
 }
 
 
