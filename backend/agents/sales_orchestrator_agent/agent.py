@@ -43,6 +43,8 @@ class Orchestrator:
     """Central orchestrator for validation, planning, and routing."""
 
     def __init__(self, max_hop_depth: int = DEFAULT_MAX_HOP_DEPTH):
+        self.name = "sales_orchestrator"
+        self.role_description = "Supervisor that validates briefs, asks clarifying questions, and routes tasks to specialists"
         self.max_hop_depth = max_hop_depth
 
     async def _rag_search(
@@ -162,10 +164,11 @@ class Orchestrator:
                 "assistant_reply": "Hi, mình có thể giúp bạn bắt đầu một brief hoặc trả lời câu hỏi sales.",
             }
 
+        # Use a dual-purpose query: routing classification + brand identity for potential greeting
         rag_context = await self.build_required_skill_context(
-            f"Classify the latest user message for sales routing.\nMessage: {message}",
+            f"Sales agent identity, company introduction, greeting user. Routing context: {message}",
             skill_top_k=1,
-            knowledge_top_k=2,
+            knowledge_top_k=3,
         )
         client = get_validation_service().client
         context = []
@@ -181,7 +184,7 @@ Classify the user's latest message for a sales assistant.
 Return JSON only with:
 {{
   "intent": "casual_chat" | "sales_request",
-  "assistant_reply": "short friendly reply when intent is casual_chat, otherwise empty",
+  "assistant_reply": "reply for casual_chat — see rules below, otherwise empty string",
   "reason": "brief explanation"
 }}
 
@@ -189,9 +192,10 @@ Rules:
 - casual_chat: greeting, thanks, small talk, one-line non-sales message, or anything not asking for sales help.
 - sales_request: the user is asking for a brief, proposal, quote, deck, strategy, or providing project details.
 - If the message is ambiguous but looks like a sales request, choose sales_request.
-- Keep assistant_reply short, friendly, and useful. Do not mention internal routing.
+- For casual_chat assistant_reply: Use the company name, product, and agent persona from the knowledge context below to write a warm, on-brand reply. Introduce yourself naturally using that identity (e.g. company name, product name). Reply in the same language as the user's message. Keep it concise (1-3 sentences).
+- Do not mention internal routing, pipeline stages, or layer names.
 
-Relevant orchestrator skill/knowledge:
+Relevant skill/knowledge context (use for persona and brand identity):
 {rag_context}
 
 Latest message:
