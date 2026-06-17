@@ -114,6 +114,10 @@ interface BriefInfo {
   sections: Array<{ key: string; value: string }>;
 }
 
+type ContentBlock =
+  | { kind: 'markdown'; content: string }
+  | { kind: 'table'; headers: string[]; rows: string[][] };
+
 function parseBriefContent(content: string): BriefInfo | null {
   if (!isBriefDocument(content)) return null;
 
@@ -272,6 +276,173 @@ function formatStructuredAgentTables(content: string): string {
   return result.join('\n');
 }
 
+function splitTableRow(line: string): string[] {
+  const trimmed = line.trim();
+  const raw = trimmed.startsWith('|') ? trimmed.slice(1) : trimmed;
+  const parts = raw.endsWith('|') ? raw.slice(0, -1).split('|') : raw.split('|');
+  return parts.map(cell => cell.trim());
+}
+
+function isDelimiterCells(cells: string[]): boolean {
+  return cells.length > 0 && cells.every(cell => cell === '' || /^[:\-]+$/.test(cell));
+}
+
+function isTableCandidateLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.startsWith('|') && trimmed.includes('|') && !trimmed.startsWith('```');
+}
+
+function parseTableBlock(lines: string[]): { headers: string[]; rows: string[][] } | null {
+  const rows: string[][] = [];
+
+  for (const line of lines) {
+    const cells = splitTableRow(line);
+    if (cells.length < 2) return null;
+
+    if (isDelimiterCells(cells)) {
+      continue;
+    }
+
+    rows.push(cells);
+  }
+
+  if (rows.length < 2) return null;
+
+  const headers = rows[0];
+  const dataRows = rows.slice(1);
+  const width = Math.max(headers.length, ...dataRows.map(row => row.length));
+
+  const normalizeRow = (row: string[]) => {
+    const copy = row.slice();
+    while (copy.length < width) copy.push('');
+    return copy;
+  };
+
+  return {
+    headers: normalizeRow(headers),
+    rows: dataRows.map(normalizeRow),
+  };
+}
+
+function splitContentIntoBlocks(content: string): ContentBlock[] {
+  const normalized = fixMalformedTables(formatStructuredAgentTables(content));
+  const lines = normalized.split('\n');
+  const blocks: ContentBlock[] = [];
+  const proseBuffer: string[] = [];
+  let inCodeBlock = false;
+
+  const flushProse = () => {
+    if (proseBuffer.length === 0) return;
+    blocks.push({ kind: 'markdown', content: proseBuffer.join('\n') });
+    proseBuffer.length = 0;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      proseBuffer.push(line);
+      continue;
+    }
+
+    if (inCodeBlock) {
+      proseBuffer.push(line);
+      continue;
+    }
+
+    if (!trimmed) {
+      proseBuffer.push(line);
+      continue;
+    }
+
+    if (isTableCandidateLine(line)) {
+      const tableLines = [line];
+      let j = i + 1;
+
+      while (j < lines.length && isTableCandidateLine(lines[j])) {
+        tableLines.push(lines[j]);
+        j++;
+      }
+
+      const parsed = parseTableBlock(tableLines);
+      if (parsed) {
+        flushProse();
+        blocks.push({ kind: 'table', headers: parsed.headers, rows: parsed.rows });
+        i = j - 1;
+        continue;
+      }
+    }
+
+    proseBuffer.push(line);
+  }
+
+  flushProse();
+  return blocks;
+}
+
+function TableBlock({
+  headers,
+  rows,
+}: {
+  headers: string[];
+  rows: string[][];
+}) {
+  return (
+    <div className="overflow-x-auto my-5 rounded-xl border-0 shadow-md" style={{ backgroundColor: 'var(--color-surface)' }}>
+      <table className="agent-output-table" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.875em' }}>
+        <thead>
+          <tr>
+            {headers.map((header, index) => (
+              <th
+                key={index}
+                style={{
+                  padding: '1rem 1.25rem',
+                  textAlign: 'left',
+                  fontWeight: 700,
+                  fontSize: '0.75em',
+                  color: '#ffffff',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  backgroundColor: '#4f46e5',
+                  borderBottom: '3px solid #4338ca',
+                  whiteSpace: 'normal',
+                  wordWrap: 'break-word',
+                }}
+              >
+                {header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {row.map((cell, cellIndex) => (
+                <td
+                  key={cellIndex}
+                  style={{
+                    padding: '1rem 1.25rem',
+                    fontSize: '0.875em',
+                    color: 'var(--color-text)',
+                    lineHeight: 1.6,
+                    borderBottom: '1px solid var(--color-border)',
+                    wordWrap: 'break-word',
+                    maxWidth: '500px',
+                  }}
+                >
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // Parse a single-line concatenated table like:
 // "| H1 | H2 | H3 | | --- | --- | --- | |---|---|---| | D1 | D2 | D3 | | D4 | | D5 |"
 // into proper multi-line markdown table rows, preserving empty cells.
@@ -404,6 +575,135 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
 
   const showHeader = !isGrouped && !isUser && !isSystem && agentName;
   const isAI = !isUser && !isSystem;
+  const processedContent = fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(message.content)));
+  const contentBlocks = useMemo(() => splitContentIntoBlocks(processedContent), [processedContent]);
+  const markdownComponents: any = {
+    p: ({ children }: { children: React.ReactNode }) => <p style={{ margin: '0.5rem 0', lineHeight: 1.7 }}>{children}</p>,
+    h1: ({ children }: { children: React.ReactNode }) => (
+      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: '1.5rem 0 0.75rem', color: 'var(--color-text)' }}>
+        {children}
+      </h1>
+    ),
+    h2: ({ children }: { children: React.ReactNode }) => (
+      <h2 style={{ fontSize: '1.25rem', fontWeight: 600, margin: '1.25rem 0 0.5rem', color: 'var(--color-text)' }}>
+        {children}
+      </h2>
+    ),
+    h3: ({ children }: { children: React.ReactNode }) => (
+      <h3 style={{ fontSize: '1.1rem', fontWeight: 600, margin: '1rem 0 0.5rem', color: 'var(--color-text)' }}>
+        {children}
+      </h3>
+    ),
+    h4: ({ children }: { children: React.ReactNode }) => (
+      <h4 style={{ fontSize: '1rem', fontWeight: 600, margin: '1rem 0 0.5rem', color: 'var(--color-text)' }}>
+        {children}
+      </h4>
+    ),
+    ul: ({ children }: { children: React.ReactNode }) => <ul style={{ margin: '0.5rem 0', paddingLeft: '1.5rem', lineHeight: 1.8 }}>{children}</ul>,
+    ol: ({ children }: { children: React.ReactNode }) => <ol style={{ margin: '0.5rem 0', paddingLeft: '1.5rem', lineHeight: 1.8 }}>{children}</ol>,
+    li: ({ children }: { children: React.ReactNode }) => <li style={{ margin: '0.35rem 0', lineHeight: 1.7 }}>{children}</li>,
+    strong: ({ children }: { children: React.ReactNode }) => <strong style={{ fontWeight: 600, color: 'var(--color-text)' }}>{children}</strong>,
+    em: ({ children }: { children: React.ReactNode }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
+    a: ({ href, children }: { href?: string; children: React.ReactNode }) => (
+      <a href={href} style={{ color: 'var(--color-accent)', textDecoration: 'underline' }} target="_blank" rel="noopener noreferrer">
+        {children}
+      </a>
+    ),
+    table: ({ children }: { children: React.ReactNode }) => (
+      <div className="overflow-x-auto my-5 rounded-xl border-0 shadow-md" style={{ backgroundColor: 'var(--color-surface)' }}>
+        <style>{`
+          .agent-output-table tbody tr:nth-child(odd) {
+            background-color: rgba(79, 70, 229, 0.03);
+          }
+          .agent-output-table tbody tr:hover {
+            background-color: rgba(79, 70, 229, 0.08);
+            transition: background-color 0.2s;
+          }
+        `}</style>
+        <table className="agent-output-table" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.875em' }}>
+          {children}
+        </table>
+      </div>
+    ),
+    thead: ({ children }: { children: React.ReactNode }) => <thead>{children}</thead>,
+    tbody: ({ children }: { children: React.ReactNode }) => <tbody>{children}</tbody>,
+    tr: ({ children }: { children: React.ReactNode }) => <tr>{children}</tr>,
+    th: ({ children }: { children: React.ReactNode }) => (
+      <th style={{
+        padding: '1rem 1.25rem',
+        textAlign: 'left',
+        fontWeight: 700,
+        fontSize: '0.75em',
+        color: '#ffffff',
+        textTransform: 'uppercase',
+        letterSpacing: '0.08em',
+        backgroundColor: '#4f46e5',
+        borderBottom: '3px solid #4338ca',
+        whiteSpace: 'normal',
+        wordWrap: 'break-word',
+      }}>
+        {children}
+      </th>
+    ),
+    td: ({ children }: { children: React.ReactNode }) => (
+      <td style={{
+        padding: '1rem 1.25rem',
+        fontSize: '0.875em',
+        color: 'var(--color-text)',
+        lineHeight: 1.6,
+        borderBottom: '1px solid var(--color-border)',
+        wordWrap: 'break-word',
+        maxWidth: '500px',
+      }}>
+        {children}
+      </td>
+    ),
+    code: ({ children, className }: { children: React.ReactNode; className?: string }) => {
+      const isInline = !className;
+      if (isInline) {
+        return (
+          <code style={{ backgroundColor: 'var(--color-surface-2)', padding: '0.2rem 0.4rem', borderRadius: '4px', fontSize: '0.85em', fontFamily: 'monospace' }}>
+            {children}
+          </code>
+        );
+      }
+      return (
+        <code className={className}>
+          {children}
+        </code>
+      );
+    },
+    pre: ({ children }: { children: React.ReactNode }) => {
+      const child = React.Children.toArray(children)[0];
+      if (React.isValidElement(child)) {
+        const el = child as React.ReactElement<{ className?: string; children?: React.ReactNode }>;
+        if (el.props.className === 'language-mermaid') {
+          const chart = String(el.props.children ?? '').replace(/\n$/, '');
+          return <MermaidDiagram chart={chart} />;
+        }
+      }
+      return (
+        <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflow: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0' }}>
+          {children}
+        </pre>
+      );
+    },
+    hr: () => <hr style={{ border: 'none', borderTop: '1px solid var(--color-border)', margin: '1.5rem 0' }} />,
+    blockquote: ({ children }: { children: React.ReactNode }) => (
+      <blockquote style={{
+        borderLeft: '4px solid var(--color-accent)',
+        paddingLeft: '1rem',
+        margin: '1rem 0',
+        fontStyle: 'italic',
+        color: 'var(--color-text-muted)',
+        backgroundColor: 'var(--color-surface-2)',
+        padding: '0.75rem 1rem',
+        borderRadius: '0 8px 8px 0',
+      }}>
+        {children}
+      </blockquote>
+    ),
+  };
 
   // System messages render as a thin centered divider
   if (isSystem) {
@@ -498,147 +798,17 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
             lineHeight: 1.7,
           }}
         >
-          <ReactMarkdown
-            key={message.content}
-            components={{
-              p: ({ children }) => <p style={{ margin: '0.5rem 0', lineHeight: 1.7 }}>{children}</p>,
-              h1: ({ children }) => (
-                <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: '1.5rem 0 0.75rem', color: 'var(--color-text)' }}>
-                  {children}
-                </h1>
-              ),
-              h2: ({ children }) => (
-                <h2 style={{ fontSize: '1.25rem', fontWeight: 600, margin: '1.25rem 0 0.5rem', color: 'var(--color-text)' }}>
-                  {children}
-                </h2>
-              ),
-              h3: ({ children }) => (
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 600, margin: '1rem 0 0.5rem', color: 'var(--color-text)' }}>
-                  {children}
-                </h3>
-              ),
-              h4: ({ children }) => (
-                <h4 style={{ fontSize: '1rem', fontWeight: 600, margin: '1rem 0 0.5rem', color: 'var(--color-text)' }}>
-                  {children}
-                </h4>
-              ),
-              ul: ({ children }) => <ul style={{ margin: '0.5rem 0', paddingLeft: '1.5rem', lineHeight: 1.8 }}>{children}</ul>,
-              ol: ({ children }) => <ol style={{ margin: '0.5rem 0', paddingLeft: '1.5rem', lineHeight: 1.8 }}>{children}</ol>,
-              li: ({ children }) => <li style={{ margin: '0.35rem 0', lineHeight: 1.7 }}>{children}</li>,
-              strong: ({ children }) => <strong style={{ fontWeight: 600, color: 'var(--color-text)' }}>{children}</strong>,
-              em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
-              a: ({ href, children }) => (
-                <a href={href} style={{ color: 'var(--color-accent)', textDecoration: 'underline' }} target="_blank" rel="noopener noreferrer">
-                  {children}
-                </a>
-              ),
-              table: ({ children }) => (
-                <div className="overflow-x-auto my-5 rounded-xl border-0 shadow-md" style={{ backgroundColor: 'var(--color-surface)' }}>
-                  <style>{`
-                    .agent-output-table tbody tr:nth-child(odd) {
-                      background-color: rgba(79, 70, 229, 0.03);
-                    }
-                    .agent-output-table tbody tr:hover {
-                      background-color: rgba(79, 70, 229, 0.08);
-                      transition: background-color 0.2s;
-                    }
-                  `}</style>
-                  <table className="agent-output-table" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.875em' }}>
-                    {children}
-                  </table>
-                </div>
-              ),
-              thead: ({ children }) => (
-                <thead>
-                  {children}
-                </thead>
-              ),
-              tbody: ({ children }) => <tbody>{children}</tbody>,
-              tr: ({ children }) => (
-                <tr>
-                  {children}
-                </tr>
-              ),
-              th: ({ children }) => (
-                <th style={{
-                  padding: '1rem 1.25rem',
-                  textAlign: 'left',
-                  fontWeight: 700,
-                  fontSize: '0.75em',
-                  color: '#ffffff',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.08em',
-                  backgroundColor: '#4f46e5',
-                  borderBottom: '3px solid #4338ca',
-                  whiteSpace: 'normal',
-                  wordWrap: 'break-word',
-                }}>
-                  {children}
-                </th>
-              ),
-              td: ({ children }) => (
-                <td style={{
-                  padding: '1rem 1.25rem',
-                  fontSize: '0.875em',
-                  color: 'var(--color-text)',
-                  lineHeight: 1.6,
-                  borderBottom: '1px solid var(--color-border)',
-                  wordWrap: 'break-word',
-                  maxWidth: '500px',
-                }}>
-                  {children}
-                </td>
-              ),
-              code: ({ children, className }) => {
-                const isInline = !className;
-                if (isInline) {
-                  return (
-                    <code style={{ backgroundColor: 'var(--color-surface-2)', padding: '0.2rem 0.4rem', borderRadius: '4px', fontSize: '0.85em', fontFamily: 'monospace' }}>
-                      {children}
-                    </code>
-                  );
-                }
-                return (
-                  <code className={className}>
-                    {children}
-                  </code>
-                );
-              },
-              pre: ({ children }) => {
-                // Intercept mermaid code blocks and render as diagram
-                const child = React.Children.toArray(children)[0];
-                if (React.isValidElement(child)) {
-                  const el = child as React.ReactElement<{ className?: string; children?: React.ReactNode }>;
-                  if (el.props.className === 'language-mermaid') {
-                    const chart = String(el.props.children ?? '').replace(/\n$/, '');
-                    return <MermaidDiagram chart={chart} />;
-                  }
-                }
-                return (
-                  <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflow: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0' }}>
-                    {children}
-                  </pre>
-                );
-              },
-              hr: () => <hr style={{ border: 'none', borderTop: '1px solid var(--color-border)', margin: '1.5rem 0' }} />,
-              blockquote: ({ children }) => (
-                <blockquote style={{
-                  borderLeft: '4px solid var(--color-accent)',
-                  paddingLeft: '1rem',
-                  margin: '1rem 0',
-                  fontStyle: 'italic',
-                  color: 'var(--color-text-muted)',
-                  backgroundColor: 'var(--color-surface-2)',
-                  padding: '0.75rem 1rem',
-                  borderRadius: '0 8px 8px 0',
-                }}>
-                  {children}
-                </blockquote>
-              ),
-            }}
-          >
-            {fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(message.content)))}
-          </ReactMarkdown>
+          {contentBlocks.map((block, index) => {
+            if (block.kind === 'table') {
+              return <TableBlock key={`table-${index}`} headers={block.headers} rows={block.rows} />;
+            }
+
+            return (
+              <ReactMarkdown key={`markdown-${index}`} components={markdownComponents}>
+                {block.content}
+              </ReactMarkdown>
+            );
+          })}
         </div>
 
         {/* Timestamp */}

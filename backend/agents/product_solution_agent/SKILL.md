@@ -69,6 +69,7 @@ Short bullet list:
 ## IMPORTANT OUTPUT RULES
 
 - ALWAYS include the Mermaid flowchart — this replaces the need for a separate wireframe approval step
+- Mermaid must use safe syntax only: quote every node label, keep node IDs simple, and escape special characters such as `"`, `[ ]`, `{ }`, `|`, `&`, and line breaks
 - Write in Vietnamese if brief is in Vietnamese
 - Pricing estimates are OK to be ranges — never fabricate exact confirmed pricing
 - Keep total response under 900 words

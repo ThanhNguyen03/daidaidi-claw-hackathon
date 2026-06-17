@@ -153,6 +153,7 @@ Rules:
 - Use decision diamonds for branching (new user vs returning, enough points vs not)
 - Keep to max 10-12 nodes for readability
 - Clean node labels only
+- Quote every node label and escape special characters so Mermaid parses the flowchart without syntax errors
 
 **Example:**
 ```mermaid

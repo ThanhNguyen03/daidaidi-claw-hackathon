@@ -63,30 +63,43 @@ class UserflowGenerator:
         lines.append("    Start([Start]):::startend")
 
         if journey:
-            # First step
-            first_step = journey[0]
-            lines.append(f"    Start --> {self._to_node_id(first_step)}[{first_step}]:::process")
+            journey_node_ids: list[str] = []
 
-            # Middle steps
-            for i, step in enumerate(journey[1:], 1):
-                prev_step = journey[i-1]
-                lines.append(f"    {self._to_node_id(prev_step)} --> {self._to_node_id(step)}[{step}]:::process")
+            for i, step in enumerate(journey):
+                node_id = self._make_node_id("step", i, step)
+                journey_node_ids.append(node_id)
+                label = self._escape_mermaid_label(step)
+                lines.append(f'    {node_id}["{label}"]:::process')
+
+            # Connect start to first step
+            lines.append(f"    Start --> {journey_node_ids[0]}")
+
+            # Connect middle steps
+            for prev_node_id, next_node_id in zip(journey_node_ids, journey_node_ids[1:]):
+                lines.append(f"    {prev_node_id} --> {next_node_id}")
 
         # Add decision points
+        generated_outcome_ids: list[str] = []
+
         for i, decision in enumerate(decisions):
-            node_id = f"Decision{i+1}"
-            lines.append(f"    {self._to_node_id(journey[-1] if journey else 'Start')} --> {node_id}{{{decision}}}:::decision")
+            node_id = f"decision_{i+1}"
+            decision_label = self._escape_mermaid_label(decision)
+            anchor_id = journey_node_ids[-1] if journey else "Start"
+            lines.append(f'    {anchor_id} --> {node_id}{{"{decision_label}"}}:::decision')
 
             # Add outcomes from decision
             for j, outcome in enumerate(outcomes):
-                lines.append(f"    {node_id} --> {self._to_node_id(outcome)}[{outcome}]:::outcome")
+                outcome_node_id = self._make_node_id(f"outcome_{i+1}", j, outcome)
+                outcome_label = self._escape_mermaid_label(outcome)
+                lines.append(f'    {node_id} --> {outcome_node_id}["{outcome_label}"]:::outcome')
+                generated_outcome_ids.append(outcome_node_id)
 
         # Add end nodes
-        if outcomes:
-            for outcome in outcomes:
-                lines.append(f"    {self._to_node_id(outcome)} --> End([End]):::startend")
+        if generated_outcome_ids:
+            for outcome_node_id in generated_outcome_ids:
+                lines.append(f"    {outcome_node_id} --> End([End]):::startend")
         elif journey:
-            lines.append(f"    {self._to_node_id(journey[-1])} --> End([End]):::startend")
+            lines.append(f"    {journey_node_ids[-1]} --> End([End]):::startend")
         else:
             lines.append("    Start --> End([End]):::startend")
 
@@ -188,8 +201,34 @@ class UserflowGenerator:
     def _to_node_id(self, text: str) -> str:
         """Convert text to a valid Mermaid node ID."""
         # Remove special chars and limit length
-        clean = "".join(c for c in text if c.isalnum() or c == "_")[:20]
+        clean = "".join(c for c in str(text) if c.isalnum() or c == "_")[:20]
         return clean.lower() or "node"
+
+    def _make_node_id(self, prefix: str, index: int, text: str) -> str:
+        """Create a stable, unique Mermaid node id."""
+        suffix = self._to_node_id(text)
+        return f"{prefix}_{index}_{suffix}"
+
+    def _escape_mermaid_label(self, text: str) -> str:
+        """Escape label text so Mermaid parses it as literal content."""
+        if text is None:
+            return ""
+
+        value = str(text).replace("\r\n", "\n").replace("\r", "\n")
+        value = (
+            value.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("[", "&#91;")
+            .replace("]", "&#93;")
+            .replace("{", "&#123;")
+            .replace("}", "&#125;")
+            .replace("|", "&#124;")
+            .replace("`", "&#96;")
+            .replace("\n", "<br/>")
+        )
+        return value
 
     def _generate_text_preview(self, plan_data: dict) -> str:
         """Generate a simple text preview of the userflow."""
