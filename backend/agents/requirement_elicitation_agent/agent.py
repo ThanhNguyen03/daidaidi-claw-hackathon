@@ -113,7 +113,7 @@ Rules:
 
         try:
             client = get_llm_client(self.name)
-            response = client.create_completion(
+            response = await client.async_create_completion(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
@@ -163,7 +163,7 @@ Rules:
                 "Return JSON only:\n"
                 '{"questions": [{"field": "...", "text": "...", "priority": 1, "is_mandatory": true}]}'
             )
-            response = client.create_completion(
+            response = await client.async_create_completion(
                 messages=[
                     {"role": "system", "content": self.system_prompt},
                     {"role": "user", "content": retry_prompt},
@@ -266,7 +266,7 @@ Return JSON-like content with:
 """
         try:
             client = get_llm_client(self.name)
-            response = client.create_completion(
+            response = await client.async_create_completion(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},

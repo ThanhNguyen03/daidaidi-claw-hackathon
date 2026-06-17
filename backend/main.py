@@ -853,95 +853,61 @@ async def process_with_agents(
 
         return
 
-    if use_full_graph:
-        # Use full AgentGraph with LangGraph (for Day 4-5 checkpoint + resume)
-        from agents.graph import get_graph
+    # Stream events from the runner in real time
+    runner = get_simple_runner()
+    already_has_assistant = False
 
-        graph = get_graph()
-        config = {"configurable": {"thread_id": state.session_id}}
+    async for event in runner.run_stream(state):
+        if event.get("type") == "done":
+            break
+        if event.get("type") in ("assistant_message", "question_card", "content"):
+            already_has_assistant = True
+        yield _sse_data(event)
 
-        stream_events = []
-        async for event in graph.run_stream(state, config=config):
-            stream_events.append(event)
-            yield _sse_data(event)
+    # Extract and stream each completed agent’s output as agent_message
+    emitted_agent_message = False
+    for agent_name, output in state.outputs.items():
+        if agent_name == "sales_orchestrator":
+            continue
+        if not output or not hasattr(output, "status"):
+            continue
+        if output.status != "COMPLETE":
+            continue
 
-        # Get final state from the graph (graph updates state in place)
-        # Copy graph outputs back to our state
-        final_state = state
-        for event in stream_events:
-            if event.get("type") == "agent_status" and event.get("status") == "completed":
-                agent_name = event.get("agent")
-                # Find the output in the last event
-                pass
-    else:
-        # Get the simple runner (handles agent dispatch)
-        runner = get_simple_runner()
+        content_text = _extract_agent_content(agent_name, output)
+        if not content_text:
+            continue
 
-        # Run the agent system
-        final_state, stream_events = await runner.run(state)
+        yield _sse_data({‘type’: ‘agent_message’, ‘agent’: agent_name, ‘content’: content_text})
+        emitted_agent_message = True
 
-        # Check if stream_events already contains an assistant-visible message
-        # (e.g. casual_chat reply, NEEDS_INPUT prompt, question_card)
-        # so we don't emit a duplicate fallback below.
-        already_has_assistant = any(
-            e.get("type") in ("assistant_message", "question_card")
-            for e in stream_events
+        state.messages.append(
+            {
+                "role": "assistant",
+                "content": content_text,
+                "agent": agent_name,
+                "timestamp": datetime.now().isoformat(),
+            }
         )
 
-        # Stream status events but hold the "done" until after content
-        for event in stream_events:
-            if event.get("type") != "done":
-                yield _sse_data(event)
+    if not emitted_agent_message and not already_has_assistant:
+        fallback_summary = ""
+        orch_output = state.outputs.get("sales_orchestrator")
+        if orch_output and getattr(orch_output, "summary", ""):
+            fallback_summary = str(orch_output.summary)
 
-        # Stream each completed agent's real output as a separate agent_message
-        emitted_agent_message = False
-        for agent_name, output in final_state.outputs.items():
-            if agent_name == "sales_orchestrator":
-                continue
-            if not output or not hasattr(output, "status"):
-                continue
-            if output.status != "COMPLETE":
-                continue
+        if fallback_summary:
+            yield _sse_data({
+                ‘type’: ‘assistant_message’,
+                ‘agent’: ‘sales_orchestrator’,
+                ‘content’: fallback_summary,
+            })
 
-            content_text = _extract_agent_content(agent_name, output)
-            if not content_text:
-                continue
+    state.summary = (
+        f"User: {message[:30]}... -> Agents: {‘, ‘.join(state.outputs.keys())}"
+    )
 
-            yield _sse_data({'type': 'agent_message', 'agent': agent_name, 'content': content_text})
-            emitted_agent_message = True
-
-            # Record in session history
-            state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": content_text,
-                    "agent": agent_name,
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
-
-        if not emitted_agent_message and not already_has_assistant:
-            fallback_summary = ""
-            orch_output = final_state.outputs.get("sales_orchestrator")
-            if orch_output and getattr(orch_output, "summary", ""):
-                fallback_summary = str(orch_output.summary)
-            elif final_state.summary:
-                fallback_summary = str(final_state.summary)
-
-            if fallback_summary:
-                yield _sse_data({
-                    'type': 'assistant_message',
-                    'agent': 'sales_orchestrator',
-                    'content': fallback_summary,
-                })
-
-        # Update state
-        state.outputs = final_state.outputs
-        state.summary = (
-            f"User: {message[:30]}... â†’ Agents: {', '.join(final_state.outputs.keys())}"
-        )
-
-        yield _sse_data({'type': 'done'})
+    yield _sse_data({‘type’: ‘done’})
 
 
 # =============================================================================
@@ -1326,22 +1292,8 @@ async def chat_stream(request: Request, payload: ChatRequest):
                     'content': 'Mình cần thêm chút thông tin trước khi tiếp tục.',
                 })
 
-            # Day 5: Check if we need to create a checkpoint
-            # This runs after agents complete, looking for quote/plan outputs
-            # Guard with try-except to prevent reviewer errors from breaking the stream
-            try:
-                checkpoint = await _maybe_create_checkpoint(state)
-            except Exception as e:
-                print(f"Warning: Failed to create checkpoint: {e}")
-                checkpoint = None
-
-            if checkpoint:
-                # Convert checkpoint to dict with datetime serialization
-                checkpoint_dict = checkpoint.model_dump()
-                for dt_field in ['created_at', 'updated_at', 'decided_at']:
-                    if checkpoint_dict.get(dt_field) and hasattr(checkpoint_dict[dt_field], 'isoformat'):
-                        checkpoint_dict[dt_field] = checkpoint_dict[dt_field].isoformat()
-                yield _sse_data({'type': 'checkpoint_card', 'checkpoint': checkpoint_dict})
+            # Checkpoint/approval flow disabled — agents produce output inline
+            checkpoint = None
 
             # Save final state to in-memory store
             update_session(state)

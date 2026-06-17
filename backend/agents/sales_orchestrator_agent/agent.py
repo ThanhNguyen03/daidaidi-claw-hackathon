@@ -224,7 +224,7 @@ Session context:
             classify_system = classify_system + "\n\n" + rag_context
 
         try:
-            response = client.create_completion(
+            response = await client.async_create_completion(
                 messages=[
                     {"role": "system", "content": classify_system},
                     {"role": "user", "content": prompt},
@@ -274,7 +274,7 @@ Session context:
         )
 
         try:
-            response = client.create_completion(
+            response = await client.async_create_completion(
                 messages=[
                     {"role": "system", "content": system + "\n\n" + rag_context},
                     {"role": "user", "content": f"Parse this brief:\n{message}"},
@@ -335,7 +335,7 @@ Message:
 """
 
         try:
-            response = client.create_completion(
+            response = await client.async_create_completion(
                 messages=[
                     {
                         "role": "system",
@@ -429,7 +429,7 @@ Return JSON only:
 
         client = get_validation_service().client
         try:
-            response = client.create_completion(
+            response = await client.async_create_completion(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
@@ -532,6 +532,7 @@ Return JSON only:
             )
 
         if validation_report.status == "PENDING":
+            # Questions are optional — generate them but still dispatch agents
             questions = await self._generate_questions(
                 state,
                 missing_fields=validation_report.missing_required or [],
@@ -544,9 +545,9 @@ Return JSON only:
                 state.question_stack = question_manager.stack.items
 
             if validation_report.missing_required:
-                summary = f"Mình cần thêm thông tin về: {', '.join(validation_report.missing_required)}."
+                summary = f"Mình sẽ tiếp tục với thông tin hiện có. Bạn có thể bổ sung: {', '.join(validation_report.missing_required)}."
             else:
-                summary = "Mình cần thêm một chút thông tin để tiếp tục."
+                summary = "Tiếp tục với thông tin hiện có."
 
             return (
                 AgentOutput(
@@ -561,7 +562,7 @@ Return JSON only:
                     confidence=0.85,
                     questions=questions,
                 ),
-                False,
+                True,  # still dispatch — questions are optional, not blocking
             )
 
         state.question_stack = question_manager.stack.items
@@ -769,7 +770,7 @@ Return ONLY a JSON array — no markdown, no extra text:
 
         client = get_validation_service().client
         try:
-            response = client.create_completion(
+            response = await client.async_create_completion(
                 messages=[
                     {
                         "role": "system",

@@ -196,6 +196,20 @@ class GreenNodeClient:
 
         return self._client.chat.completions.create(**params)
 
+    async def async_create_completion(
+        self,
+        messages: list[dict[str, Any]],
+        **kwargs,
+    ) -> ChatCompletion:
+        """Non-blocking wrapper: runs the synchronous create_completion in a thread-pool executor."""
+        import asyncio
+        from functools import partial
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            partial(self.create_completion, messages=messages, **kwargs),
+        )
+
     def __call__(
         self, messages: list[dict[str, Any]], **kwargs
     ) -> ChatCompletion | Generator[ChatCompletionChunk, None, None]:

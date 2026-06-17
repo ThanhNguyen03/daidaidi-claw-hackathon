@@ -86,7 +86,7 @@ Do not invent unsupported market facts. If something is not in the provided cont
 
         try:
             client = get_llm_client(self.name)
-            response = client.create_completion(
+            response = await client.async_create_completion(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},

@@ -102,7 +102,7 @@ Output as JSON:
 }}
 """
         try:
-            response = client.create_completion(
+            response = await client.async_create_completion(
                 messages=[
                     {"role": "system", "content": self.system_prompt + rag_context},
                     {"role": "user", "content": prompt},

@@ -141,7 +141,7 @@ Return JSON with:
 
         try:
             client = get_llm_client(self.name)
-            response = client.create_completion(
+            response = await client.async_create_completion(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},

@@ -5,37 +5,90 @@
  * Uses Tailwind CSS for styling.
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useEffect } from 'react';
 import type { Message } from '../lib/types';
 import { Bot, User, Sparkles, FileText, Users, Target, Clock, TrendingUp } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
-// Detect and fix tables that have header + data but NO delimiter row
-// Example: "| A | B |" + "| X | Y |" (missing |---|---|)
+// ---------------------------------------------------------------------------
+// Mermaid diagram renderer (dynamic import, SSR-safe)
+// ---------------------------------------------------------------------------
+let _mermaidIdCounter = 0;
+
+function MermaidDiagram({ chart }: { chart: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const idRef = useRef(`mermaid-diag-${++_mermaidIdCounter}`);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const mermaid = (await import('mermaid')).default;
+        mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+        const { svg } = await mermaid.render(idRef.current, chart);
+        if (!cancelled && containerRef.current) {
+          containerRef.current.innerHTML = svg;
+        }
+      } catch {
+        // fallback: show raw code block
+        if (!cancelled && containerRef.current) {
+          const safe = chart.replace(/</g, '&lt;');
+          containerRef.current.innerHTML = `<pre style="overflow:auto;padding:1rem;background:var(--color-surface-2);border-radius:8px;font-size:0.85em">${safe}</pre>`;
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [chart]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="mermaid-diagram my-4 flex justify-center overflow-x-auto"
+      style={{ minHeight: '80px' }}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Table preprocessors
+// ---------------------------------------------------------------------------
+
+// Fix tables missing a delimiter row (header row immediately followed by data row)
+// Skips content inside code blocks.
 function fixMissingDelimiterTables(content: string): string {
   const lines = content.split('\n');
   const result: string[] = [];
   let addedDelimiterThisBlock = false;
+  let inCodeBlock = false;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    const pipeCount = (line.match(/\|/g) || []).length;
+    const line = lines[i];
+    const trimmed = line.trim();
 
-    // Check if this is a table row (has 3+ pipes)
-    if (pipeCount < 3) {
-      result.push(lines[i]);
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      result.push(line);
       addedDelimiterThisBlock = false;
       continue;
     }
 
-    // Check if previous line was also a table row (no delimiter between them)
+    if (inCodeBlock) {
+      result.push(line);
+      continue;
+    }
+
+    const pipeCount = (trimmed.match(/\|/g) || []).length;
+
+    if (pipeCount < 3) {
+      result.push(line);
+      addedDelimiterThisBlock = false;
+      continue;
+    }
+
     if (i > 0 && !addedDelimiterThisBlock) {
       const prevLine = lines[i - 1].trim();
       const prevPipeCount = (prevLine.match(/\|/g) || []).length;
-
-      // Previous line is table row, current is table row, no delimiter between
       if (prevPipeCount >= 3 && !prevLine.includes('---')) {
-        // Need to insert delimiter row between them - but only once per table block
         const cols = pipeCount - 1;
         const delimiter = '| ' + Array(cols).fill('---').join(' | ') + ' |';
         result.push(delimiter);
@@ -43,13 +96,98 @@ function fixMissingDelimiterTables(content: string): string {
       }
     }
 
-    result.push(lines[i]);
+    result.push(line);
   }
 
   return result.join('\n');
 }
 
-// Detect if content is a brief document (has tables with specific structure)
+// Parse a single-line concatenated table such as:
+//   "| H1 | H2 | | --- | --- | | D1 | D2 | | R2C1 | R2C2 |"
+// Returns an array of proper markdown table lines, or null if not applicable.
+function tryFixConcatenatedTable(line: string): string[] | null {
+  if (!/\|\s*\|/.test(line)) return null;
+
+  const raw = line.split('|');
+  if (raw[0].trim() === '') raw.shift();
+  if (raw.length > 0 && raw[raw.length - 1].trim() === '') raw.pop();
+  const cells = raw.map(c => c.trim());
+  if (cells.length < 4) return null;
+
+  const isDelim = (c: string) => c.length > 0 && /^[:\-]+$/.test(c);
+
+  // Count header columns before first delimiter or empty cell
+  let N = 0;
+  for (const c of cells) {
+    if (isDelim(c) || c === '') break;
+    N++;
+  }
+  if (N < 1) return null;
+
+  // Locate delimiter start
+  const sepIdx = cells[N] === '' ? N + 1 : N;
+  if (sepIdx >= cells.length || !isDelim(cells[sepIdx])) return null;
+
+  const rows: string[] = [];
+  rows.push('| ' + cells.slice(0, N).join(' | ') + ' |');
+  rows.push('| ' + Array(N).fill('---').join(' | ') + ' |');
+
+  // Skip delimiter cells
+  let i = N;
+  while (i < cells.length && (isDelim(cells[i]) || cells[i] === '')) i++;
+
+  // Collect data rows
+  while (i < cells.length) {
+    const rowCells: string[] = [];
+    for (let j = 0; j < N && i < cells.length; j++, i++) rowCells.push(cells[i]);
+    // Skip trailing empty separators
+    while (i < cells.length && cells[i] === '') i++;
+    if (rowCells.some(c => c !== '')) {
+      while (rowCells.length < N) rowCells.push('');
+      rows.push('| ' + rowCells.join(' | ') + ' |');
+    }
+  }
+
+  return rows.length > 2 ? rows : null;
+}
+
+// Fix single-line concatenated tables. Skips content inside code blocks.
+function fixMalformedTables(content: string): string {
+  const lines = content.split('\n');
+  const result: string[] = [];
+  let inCodeBlock = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      result.push(line);
+      continue;
+    }
+
+    if (inCodeBlock || !trimmed) {
+      result.push(line);
+      continue;
+    }
+
+    if (trimmed.startsWith('|')) {
+      const fixed = tryFixConcatenatedTable(trimmed);
+      if (fixed) {
+        result.push(...fixed);
+        continue;
+      }
+    }
+    result.push(line);
+  }
+
+  return result.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Brief document detector (kept for compatibility but no longer blocks render)
+// ---------------------------------------------------------------------------
+
 function isBriefDocument(content: string): boolean {
   const hasBriefHeader = /📋|BRIEF|Chương trình|TỔNG QUAN/i.test(content);
   const hasTable = /\|.+\|/.test(content);
@@ -57,7 +195,6 @@ function isBriefDocument(content: string): boolean {
   return hasBriefHeader && hasTable && hasProjectInfo;
 }
 
-// Extract brief info for custom rendering
 interface BriefInfo {
   title: string;
   sections: Array<{ key: string; value: string }>;
@@ -72,12 +209,10 @@ function parseBriefContent(content: string): BriefInfo | null {
 
   for (const line of lines) {
     const trimmed = line.trim();
-    // Match lines like: | Client | [Tên brand sẽ được điền] |
     const tableMatch = trimmed.match(/^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$/);
     if (tableMatch) {
       const key = tableMatch[1].trim();
       const value = tableMatch[2].trim();
-      // Check if it's a header row (no dashes)
       if (!key.includes('-') && !value.includes('-') && key && value) {
         if (!title && /📋|BRIEF/i.test(key)) {
           title = value;
@@ -91,7 +226,6 @@ function parseBriefContent(content: string): BriefInfo | null {
   return sections.length > 0 ? { title, sections } : null;
 }
 
-// Icon mapping for brief sections
 const sectionIcons: Record<string, React.ReactNode> = {
   'client': <Users size={16} />,
   'mục tiêu': <Target size={16} />,
@@ -104,21 +238,16 @@ const sectionIcons: Record<string, React.ReactNode> = {
   'ngân sách': <TrendingUp size={16} />,
 };
 
-// Custom Brief Document Renderer
 function BriefDocument({ content }: { content: string }) {
   const briefInfo = useMemo(() => parseBriefContent(content), [content]);
-
   if (!briefInfo) return null;
 
   return (
     <div className="w-full my-4">
-      {/* Header Card */}
       {briefInfo.title && (
         <div
           className="rounded-t-xl px-6 py-4"
-          style={{
-            background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
-          }}
+          style={{ background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)' }}
         >
           <h2 className="text-white text-lg font-semibold m-0 flex items-center gap-2">
             <FileText size={20} />
@@ -126,22 +255,14 @@ function BriefDocument({ content }: { content: string }) {
           </h2>
         </div>
       )}
-
-      {/* Info Cards Grid */}
       <div
         className="rounded-b-xl overflow-hidden"
-        style={{
-          backgroundColor: 'var(--color-surface)',
-          boxShadow: '0 10px 40px -10px rgba(0,0,0,0.15)',
-        }}
+        style={{ backgroundColor: 'var(--color-surface)', boxShadow: '0 10px 40px -10px rgba(0,0,0,0.15)' }}
       >
         <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
           {briefInfo.sections.map((section, index) => {
-            const iconKey = Object.keys(sectionIcons).find(k =>
-              section.key.toLowerCase().includes(k)
-            );
+            const iconKey = Object.keys(sectionIcons).find(k => section.key.toLowerCase().includes(k));
             const icon = iconKey ? sectionIcons[iconKey] : <FileText size={16} />;
-
             return (
               <div
                 key={index}
@@ -153,31 +274,18 @@ function BriefDocument({ content }: { content: string }) {
               >
                 <div
                   className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
-                  style={{
-                    backgroundColor: 'rgba(79, 70, 229, 0.1)',
-                    color: '#4f46e5',
-                  }}
+                  style={{ backgroundColor: 'rgba(79, 70, 229, 0.1)', color: '#4f46e5' }}
                 >
                   {icon}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p
                     className="text-xs font-medium m-0 mb-1"
-                    style={{
-                      color: 'var(--color-text-muted)',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                    }}
+                    style={{ color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}
                   >
                     {section.key}
                   </p>
-                  <p
-                    className="text-sm m-0"
-                    style={{
-                      color: 'var(--color-text)',
-                      lineHeight: 1.5,
-                    }}
-                  >
+                  <p className="text-sm m-0" style={{ color: 'var(--color-text)', lineHeight: 1.5 }}>
                     {section.value}
                   </p>
                 </div>
@@ -190,124 +298,9 @@ function BriefDocument({ content }: { content: string }) {
   );
 }
 
-// Format structured table output from agent into proper markdown
-// Detects patterns with numbered sections, headers, and content
-function formatStructuredAgentTables(content: string): string {
-  const lines = content.split('\n');
-  const result: string[] = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-    const trimmed = line.trim();
-
-    // Look for section headers like "1.1. Section Name" followed by table
-    const sectionMatch = trimmed.match(/^(\d+(?:\.\d+)?)\.\s+([^:]+)(?::\s*)?$/);
-    if (sectionMatch && i + 1 < lines.length) {
-      const nextLine = lines[i + 1].trim();
-      // Check if next few lines look like a table structure
-      if (nextLine.includes('|') && nextLine.includes('-')) {
-        // This is a section header before a table - add it and continue
-        result.push(line);
-        i++;
-        continue;
-      }
-    }
-
-    result.push(line);
-    i++;
-  }
-
-  return result.join('\n');
-}
-
-// Helper to fix malformed markdown tables (all on one line)
-// Handles cases like: "| H1 | H2 | |----|----|----| | C1 | C2 |"
-function fixMalformedTables(content: string): string {
-  const lines = content.split('\n');
-  const result: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Skip empty lines and code blocks
-    if (!trimmed || trimmed.startsWith('```')) {
-      result.push(line);
-      continue;
-    }
-
-    // Check if line contains a table delimiter pattern like |----| or |:----:|
-    if (trimmed.includes('|---') || trimmed.includes('|:--')) {
-      // This line likely contains header + delimiter + data all on one line
-      // Split by | but keep the delimiters
-      const parts = trimmed.split('|').filter(p => p !== '');
-
-      if (parts.length >= 3) {
-        // Find the delimiter part (contains only - or :)
-        const partsWithDelim: string[] = [];
-        let currentPart = '';
-
-        for (const part of parts) {
-          const p = part.trim();
-
-          if (p.match(/^[:\-\s]+$/)) {
-            // This is a delimiter
-            if (currentPart) {
-              partsWithDelim.push(currentPart.trim());
-              currentPart = '';
-            }
-            partsWithDelim.push(p);
-          } else {
-            currentPart += (currentPart ? '|' : '') + p;
-          }
-        }
-        if (currentPart) {
-          partsWithDelim.push(currentPart.trim());
-        }
-
-        // If we have at least 3 parts (header, delimiter, data), split into lines
-        if (partsWithDelim.length >= 3) {
-          // More precise: find the index of the delimiter
-          let headerEnd = -1;
-          let delimiterIdx = -1;
-
-          for (let i = 0; i < parts.length; i++) {
-            const p = parts[i].trim();
-            if (p.match(/^[:\-\s]+$/)) {
-              delimiterIdx = i;
-              break;
-            }
-          }
-
-          if (delimiterIdx > 0) {
-            // Build header row
-            const headerParts = parts.slice(0, delimiterIdx);
-            if (headerParts.length > 0) {
-              result.push('| ' + headerParts.join(' | ') + ' |');
-            }
-
-            // Build delimiter row
-            const delimParts = parts.slice(delimiterIdx, delimiterIdx + 1);
-            result.push('| ' + delimParts.join(' | ').replace(/:/g, '-') + ' |');
-
-            // Build data row
-            const dataParts = parts.slice(delimiterIdx + 1);
-            if (dataParts.length > 0) {
-              result.push('| ' + dataParts.join(' | ') + ' |');
-            }
-            continue;
-          }
-        }
-      }
-    }
-
-    // Default: keep line as is
-    result.push(line);
-  }
-
-  return result.join('\n');
-}
-
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 interface MessageBubbleProps {
   message: Message;
@@ -345,9 +338,7 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
   const agentColor = message.agent ? AGENT_COLORS[message.agent] || '#6b7280' : undefined;
 
   const showHeader = !isGrouped && !isUser && !isSystem && agentName;
-  const isAI = !isUser && !isSystem;
 
-  // System messages render as a thin centered divider
   if (isSystem) {
     return (
       <div className="flex items-center gap-3 my-4">
@@ -358,23 +349,16 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
     );
   }
 
-  // User messages: show in chat bubble (like now)
   if (isUser) {
     return (
       <div className={`flex gap-2 sm:gap-3 ${isGrouped ? 'mt-1' : 'mt-3 sm:mt-4'}`}>
-        {/* Avatar */}
         {!isGrouped && (
           <div className="shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center bg-[#e5e7eb] text-[#374151]">
             <User size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </div>
         )}
-
-        {/* Spacer for grouped user messages */}
         {isGrouped && <div className="w-7 sm:w-8" />}
-
-        {/* Message content */}
         <div className="flex flex-col items-end" style={{ maxWidth: '85%' }}>
-          {/* Message bubble */}
           <div
             className="px-3 sm:px-4 py-2 sm:py-3 wrap-break-word"
             style={{
@@ -388,8 +372,6 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
           >
             <p className="whitespace-pre-wrap" style={{ margin: 0 }}>{message.content}</p>
           </div>
-
-          {/* Timestamp */}
           {!isGrouped && (
             <span className="text-[10px] sm:text-xs text-gray-400 mt-1 mr-1">
               {new Date(message.timestamp).toLocaleTimeString()}
@@ -400,17 +382,15 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
     );
   }
 
-  // AI messages: render without bubble (document-style like ChatGPT/Claude)
+  // AI messages — document style (no bubble)
+  const processedContent = fixMissingDelimiterTables(fixMalformedTables(message.content));
+
   return (
     <div className={`flex gap-2 sm:gap-3 ${isGrouped ? 'mt-1' : 'mt-3 sm:mt-4'}`}>
-      {/* Avatar */}
       {!isGrouped && (
         <div
           className="shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center"
-          style={{
-            backgroundColor: agentColor || '#6366f1',
-            color: '#ffffff',
-          }}
+          style={{ backgroundColor: agentColor || '#6366f1', color: '#ffffff' }}
         >
           {message.agent === 'sales_orchestrator' ? (
             <Sparkles size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
@@ -419,32 +399,19 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
           )}
         </div>
       )}
-
-      {/* Spacer for grouped AI messages */}
       {isGrouped && <div className="w-7 sm:w-8" />}
 
-      {/* Message content - document style (no bubble) */}
       <div className="flex flex-col items-start flex-1" style={{ maxWidth: '100%' }}>
-        {/* Agent name */}
         {showHeader && (
           <span className="text-[10px] sm:text-xs font-medium mb-1.5 sm:mb-2 ml-1" style={{ color: agentColor }}>
             {agentName}
           </span>
         )}
 
-        {/* Check if this is a brief document - render custom UI */}
-        {isBriefDocument(message.content) ? (
-          <BriefDocument content={message.content} />
-        ) : (
         <div
           className="w-full"
-          style={{
-            color: 'var(--color-text)',
-            fontSize: '14px',
-            lineHeight: 1.7,
-          }}
+          style={{ color: 'var(--color-text)', fontSize: '14px', lineHeight: 1.7 }}
         >
-          {/* Preprocess content to fix malformed tables */}
           <ReactMarkdown
             key={message.content}
             components={{
@@ -482,30 +449,17 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
               table: ({ children }) => (
                 <div className="overflow-x-auto my-5 rounded-xl border-0 shadow-md" style={{ backgroundColor: 'var(--color-surface)' }}>
                   <style>{`
-                    .agent-output-table tbody tr:nth-child(odd) {
-                      background-color: rgba(79, 70, 229, 0.03);
-                    }
-                    .agent-output-table tbody tr:hover {
-                      background-color: rgba(79, 70, 229, 0.08);
-                      transition: background-color 0.2s;
-                    }
+                    .agent-output-table tbody tr:nth-child(odd) { background-color: rgba(79,70,229,0.03); }
+                    .agent-output-table tbody tr:hover { background-color: rgba(79,70,229,0.08); transition: background-color 0.2s; }
                   `}</style>
                   <table className="agent-output-table" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.875em' }}>
                     {children}
                   </table>
                 </div>
               ),
-              thead: ({ children }) => (
-                <thead>
-                  {children}
-                </thead>
-              ),
+              thead: ({ children }) => <thead>{children}</thead>,
               tbody: ({ children }) => <tbody>{children}</tbody>,
-              tr: ({ children }) => (
-                <tr>
-                  {children}
-                </tr>
-              ),
+              tr: ({ children }) => <tr>{children}</tr>,
               th: ({ children }) => (
                 <th style={{
                   padding: '1rem 1.25rem',
@@ -545,17 +499,24 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
                     </code>
                   );
                 }
+                return <code className={className}>{children}</code>;
+              },
+              pre: ({ children }) => {
+                // Intercept mermaid code blocks and render as diagrams
+                const child = React.Children.toArray(children)[0];
+                if (React.isValidElement(child)) {
+                  const el = child as React.ReactElement<{ className?: string; children?: React.ReactNode }>;
+                  if (el.props.className === 'language-mermaid') {
+                    const chart = String(el.props.children ?? '').replace(/\n$/, '');
+                    return <MermaidDiagram chart={chart} />;
+                  }
+                }
                 return (
-                  <code className={className}>
+                  <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflow: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0' }}>
                     {children}
-                  </code>
+                  </pre>
                 );
               },
-              pre: ({ children }) => (
-                <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflow: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0' }}>
-                  {children}
-                </pre>
-              ),
               hr: () => <hr style={{ border: 'none', borderTop: '1px solid var(--color-border)', margin: '1.5rem 0' }} />,
               blockquote: ({ children }) => (
                 <blockquote style={{
@@ -573,12 +534,10 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
               ),
             }}
           >
-            {fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(message.content)))}
+            {processedContent}
           </ReactMarkdown>
         </div>
-        )}
 
-        {/* Timestamp */}
         {!isGrouped && (
           <span className="text-xs text-gray-400 mt-3 ml-1">
             {new Date(message.timestamp).toLocaleTimeString()}
@@ -588,4 +547,3 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
     </div>
   );
 }
-           
