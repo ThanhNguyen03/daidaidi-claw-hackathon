@@ -316,7 +316,7 @@ export function ChatWindow({
         <div className="max-w-3xl mx-auto px-3 sm:px-4 md:px-6 py-3 md:py-4">
         {messages.length === 0 && (
           <div className="text-center py-6 sm:py-8 text-text-muted">
-            <p className="text-base sm:text-[16px] text-text mb-1.5 sm:mb-2">Welcome to Sales AI Assistant! 👋</p>
+            <p className="text-base sm:text-[16px] text-text mb-1.5 sm:mb-2">Welcome to AdtimaBox Sales Agent! 👋</p>
             <p className="text-xs sm:text-[12px]">I&apos;m your multi-agent sales assistant. How can I help you today?</p>
           </div>
         )}
@@ -324,7 +324,8 @@ export function ChatWindow({
         {messages.map((msg, index) => {
           const prevMsg = index > 0 ? messages[index - 1] : null;
           const isGrouped = prevMsg && prevMsg.role === msg.role && prevMsg.agent === msg.agent;
-          return <MessageBubble key={index} message={msg} isGrouped={!!isGrouped} />;
+          const isLastMsg = index === messages.length - 1;
+          return <MessageBubble key={index} message={msg} isGrouped={!!isGrouped} isStreaming={isLastMsg && isLoading && msg.role === 'assistant'} />;
         })}
 
         {/* Thinking Indicator — shows while waiting for first content OR during <think> reasoning */}
@@ -392,7 +393,7 @@ export function ChatWindow({
                 t.style.height = 'auto';
                 t.style.height = Math.min(t.scrollHeight, 120) + 'px';
               }}
-              placeholder="Message Sales AI Assistant..."
+              placeholder="Message AdtimaBox Sales Agent..."
               disabled={isLoading}
               rows={1}
               onKeyDown={(e) => {

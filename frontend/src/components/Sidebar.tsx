@@ -231,7 +231,7 @@ export function Sidebar({
                 <span className="flex items-center gap-2">
                   {mode.label}
                   {mode.comingSoon && (
-                    <span className="text-[10px] uppercase tracking-wide text-text-muted border border-border rounded-full px-2 py-0.5">
+                    <span className="text-[10px] uppercase tracking-wide text-orange-500 font-medium border border-neutral-800/10 rounded-full px-2 py-0.5">
                       Soon
                     </span>
                   )}

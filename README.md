@@ -1,32 +1,29 @@
-# Multi-Agent Sales AI Assistant
+# AdtimaBox Sales AI
 
-A multi-agent AI assistant for sales teams that supports sales planning, customer service, proposal generation, and tech advisory.
+An AI sales assistant for Adtima's sales team — built as a multi-skill agent that handles sales planning, proposal generation (user journey, PPTX, quotation), compliance review, and client simulation over a real-time SSE chat interface.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           Frontend (Next.js)                           │
-│                    Chat UI with 4 modes + checkpoint cards             │
-└─────────────────────────────────┬───────────────────────────────────────┘
-                                  │ SSE/WebSocket
-┌─────────────────────────────────▼───────────────────────────────────────┐
-│                        Backend (FastAPI + LangGraph)                   │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐    │
-│  │ Orchestrator│  │   Agents    │  │ Validation  │  │   Memory    │    │
-│  │ (Supervisor)│  │  (6 agents) │  │    Gate     │  │  (LangGraph)│    │
-│  └──────┬──────┘  └──────┬──────┘  └─────────────┘  └──────┬──────┘    │
-│         │                │                                   │          │
-│         └────────────────┴───────────────────────────────────┘          │
-│                                    │                                    │
-│                     ┌──────────────▼──────────────┐                     │
-│                     │   GreenNode MAAS (LLM)     │                     │
-│                     │   - MiniMax M2.5           │                     │
-│                     │   - Qwen 3                 │                     │
-│                     │   - Gemma 4                │                     │
-│                     └─────────────────────────────┘                     │
-└─────────────────────────────────────────────────────────────────────────┘
+Frontend (Next.js)
+  └─ POST /chat/stream  →  SSE stream
+       Backend (FastAPI)
+         ├─ CentralAgent           — orchestrates the full pipeline
+         │    ├─ Scoping           — extracts & validates the sales brief
+         │    ├─ Market Strategy   — market insight + sales planning
+         │    ├─ Product Solution  — AdtimaBox/CShub recommendation + Mermaid user journey
+         │    ├─ Compliance        — policy review (pre-checkpoint reviewer)
+         │    ├─ Client Simulator  — adversarial client Q&A
+         │    ├─ Design            — wireframes / user-flow diagrams
+         │    ├─ Proposal Assembler— assembles final proposal document
+         │    └─ Data Masking      — anonymises sensitive data
+         ├─ Checkpoint Manager     — human-approval gate before any artifact generation
+         └─ Memory                 — feedback rules + salesperson profile (SQLite / AgentBase)
 ```
+
+**LLM provider:** GreenNode MAAS (OpenAI-compatible endpoint), models `minimax/minimax-m2.5` and `qwen/qwen3-5-27b`.  
+**Vector store / RAG:** LanceDB + `baai/bge-m3` embeddings (GreenNode-hosted, no local download needed).  
+**Deployment target:** AgentBase Runtime (container on port 8080) + Next.js frontend (Vercel or static host).
 
 ## Quick Start
 
@@ -34,376 +31,292 @@ A multi-agent AI assistant for sales teams that supports sales planning, custome
 
 - **Python 3.11+** (backend)
 - **Node.js 18+** with **yarn** (frontend)
-- **GreenNode Account** with MAAS access
+- **GreenNode account** with MAAS access
 
-### Step 1: Clone and Setup
+### Step 1 — Clone and copy env
 
 ```bash
-# Clone the repository
 git clone <repo-url>
 cd daidaidi-claw-hackathon
-
-# Copy environment files
-cp backend/.env.example backend/.env.production
-cp frontend/.env.example frontend/.env.production
+cp backend/.env.example backend/.env
 ```
 
-### Step 2: Get Your GreenNode API Key and Model Paths
+### Step 2 — Get your GreenNode API key and model paths
 
-1. **Get API Key:**
-   - Go to [GreenNode Console](https://console.greennode.ai/)
-   - Navigate to API Keys or MAAS section
-   - Create a new API key
-
-2. **List Available Models:**
+1. Go to [GreenNode Console](https://console.greennode.ai/) → MAAS → API Keys → create a key.
+2. List available models:
    ```bash
-   # Replace YOUR_API_KEY with your actual key
    curl -H "Authorization: Bearer YOUR_API_KEY" \
-     "https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1/models" -s | jq '.data[].path'
+     "https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1/models" -s | jq '.data[].id'
    ```
-   
-   You'll see models like:
-   - `MiniMax-M2.5` (for reasoning/agentic tasks)
-   - `Qwen3-8B` or `Qwen3-72B` (for tool-calling)
-   - `Gemma-4-2b` or `Gemma-4-9b` (for fast validation)
-
-3. **Update .env with your values:**
-   ```
+3. Fill in `backend/.env`:
+   ```env
    LLM_API_KEY=your_actual_api_key
-   MODEL_SALES_ORCHESTRATOR=MiniMax-M2.5
-   MODEL_REQUIREMENT_ELICITATION=Qwen3-8B
-   MODEL_MARKET_STRATEGY=Qwen3-8B
-   MODEL_PRODUCT_SOLUTION=Qwen3-8B
-   MODEL_CLIENT_SIMULATOR=Qwen3-8B
-   MODEL_DESIGN=MiniMax-M2.5
-   MODEL_COMPLIANCE=Qwen3-8B
-   MODEL_DESIGN=Gemma-4-2b
-   MODEL_COMPLIANCE=Qwen3-8B
-   MODEL_VALIDATION=Gemma-4-2b
+   MODEL_ORCHESTRATOR=minimax/minimax-m2.5
+   MODEL_MARKET_STRATEGY=qwen/qwen3-5-27b
+   MODEL_PRODUCT_SOLUTION=qwen/qwen3-5-27b
+   MODEL_COMPLIANCE=qwen/qwen3-5-27b
+   MODEL_DESIGN=minimax/minimax-m2.5
+   MODEL_VALIDATION=minimax/minimax-m2.5
    ```
 
-### Step 3: Install Backend Dependencies
+### Step 3 — Backend
 
 ```bash
 cd backend
-
-# Create virtual environment (recommended)
-python -m venv venv
-# On Windows:
-venv\Scripts\activate
-# On Mac/Linux:
-source venv/bin/activate
-
-# Install dependencies
+python -m venv venv && venv\Scripts\activate   # Windows
+# source venv/bin/activate                     # Mac/Linux
 pip install -r requirements.txt
-```
 
-### Step 4: Run Backend
-
-```bash
-# Start the backend server
 python -m uvicorn main:app --reload --port 8000
-
-# Server runs at http://localhost:8000
-# API docs at http://localhost:8000/docs
+# API at http://localhost:8000  |  Docs at /docs
 ```
 
-### Step 5: Install and Run Frontend
+### Step 4 — Frontend
 
 ```bash
-cd ../frontend
-
-# Install dependencies (using yarn as per requirement)
+cd frontend
 yarn install
-
-# Start development server
 yarn dev
-
-# Frontend runs at http://localhost:3000
+# UI at http://localhost:3000
 ```
 
-### Step 6: Test the Application
-
-1. Open http://localhost:3000
-2. Enter a name to identify yourself (demo mode, no auth)
-3. Type a message to start chatting!
+Open http://localhost:3000, enter a name (demo mode — no real auth), and start chatting.
 
 ## Project Structure
 
 ```
 ├── backend/
-│   ├── main.py                 # FastAPI app entry point
-│   ├── config/
-│   │   └── agents.yaml         # Agent configuration
-│   ├── schemas/
-│   │   ├── __init__.py
-│   │   ├── state.py            # SalesCaseState schema
-│   │   ├── agent.py            # AgentOutput schema
-│   │   ├── question.py         # Question schema
-│   │   └── validation.py       # ValidationReport schema
-│   ├── llm/
-│   │   ├── __init__.py
-│   │   └── greennode.py        # GreenNode LLM wrapper
+│   ├── main.py                      # FastAPI app, SSE /chat/stream endpoint
+│   ├── central_agent/
+│   │   ├── agent.py                 # CentralAgent — main pipeline orchestrator
+│   │   └── SKILL.md                 # System prompt for the central agent
+│   ├── skills/                      # One folder per skill
+│   │   ├── base.py                  # BaseSkill contract
+│   │   ├── registry.py              # Skill registry
+│   │   ├── scoping/
+│   │   ├── market_strategy/
+│   │   ├── product_solution/
+│   │   ├── compliance/
+│   │   ├── client_simulator/
+│   │   ├── design/
+│   │   ├── proposal_assembler/
+│   │   └── data_masking/
+│   ├── agents/                      # Per-agent SKILL.md knowledge files
+│   │   ├── sales_orchestrator_agent/
+│   │   ├── market_strategy_agent/
+│   │   ├── product_solution_agent/
+│   │   ├── compliance_policy_agent/
+│   │   └── ...
+│   ├── checkpoint/
+│   │   ├── manager.py               # Human-approval checkpoint state machine
+│   │   └── compliance.py            # Pre-checkpoint compliance review hook
+│   ├── memory/
+│   │   ├── constraint_injection.py  # Injects learned feedback rules into prompts
+│   │   └── feedback_extractor.py    # Detects & saves feedback rules from chat
 │   ├── repos/
-│   │   ├── __init__.py
-│   │   ├── memory_repo.py      # Memory repository interface
-│   │   └── memory_sqlite.py    # SQLite fallback implementation
-│   ├── agents/
-│   │   ├── base.py             # Base agent contract
-│   │   ├── registry.py         # Agent registry
-│   │   ├── orchestrator.py     # Orchestrator supervisor
-│   │   └── graph.py            # LangGraph state machine
-│   └── api/
-│       ├── __init__.py
-│       └── chat.py             # Chat endpoints with SSE
+│   │   ├── memory_repo.py           # Memory repository interface
+│   │   ├── memory_sqlite.py         # SQLite fallback (default)
+│   │   ├── kb_repo.py               # Vector-store KB interface
+│   │   └── embeddings.py            # Embedding provider (GreenNode bge-m3)
+│   ├── generation/
+│   │   ├── pptx.py                  # python-pptx deck generation
+│   │   └── userflow.py              # Mermaid / FigJam user-flow generation
+│   ├── schemas/
+│   │   └── state.py                 # SalesCaseState (shared pipeline state)
+│   ├── llm/
+│   │   └── greennode.py             # GreenNode MAAS wrapper (OpenAI-compatible)
+│   ├── config/
+│   │   └── agents.yaml              # Agent/skill enable flags and model keys
+│   ├── Dockerfile
+│   └── requirements.txt
 │
-├── frontend/
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── page.tsx        # Main chat page
-│   │   │   ├── layout.tsx      # Root layout
-│   │   │   └── api/
-│   │   │       └── chat/
-│   │   │           └── route.ts  # Chat API route (BFF)
-│   │   ├── components/
-│   │   │   ├── ChatWindow.tsx
-│   │   │   ├── MessageBubble.tsx
-│   │   │   ├── Sidebar.tsx
-│   │   │   └── ContextPanel.tsx
-│   │   ├── lib/
-│   │   │   └── types.ts        # Shared TypeScript types
-│   │   └── hooks/
-│   │       └── useChat.ts      # Chat hook with SSE support
-│   ├── package.json
-│   └── next.config.ts
-│
-├── .env.example
-├── PLAN.md
-└── README.md
+└── frontend/
+    └── src/
+        ├── app/
+        │   ├── page.tsx             # Main chat page
+        │   └── layout.tsx
+        ├── components/
+        │   ├── ChatWindow.tsx       # Message list + composer
+        │   ├── MessageBubble.tsx    # Markdown render, Mermaid diagrams
+        │   ├── Sidebar.tsx          # Mode switcher, agent status, theme toggle
+        │   ├── ContextPanel.tsx     # Brief summary, constraints, artifacts
+        │   ├── QuestionCard.tsx     # Inline question cards (yellow border)
+        │   ├── BrainstormView.tsx   # Group-chat brainstorm UI
+        │   └── MobileNav.tsx
+        ├── hooks/
+        │   └── useChat.ts           # SSE-backed chat hook
+        └── lib/
+            ├── types.ts
+            └── api.ts
 ```
+
+## Skills
+
+| Skill | What it does |
+|-------|-------------|
+| **Scoping** | Extracts and validates the sales brief; asks clarifying questions |
+| **Market Strategy** | Market insight, competitor analysis, sales planning |
+| **Product Solution** | AdtimaBox / Zalo Mini App package recommendation + Mermaid user-journey diagram |
+| **Compliance** | Flags policy risks in proposals; runs as a pre-checkpoint reviewer |
+| **Client Simulator** | Adversarial client Q&A to stress-test the proposal |
+| **Design** | Wireframes and user-flow diagrams (FigJam / HTML fallback) |
+| **Proposal Assembler** | Merges all skill outputs into a final proposal document |
+| **Data Masking** | Anonymises sensitive client data before external processing |
 
 ## Modes
 
-| Mode | Description |
-|------|-------------|
-| **Chat** | Q&A mode - minimal agent dispatch, answers from KB + memory |
-| **Planning** | Builds structured sales plans with Market + Strategy agents |
-| **Execute** | Full generation pipeline - proposals, wireframes, PPTX, quotes |
-| **Brainstorm** | Group discussion among multiple agents |
+| Mode | Behaviour |
+|------|-----------|
+| **Chat** | Q&A / advisory — minimal skill dispatch, answers from KB + memory |
+| **Planning** | Builds a structured sales plan; dispatches Market Strategy |
+| **Execute** | Full pipeline — proposal, user journey, PPTX, quotation; all gated by human checkpoint |
+| **Brainstorm** | Multi-agent group discussion; orchestrator acts as moderator |
 
-## Available Agents
+## Human Checkpoint
 
-1. **Orchestrator** - Supervisor that routes requests and manages flow
-2. **Market Insight/Sales Strategy** - Market analysis and sales planning
-3. **Tech Solution** - Technical recommendations
-4. **Account** - Pricing and quotations
-5. **AdtimaBox** - Adtima platform integration
-6. **Design** - Wireframes and visual design
-7. **Compliance** - Policy & compliance advisor: flags policy risks, suggests compliant alternatives, and warns the salesperson before delivery (advisory + pre-checkpoint reviewer)
+Before any artifact is generated (PPTX, quotation, wireframe), the backend emits a `checkpoint_card` SSE event. The frontend renders an inline card with **Approve / Edit / Reject** controls. Compliance findings attach to the card automatically (block/warn/info severity). The pipeline does not execute until the user approves.
 
-The agent pool is **config-driven and extensible** — add or remove an agent by editing `config/agents.yaml` and dropping in a `backend/agents/<name>/` folder, with no orchestrator-core changes (see PLAN.md §B.6). Each entry declares a `kind` (`generator` / `advisory` / `reviewer`) and optional `hooks`, so cross-cutting agents (like Compliance) plug in generically.
+## SSE Event Types
+
+| Event | Description |
+|-------|-------------|
+| `session` | Session established |
+| `user_message` | User turn echoed |
+| `content` | Streaming token from the current agent |
+| `agent_status` | `thinking` / `completed` / `failed` per skill |
+| `agent_message` | Full message from a skill |
+| `question_card` | Rendered by `QuestionCard.tsx` — asks for missing brief info |
+| `checkpoint_card` | Human-approval gate before generation |
+| `thinking_start` / `thinking_end` | Wraps `<think>` blocks (stripped from output) |
+| `constraint_added` | Feedback rule saved to memory |
 
 ## Configuration
 
-### Agent Models
-
-Each agent can use a different model. Configure in `.env`:
+All options live in `backend/.env` (copy from `.env.example`):
 
 ```env
-MODEL_SALES_ORCHESTRATOR=MiniMax-M2.5
-MODEL_REQUIREMENT_ELICITATION=Qwen3-8B
-MODEL_MARKET_STRATEGY=Qwen3-8B
-MODEL_PRODUCT_SOLUTION=Qwen3-8B
-MODEL_CLIENT_SIMULATOR=Qwen3-8B
-MODEL_DESIGN=MiniMax-M2.5
-MODEL_COMPLIANCE=Qwen3-8B
-MODEL_DESIGN=Gemma-4-2b
-MODEL_COMPLIANCE=Qwen3-8B
-MODEL_VALIDATION=Gemma-4-2b
+# GreenNode MAAS
+LLM_BASE_URL=https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1/
+LLM_API_KEY=your_key
+
+# Model per skill (use model IDs from the /v1/models list)
+MODEL_ORCHESTRATOR=minimax/minimax-m2.5
+MODEL_MARKET_STRATEGY=qwen/qwen3-5-27b
+MODEL_PRODUCT_SOLUTION=qwen/qwen3-5-27b
+MODEL_COMPLIANCE=qwen/qwen3-5-27b
+MODEL_DESIGN=minimax/minimax-m2.5
+MODEL_VALIDATION=minimax/minimax-m2.5
+
+# Feature flags
+ENABLE_CHECKPOINT=true
+ENABLE_BRAINSTORM=true
+ENABLE_AUTO_APPROVE_SESSION=false
+
+# KB embeddings — defaults to GreenNode-hosted bge-m3 (no local download)
+KB_EMBEDDING_PROVIDER=greennode
+KB_EMBEDDING_MODEL=baai/bge-m3
+
+# Storage (defaults — no external infra needed for local dev)
+SQLITE_DB_PATH=./data/sales_assistant.db
+LANCEDB_PATH=./data/kb_runtime_cache
+
+# Runtime
+PORT=8080
+FRONTEND_URL=http://localhost:3000
 ```
 
-### Feature Flags
+## AgentBase Managed Services (optional)
 
-In `.env`:
-- `ENABLE_CHECKPOINT=true` - Enable human approval checkpoints
-- `ENABLE_BRAINSTORM=true` - Enable brainstorm mode
-- `ENABLE_AUTO_APPROVE_SESSION=false` - Auto-approve same action type in session
+By default the app runs on **local fallbacks** (SQLite for memory, LanceDB for the vector store) — no AgentBase credentials needed for local development.
 
-### AgentBase Managed Services (optional)
+To enable the managed **Memory** service:
 
-The KB embeddings default to the GreenNode-hosted `baai/bge-m3` model, so the
-container does not need to download Hugging Face weights at startup. If you
-switch the provider back to local, it will fall back to `sentence-transformers`.
+> **Auth model:** AgentBase uses IAM credentials (`GREENNODE_CLIENT_ID` + `GREENNODE_CLIENT_SECRET`), not a per-service API key. On **AgentBase Runtime** these are auto-injected — leave them unset in the deploy env file. For local dev, put them in `.greennode.json`.
 
-By default the app runs on the **local fallbacks** (SQLite for memory, LanceDB for
-the vector store) — you do **not** need any AgentBase credentials to develop or
-demo. Configure these only when you want the managed **Memory** / **MCP Gateway**
-services.
+1. Create a memory resource:
+   ```bash
+   bash .claude/skills/agentbase/scripts/memory.sh create \
+     --name sales-assistant \
+     --strategy-type USER_PREFERENCE \
+     --auto-generate
+   # Note the returned mem_... and strat_... IDs
+   ```
 
-> **Important — how AgentBase auth actually works.** AgentBase services do **not**
-> use a per-service URL + API key. There is **no** `AGENTBASE_MEMORY_URL` or
-> `AGENTBASE_MEMORY_API_KEY`. Instead:
-> - **Base URLs are fixed** and known by the SDK (Memory = `https://agentbase.api.vngcloud.vn/memory`) — you never set them.
-> - **Auth is IAM-based**: `GREENNODE_CLIENT_ID` + `GREENNODE_CLIENT_SECRET` (+ optional `GREENNODE_AGENT_IDENTITY`).
->   - **On AgentBase Runtime** these are **auto-injected** into the container — leave them unset.
->   - **For local development** provide them via a `.greennode.json` file (read by the SDK / `.claude/skills/agentbase/scripts/*`) — recommended — or as env vars.
-> - **A memory is a resource you create** and reference by its **ID** (e.g. `mem_abc123`). That ID — `AGENTBASE_MEMORY_ID` — is what the LangGraph bridge needs; it is **not** an API key.
+2. Add to `.env`:
+   ```env
+   AGENTBASE_MEMORY_ID=mem_xxxxxxxxxxxx
+   MEMORY_STRATEGY_ID=strat_xxxxxxxxxxxx
+   # LOCAL DEV ONLY — auto-injected on Runtime:
+   GREENNODE_CLIENT_ID=your_iam_client_id
+   GREENNODE_CLIENT_SECRET=your_iam_client_secret
+   ```
 
-**Step 1 — create a memory** (gives you the `mem_...` ID + a strategy ID):
+If `AGENTBASE_MEMORY_ID` is unset, the app falls back to SQLite automatically.
+
+## Deployment (AgentBase Runtime)
+
+> Full walkthrough: [`DEPLOY.md`](./DEPLOY.md)
+
+**Hard requirements:**
+- Container must listen on **port 8080** (`PORT` env var, set in `Dockerfile`).
+- Must expose `GET /health → 200`.
+- Do **not** include `GREENNODE_*` or `PORT` in the deploy env file — they are auto-injected.
 
 ```bash
-bash .claude/skills/agentbase/scripts/memory.sh create \
-  --name sales-assistant \
-  --description "Multi-agent sales assistant memory" \
-  --expiry-days 30 \
-  --strategy-name user-prefs \
-  --strategy-type USER_PREFERENCE \
-  --namespace-template "/strategies/{memoryStrategyId}/actors/{actorId}" \
-  --auto-generate
-# Note the returned memory id (mem_...) and strategy id (strat_...)
-```
-
-**Step 2 — put the IDs in `.env`** (auth via `.greennode.json` or IAM env vars):
-
-```env
-# IAM credentials — LOCAL DEV ONLY (auto-injected on AgentBase Runtime)
-GREENNODE_CLIENT_ID=your_iam_client_id
-GREENNODE_CLIENT_SECRET=your_iam_client_secret
-
-# The memory you created above — this was the previously-missing variable
-AGENTBASE_MEMORY_ID=mem_xxxxxxxxxxxx
-MEMORY_STRATEGY_ID=strat_xxxxxxxxxxxx
-```
-
-The LangGraph checkpointer bridge then uses it as
-`AgentBaseMemoryEvents(memory_id=AGENTBASE_MEMORY_ID)`. Requests must also carry
-the `X-GreenNode-AgentBase-User-Id` and `X-GreenNode-AgentBase-Session-Id` headers
-(mapped to `actor_id` / `thread_id`). If `AGENTBASE_MEMORY_ID` is unset, the app
-falls back to the local SQLite checkpointer automatically.
-
-### Figma Design Output (optional)
-
-The Design agent can render design artifacts from Figma. By default it uses an
-**HTML low-fi fallback** (no Figma needed). To enable the Figma path, provide a
-**Personal Access Token (PAT)** — an **EDU / education-plan PAT works**.
-
-> **What a PAT can and cannot do.** A PAT authenticates the Figma **REST API**:
-> - ✅ **Read** files/nodes and **export/render** frames to **PNG / SVG / PDF** — this is the design *output* we use.
-> - ✅ Post comments.
-> - ❌ **It cannot create a file or draw new wireframe content from scratch** — the REST API has no write-content endpoint. Generating brand-new design nodes requires the Figma **Plugin API** (the `use_figma` MCP), not a PAT.
-> - ❌ Writing local variables is **Enterprise-plan only** (EDU is not Enterprise).
->
-> So the PAT-backed flow is: **build a wireframe template file in Figma once → the agent fills/duplicates → exports the frames as images** for the proposal.
-
-**Setup:**
-
-1. In Figma: **Settings → Security → Personal access tokens → Generate new token**. Scopes: `files:read` (required for export), `file_comments:write` (optional).
-2. Build a template Figma file and copy its key from the URL: `https://www.figma.com/file/<FILE_KEY>/...`.
-3. Add to `.env`:
-
-```env
-FIGMA_ACCESS_TOKEN=figd_xxxxxxxxxxxxxxxxxxxxxxxx
-FIGMA_FILE_KEY=your_template_file_key
-```
-
-If `FIGMA_ACCESS_TOKEN` is unset, the Design agent automatically uses the HTML
-low-fi fallback. For true generative wireframes (creating nodes), use the
-`use_figma` MCP / Figma plugin path instead — see `docs/DAY_6.md`.
-
-## Development
-
-### Running Tests
-
-```bash
-# Backend tests
-cd backend
-pytest
-
-# Frontend tests
-cd frontend
-yarn test
-```
-
-### Adding / Removing Agents
-
-The pool is **open for extension, closed for modification** — none of the steps
-below touch the orchestrator or graph code (see PLAN.md §B.6).
-
-1. Add an entry in `config/agents.yaml` with:
-   - `model` (env key, e.g. `MODEL_COMPLIANCE`), `role` (one-line routing description),
-   - `kind`: `generator` (produces an artifact, checkpoint-gated) | `advisory` (answers/advises, read-only) | `reviewer` (inspects another agent's output via a hook),
-   - optional `hooks`: e.g. `[pre_checkpoint_review]` for reviewer agents,
-   - `critical`: whether its failure should halt the pipeline, and `enabled`.
-2. Create the agent folder `backend/agents/<agent_name>/` with `prompt.md`, `schema.py` (payload shape), `tools.py`, `skills/`, `knowledge/`.
-3. Add the model path to `.env` (`MODEL_<AGENT_NAME>`).
-4. Drop knowledge `.md` files into `backend/agents/<agent_name>/knowledge/`.
-
-To **remove** an agent: set `enabled: false` (or delete the entry + folder). Reviewer
-agents un-subscribe from their hook automatically — no other agent is affected.
-
-## Deployment (AgentBase)
-
-The **backend** deploys on **AgentBase Runtime** as a Custom Agent container; the
-**frontend** (Next.js) deploys separately and points at the backend endpoint.
-
-Env split:
-- Backend: `backend/.env.production`
-- Frontend: `frontend/.env.production` or a Vercel project environment variable
-
-> 📘 **Full step-by-step guide: [`DEPLOY.md`](./DEPLOY.md).** The quick version is below.
-
-**Runtime Service Contract (HARD requirements):**
-1. The container must **listen on port `8080`** — the platform routes traffic there.
-   (`backend/Dockerfile` pins `ENV PORT=8080`; `main.py` reads `PORT`.)
-2. It must expose **`GET /health` → 200**.
-
-**Auth model:** you deploy using **IAM service-account** credentials in `.greennode.json`
-(verify with `bash .claude/skills/agentbase/scripts/check_credentials.sh iam`). There is **no**
-`AGENTBASE_API_KEY`. The runtime **auto-injects** `GREENNODE_CLIENT_ID`,
-`GREENNODE_CLIENT_SECRET`, `GREENNODE_AGENT_IDENTITY`, `GREENNODE_ENDPOINT_URL` into the
-container — **do not put these in your deploy env file**.
-
-**Quick steps** (details + redeploy/rollback in `DEPLOY.md`):
-
-```bash
-# 1. Build (amd64) and push to the AgentBase managed Container Registry
+# 1. Build (amd64) and push to the AgentBase Container Registry
 docker build --platform linux/amd64 -t sales-ai-agent:latest ./backend
-bash .claude/skills/agentbase/scripts/cr.sh repo get
 bash .claude/skills/agentbase/scripts/cr.sh credentials docker-login
 docker tag sales-ai-agent:latest <registryUrl>/<repoName>/sales-ai-agent:latest
 docker push <registryUrl>/<repoName>/sales-ai-agent:latest
 
-# 2. Create the runtime (env file must NOT contain GREENNODE_* or PORT)
+# 2. Create the runtime service
 bash .claude/skills/agentbase/scripts/runtime.sh create \
   --name sales-ai-agent \
   --image <registryUrl>/<repoName>/sales-ai-agent:latest \
-  --flavor runtime-s2-general-2x4 --env-file backend/.env.production --from-cr --network-mode PUBLIC
+  --flavor runtime-s2-general-2x4 \
+  --env-file backend/.env.production \
+  --from-cr --network-mode PUBLIC
 
-# 3. Get the endpoint + health-check
-bash .claude/skills/agentbase/scripts/runtime.sh endpoints list <RUNTIME_ID>
+# 3. Verify
 curl -s -o /dev/null -w "%{http_code}\n" "<endpoint-url>/health"   # expect 200
 ```
 
 ## CI/CD
 
-Two GitHub Actions workflows handle merge-to-main deploys:
-- [`backend-deploy.yml`](./.github/workflows/backend-deploy.yml) for `backend/**`
-- [`frontend-deploy.yml`](./.github/workflows/frontend-deploy.yml) for `frontend/**`
+Two GitHub Actions workflows trigger on merge to `main`:
 
-Backend workflow secrets:
-- `GREENNODE_CLIENT_ID`
-- `GREENNODE_CLIENT_SECRET`
-- `AGENTBASE_RUNTIME_ID`
-- `BACKEND_ENV_FILE` if you do not want to commit `backend/.env.production`
+- `.github/workflows/backend-deploy.yml` — watches `backend/**`
+- `.github/workflows/frontend-deploy.yml` — watches `frontend/**`
 
-Frontend workflow secrets:
-- `VERCEL_TOKEN`
-- `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID`
+Required GitHub secrets:
 
-## License
+| Secret | Used by |
+|--------|---------|
+| `GREENNODE_CLIENT_ID` | Backend deploy |
+| `GREENNODE_CLIENT_SECRET` | Backend deploy |
+| `AGENTBASE_RUNTIME_ID` | Backend deploy |
+| `VERCEL_TOKEN` | Frontend deploy |
+| `VERCEL_ORG_ID` | Frontend deploy |
+| `VERCEL_PROJECT_ID` | Frontend deploy |
 
-MIT
+## Development
+
+```bash
+# Backend lint + format
+cd backend
+ruff check .
+ruff format .
+
+# Backend tests
+pytest
+pytest tests/test_file.py::test_function -v
+
+# Frontend tests
+cd frontend
+yarn test
+yarn build
+```
 
 ## License
 

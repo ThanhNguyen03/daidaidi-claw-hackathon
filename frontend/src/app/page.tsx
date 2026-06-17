@@ -1,7 +1,7 @@
 /**
  * Main Chat Page
  * ==============
- * Entry point for the Sales AI Assistant frontend.
+ * Entry point for the AdtimaBox Sales Agent frontend.
  * Uses Tailwind CSS for styling.
  */
 
@@ -148,7 +148,7 @@ export default function Home() {
             <div className="w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-3 sm:mb-4 bg-accent rounded-2xl flex items-center justify-center">
               <span className="text-3xl sm:text-4xl">🤖</span>
             </div>
-            <h1 className="text-xl sm:text-[22px] font-bold text-text mb-1.5 sm:mb-2">Sales AI Assistant</h1>
+            <h1 className="text-xl sm:text-[22px] font-bold text-text mb-1.5 sm:mb-2">AdtimaBox Sales Agent</h1>
             <p className="text-xs sm:text-[12px] text-text-muted">Multi-Agent AI for Sales Teams</p>
           </div>
 

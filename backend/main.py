@@ -1,4 +1,4 @@
-﻿"""
+"""
 Main FastAPI Application
 ========================
 Entry point for the multi-agent sales assistant backend.
@@ -38,10 +38,9 @@ from repos.memory_repo import get_memory_repo, SQLiteMemoryRepo
 # Import LLM
 from llm.greennode import get_llm_client
 
-# Import agent system (Day 2)
-from agents.registry import get_registry
-from agents.graph import get_simple_runner
-from agents.sales_orchestrator_agent.agent import get_sales_orchestrator
+# Multi-skills: central agent + skill registry
+from central_agent.agent import get_central_agent
+from skills.registry import get_skill_registry
 
 # Import validation (Day 3)
 from validation.question_stack import get_question_manager
@@ -85,30 +84,21 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup/shutdown."""
-    # Startup: index all agent skills + knowledge into the KB vector store (idempotent).
-    # Files that haven't changed since last run are skipped via hash check.
-    print("Starting up: indexing agent skills/knowledge into the KB vector store...")
+    # Startup: warm up skill registry
+    print("Starting up: loading skill registry...")
+    try:
+        registry = get_skill_registry()
+        print(f"Skills loaded: {registry.all_names()}")
+    except Exception as e:
+        print(f"Warning: skill registry init failed (non-fatal): {e}")
+
+    # Startup: index agent knowledge into the KB vector store (for RAG reference lookups)
+    print("Starting up: indexing agent knowledge into the KB vector store...")
     try:
         from tools.ingest import ingest_all_agents
         await ingest_all_agents(force=False)
     except Exception as e:
         print(f"Warning: knowledge ingest failed (non-fatal): {e}")
-
-    # Startup: register checkpoint review hooks
-    print("Starting up: Registering checkpoint review hooks...")
-    try:
-        from checkpoint.manager import get_checkpoint_manager
-        from agents.compliance_policy_agent.agent import get_compliance_agent
-
-        cpm = get_checkpoint_manager()
-        compliance_agent = get_compliance_agent()
-
-        from checkpoint.manager import ComplianceReviewHook
-        hook = ComplianceReviewHook(compliance_agent)
-        cpm.register_review_hook(hook)
-        print("Checkpoint review hook registered")
-    except Exception as e:
-        print(f"Warning: Failed to register review hook: {e}")
 
     yield  # App runs here
 
@@ -318,7 +308,7 @@ async def _recompute_preview(state: SalesCaseState, params: dict) -> Optional[di
 
     This is called when user edits checkpoint params.
     For now, we simply update the total based on params.
-    In a full implementation, we'd re-run the Account agent.
+    In a full implementation, this would re-run the Account agent.
     """
     # Get current payload from state
     product_output = state.outputs.get("product_solution")
@@ -416,12 +406,12 @@ async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
                 "filename": f"proposal_{client_name}.pptx",
                 "media_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
                 "type": "pptx",
-                "title": f"PPTX Proposal â€” {client_name}",
+                "title": f"PPTX Proposal -- {client_name}",
             }
             result["artifact_id"] = artifact_id
             result["download_url"] = f"/artifact/{artifact_id}"
         elif result.get("fallback"):
-            # python-pptx not available â€” save fallback text
+            # python-pptx not available -- save fallback text
             content = (result.get("preview") or "").encode("utf-8")
             _artifact_store[artifact_id] = {
                 "storage": "memory",
@@ -429,7 +419,7 @@ async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
                 "filename": f"proposal_{params.get('client_name', 'Client')}.md",
                 "media_type": "text/markdown",
                 "type": "pptx",
-                "title": f"Proposal (text fallback) â€” {params.get('client_name', 'Client')}",
+                "title": f"Proposal (text fallback) -- {params.get('client_name', 'Client')}",
             }
             result["artifact_id"] = artifact_id
             result["download_url"] = f"/artifact/{artifact_id}"
@@ -480,7 +470,7 @@ async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
                 "filename": "wireframe.html",
                 "media_type": "text/html",
                 "type": "wireframe",
-                "title": f"Wireframe â€” {params.get('brand_name', 'Brand')}",
+                "title": f"Wireframe -- {params.get('brand_name', 'Brand')}",
             }
             result["artifact_id"] = artifact_id
             result["download_url"] = f"/artifact/{artifact_id}"
@@ -646,7 +636,7 @@ def _extract_agent_content(agent_name: str, output) -> str:
         if isinstance(findings, str):
             return findings
         if isinstance(findings, list):
-            lines = [f"**Compliance Review â€” {agent_name}**\n"]
+            lines = [f"**Compliance Review -- {agent_name}**\n"]
             for f in findings:
                 if isinstance(f, dict):
                     severity = f.get("severity", "info").upper()
@@ -657,7 +647,7 @@ def _extract_agent_content(agent_name: str, output) -> str:
 
     # client_simulator: structured adversarial review
     if "objections" in payload:
-        lines = [f"**Client Simulator Review â€” {agent_name}**\n"]
+        lines = [f"**Client Simulator Review -- {agent_name}**\n"]
         scores = payload.get("scores", {})
         if scores:
             score_str = " | ".join(f"{k.replace('_', ' ').title()}: {v}/5" for k, v in scores.items())
@@ -666,9 +656,9 @@ def _extract_agent_content(agent_name: str, output) -> str:
             if isinstance(obj, dict):
                 lines.append(f"- [{obj.get('severity','').upper()}] {obj.get('text', str(obj))}")
         for wp in payload.get("weak_points", []):
-            lines.append(f"âš  {wp}")
+            lines.append(f"⚠ {wp}")
         for risk in payload.get("risks", []):
-            lines.append(f"ðŸš¨ {risk}")
+            lines.append(f"🚨 {risk}")
         if payload.get("recommendations"):
             lines.append("\n**Recommendations before AE review:**")
             for rec in payload["recommendations"]:
@@ -703,218 +693,96 @@ def _extract_agent_content(agent_name: str, output) -> str:
 
     if "pricing_breakdown" in payload:
         pricing = payload["pricing_breakdown"] or {}
-        lines = [f"**BÃ¡o giÃ¡ / Solution**\n"]
+        lines = [f"**Báo giá / Solution**\n"]
         for item in pricing.get("items", []):
             price = item.get("price", 0)
             lines.append(
                 f"- {item.get('name', '?')}: **{price:,.0f} VND** / {item.get('unit', '')}"
-                + (" *(Æ°á»›c tÃ­nh)*" if item.get("is_estimate") else "")
+                + (" *(ước tính)*" if item.get("is_estimate") else "")
             )
         if pricing.get("subtotal") is not None:
             lines.append(f"\n**Subtotal:** {pricing.get('subtotal'):,.0f} VND")
         if pricing.get("total_vnd") is not None:
-            lines.append(f"**Tá»•ng cá»™ng:** {pricing.get('total_vnd'):,.0f} VND")
+            lines.append(f"**Tổng cộng:** {pricing.get('total_vnd'):,.0f} VND")
         if pricing.get("valid_until"):
-            lines.append(f"Hiá»‡u lá»±c Ä‘áº¿n: {pricing['valid_until']}")
+            lines.append(f"Hiệu lực Ä'ến: {pricing['valid_until']}")
         return "\n".join(lines)
 
     # product solution / quote: render as markdown table
     if "quote_id" in payload:
-        lines = [f"**BÃ¡o giÃ¡ #{payload['quote_id']}**\n"]
+        lines = [f"**Báo giá #{payload['quote_id']}**\n"]
         for item in payload.get("items", []):
             price = item.get("price", 0)
             lines.append(
                 f"- {item.get('name', '?')}: **{price:,.0f} VND** / {item.get('unit', '')} "
-                + ("*(Æ°á»›c tÃ­nh)*" if item.get("is_estimate") else "")
+                + ("*(ước tính)*" if item.get("is_estimate") else "")
             )
         total = payload.get("total_vnd", 0)
-        lines.append(f"\n**Tá»•ng cá»™ng: {total:,.0f} VND**")
+        lines.append(f"\n**Tổng cộng: {total:,.0f} VND**")
         if payload.get("valid_until"):
-            lines.append(f"Hiá»‡u lá»±c Ä‘áº¿n: {payload['valid_until']}")
+            lines.append(f"Hiệu lực Ä'ến: {payload['valid_until']}")
         if payload.get("payment_terms"):
-            lines.append(f"Äiá»u khoáº£n thanh toÃ¡n: {payload['payment_terms']}")
+            lines.append(f"Ä iá» u khoản thanh toán: {payload['payment_terms']}")
         return "\n".join(lines)
 
     # fallback: use summary
     return output.summary or ""
 
 
-async def process_with_agents(
+async def process_with_central_agent(
     state: SalesCaseState,
     message: str,
 ) -> AsyncGenerator[str, None]:
     """
-    Process message using the multi-agent system.
+    Process message using the central agent + skills system.
 
-    This uses the SimpleAgentRunner from Day 2 which provides
-    proper agent dispatch, anti-loop guard, and status streaming.
-
-    Chat-only runtime behavior:
-    - Validation runs first.
-    - The orchestrator decides which specialist agents to invoke.
-    - Checkpoints are created from the produced output type, not from mode.
-
-    NOTE: When ENABLE_CHECKPOINT is true, this will use the full LangGraph
-    AgentGraph which supports interrupt-before-tool HITL and durable checkpointer
-    for resume. This is needed for checkpoint functionality.
+    The central agent classifies intent, elicits requirements when needed,
+    dispatches to the relevant skills in parallel groups, and synthesizes
+    a final response. No inter-agent communication -- skills are isolated executors.
     """
-    # Add user message to state
-    state.messages.extend(
-        [
-            {
-                "role": "user",
-                "content": message,
-                "timestamp": datetime.now().isoformat(),
-            },
-        ]
-    )
+    # Record user message
+    state.messages.append({
+        "role": "user",
+        "content": message,
+        "timestamp": datetime.now().isoformat(),
+    })
 
-    # Day 7: Handle modes differently
-    # chat mode: simple processing (no agents), handled in process_simple
-    # brainstorm mode: use BrainstormManager for multi-agent discussion
-
-    # For planning/execute modes, use agents
-    # Always use SimpleAgentRunner (full LangGraph has issues with duplicate routes)
-    use_full_graph = False
-
-    # Day 4: Load active constraints into state for injection
+    # Load active feedback constraints
     try:
         memory_repo = get_memory_repo()
-        constraints = await memory_repo.load_feedback_rules(
-            state.salesperson_id, active_only=True
-        )
+        constraints = await memory_repo.load_feedback_rules(state.salesperson_id, active_only=True)
         state.constraints = constraints
     except Exception as e:
         print(f"Warning: Failed to load constraints: {e}")
         state.constraints = []
 
-    # Day 7: Handle brainstorm mode - use BrainstormManager for multi-agent discussion
-    if state.mode == "brainstorm":
-        from mode.brainstorm import get_brainstorm_manager
+    central_agent = get_central_agent()
 
-        # Get or create brainstorm session
-        manager = get_brainstorm_manager()
-        brain_state = manager.get_session(state.session_id)
+    has_content = False
+    async for event in central_agent.run(state, message):
+        etype = event.get("type", "")
+        if etype not in ("done",):
+            if etype in ("content", "agent_message", "assistant_message", "question_card"):
+                has_content = True
+            yield _sse_data(event)
 
-        if brain_state is None:
-            # Create new session with participants from state
-            participants = state.participants if state.participants else ["sales_orchestrator"]
-            brain_state = manager.create_session(
-                session_id=state.session_id,
-                participants=participants,
-                max_rounds=8
-            )
-            yield _sse_data({'type': 'brainstorm_start', 'session_id': state.session_id, 'participants': participants})
+    if not has_content:
+        yield _sse_data({
+            "type": "assistant_message",
+            "agent": "central_agent",
+            "content": "Mình cần thêm thông tin để hỗ trợ bạn. Bạn có thể chia sẻ thêm về yêu cầu không?",
+        })
 
-        # Add user message to brainstorm
-        brain_state.add_message(speaker="user", content=message, is_user=True)
-
-        # Run brainstorm round - select next speaker and get their response
-        next_speaker = brain_state.select_next_speaker()
-
-        if next_speaker:
-            yield _sse_data({'type': 'speaker_turn', 'speaker': next_speaker})
-
-            # Get agent response for the speaker
-            runner = get_simple_runner()
-            state.messages.append({
-                "role": "user",
-                "content": f"[Brainstorm] {message}",
-                "timestamp": datetime.now().isoformat(),
-            })
-
-            # Run the agent to generate response
-            final_state, stream_events = await runner.run(state)
-
-            # Stream events and capture agent output
-            agent_output = ""
-            for event in stream_events:
-                yield _sse_data(event)
-                if event.get("type") == "content":
-                    agent_output += event.get("content", "")
-
-            # Add agent response to brainstorm
-            if agent_output:
-                brain_state.add_message(speaker=next_speaker, content=agent_output)
-
-        # Check for convergence or timeouts
-        should_stop, reason = brain_state.check_timeouts()
-        if not should_stop and brain_state.check_convergence():
-            should_stop = True
-            reason = "convergence"
-
-        if should_stop:
-            brain_state.is_ended = True
-            summary = brain_state.get_summary()
-            yield _sse_data({'type': 'brainstorm_end', 'reason': reason, 'summary': summary})
-        else:
-            # Continue - prompt next speaker
-            yield _sse_data({'type': 'continue', 'next_speaker': brain_state.current_speaker})
-
-        return
-
-    # Stream events from the runner in real time
-    runner = get_simple_runner()
-    already_has_assistant = False
-
-    async for event in runner.run_stream(state):
-        if event.get("type") == "done":
-            break
-        if event.get("type") in ("assistant_message", "question_card", "content"):
-            already_has_assistant = True
-        yield _sse_data(event)
-
-    # Extract and stream each completed agent’s output as agent_message
-    emitted_agent_message = False
-    for agent_name, output in state.outputs.items():
-        if agent_name == "sales_orchestrator":
-            continue
-        if not output or not hasattr(output, "status"):
-            continue
-        if output.status != "COMPLETE":
-            continue
-
-        content_text = _extract_agent_content(agent_name, output)
-        if not content_text:
-            continue
-
-        yield _sse_data({"type": "agent_message", "agent": agent_name, "content": content_text})
-        emitted_agent_message = True
-
-        state.messages.append(
-            {
-                "role": "assistant",
-                "content": content_text,
-                "agent": agent_name,
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
-
-    if not emitted_agent_message and not already_has_assistant:
-        fallback_summary = ""
-        orch_output = state.outputs.get("sales_orchestrator")
-        if orch_output and getattr(orch_output, "summary", ""):
-            fallback_summary = str(orch_output.summary)
-
-        if fallback_summary:
-            yield _sse_data({
-                "type": "assistant_message",
-                "agent": "sales_orchestrator",
-                "content": fallback_summary,
-            })
-
-    state.summary = (
-        f"User: {message[:30]}... -> Agents: {', '.join(state.outputs.keys())}"
-    )
-
+    state.summary = f"User: {message[:40]}... -> Skills: {', '.join(state.outputs.keys()) or 'none'}"
     yield _sse_data({"type": "done"})
+
 
 
 # =============================================================================
 # Simple LLM Processing (Day 1 fallback)
 # =============================================================================
 
-ORCHESTRATOR_SYSTEM_PROMPT = """You are a Sales AI Assistant Ã¢â‚¬â€ a knowledgeable advisor for sales teams.
+ORCHESTRATOR_SYSTEM_PROMPT = """You are a Sales AI Assistant --  a knowledgeable advisor for sales teams.
 
 ## Your Role
 
@@ -940,7 +808,7 @@ comprehensive, direct response with only grounded information.
 
 ## Response Guidelines
 
-- Be helpful, professional, and thorough Ã¢â‚¬â€ give real substance, not placeholders
+- Be helpful, professional, and thorough --  give real substance, not placeholders
 - Respond in the user's language (Vietnamese if they write in Vietnamese)
 - Use markdown headers and bullet points for readability
 - Never promise future actions you cannot take in this turn
@@ -952,10 +820,10 @@ class _ThinkFilter:
     """Streaming filter that strips <think>...</think> blocks from LLM output.
 
     Emits (type, content) tuples:
-      ("think_start", "")  â€” first <think> tag encountered
-      ("think", content)   â€” text inside a <think> block (caller may discard)
-      ("think_end", "")    â€” closing </think> tag
-      ("content", content) â€” regular response text to stream to the client
+      ("think_start", "")  -- first <think> tag encountered
+      ("think", content)   -- text inside a <think> block (caller may discard)
+      ("think_end", "")    -- closing </think> tag
+      ("content", content) -- regular response text to stream to the client
     """
 
     OPEN = "<think>"
@@ -1014,11 +882,11 @@ async def process_simple(
 ) -> AsyncGenerator[str, None]:
     """
     Process message with simple LLM call (chat mode fallback).
-    Uses sales_orchestrator system prompt. Strips <think> reasoning blocks and
+    Uses central_agent system prompt. Strips <think> reasoning blocks and
     emits thinking_start / thinking_end SSE events instead.
     """
     try:
-        client = get_llm_client("sales_orchestrator")
+        client = get_llm_client("central_agent")
     except ValueError as e:
         yield _sse_data({'type': 'error', 'error': str(e)})
         return
@@ -1083,7 +951,7 @@ async def process_simple(
                 {
                     "role": "assistant",
                     "content": accumulated,
-                    "agent": "sales_orchestrator",
+                    "agent": "central_agent",
                     "timestamp": datetime.now().isoformat(),
                 }
             )
@@ -1117,15 +985,15 @@ async def health_check():
 
     llm_status = validate_environment()
 
-    # Check agent registry
-    registry = get_registry()
-    agents = registry.all_names()
+    # Check skill registry
+    skill_reg = get_skill_registry()
+    skills = skill_reg.all_names()
 
     return {
         "status": "healthy",
         "llm_configured": llm_status["valid"],
-        "agents_loaded": len(agents),
-        "agent_names": agents,
+        "skills_loaded": len(skills),
+        "skill_names": skills,
     }
 
 
@@ -1151,44 +1019,23 @@ async def chat(request: ChatRequest):
     )
 
     try:
-        orchestrator = get_sales_orchestrator()
-        validation_output, should_dispatch = await orchestrator.validate_before_dispatch(
-            state
-        )
-
-        if not should_dispatch:
-            response_text = validation_output.summary or ""
-        else:
-            runner = get_simple_runner()
-            final_state, _ = await runner.run(state)
-            response_text = ""
-
-            for agent_name, output in final_state.outputs.items():
-                if agent_name == "sales_orchestrator":
-                    continue
-                if not output or getattr(output, "status", None) != "COMPLETE":
-                    continue
-                response_text = _extract_agent_content(agent_name, output)
-                if response_text:
-                    break
-
-            if not response_text:
-                orch_output = final_state.outputs.get("sales_orchestrator")
-                if orch_output and getattr(orch_output, "summary", ""):
-                    response_text = str(orch_output.summary)
-                else:
-                    response_text = (
-                        final_state.summary
-                        or validation_output.summary
-                        or "No response"
-                    )
+        central_agent = get_central_agent()
+        all_events = []
+        async for event in central_agent.run(state, request.message):
+            all_events.append(event)
+        # Collect first content/agent_message as response
+        response_text = ""
+        for ev in all_events:
+            if ev.get("type") in ("content", "agent_message", "assistant_message"):
+                response_text += ev.get("content", "")
+        response_text = response_text or "No response generated."
     except Exception as e:
         response_text = f"Error: {str(e)}"
 
     return ChatResponse(
         session_id=state.session_id,
         message=response_text,
-        agent="sales_orchestrator",
+        agent="central_agent",
         done=True,
     )
 
@@ -1227,7 +1074,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
     if payload.brief:
         state.brief = payload.brief
 
-    # Always sync the mode on the session â€” user may have switched modes
+    # Always sync the mode on the session -- user may have switched modes
     # between requests while keeping the same session (brief/history carries over).
     state.mode = ACTIVE_MODE
 
@@ -1251,35 +1098,36 @@ async def chat_stream(request: Request, payload: ChatRequest):
             memory_repo = get_memory_repo()
             profile_manager = get_profile_manager()
 
-            # Check if message contains feedback
-            if feedback_extractor.is_feedback_message(payload.message):
-                rule = feedback_extractor.extract(
-                    payload.message,
-                    {"salesperson_id": state.salesperson_id}
-                )
-                if rule:
-                    # Save the feedback rule
-                    await memory_repo.save_feedback_rule(rule)
+            # Check if message contains feedback (non-critical, swallow errors)
+            try:
+                if feedback_extractor.is_feedback_message(payload.message):
+                    rule = feedback_extractor.extract(
+                        payload.message,
+                        {"salesperson_id": state.salesperson_id}
+                    )
+                    if rule:
+                        await memory_repo.save_feedback_rule(rule)
+                        profile = await memory_repo.load_profile(state.salesperson_id)
+                        if not profile:
+                            profile = profile_manager.create_profile(state.salesperson_id)
+                        profile = profile_manager.add_constraint(profile, rule.rule_id)
+                        await memory_repo.save_profile(profile)
+                        yield _sse_data({'type': 'constraint_added', 'constraint': rule.model_dump(mode="json")})
+            except Exception as _mem_e:
+                print(f"Warning: feedback/constraint update failed (non-fatal): {_mem_e}")
 
-                    # Update profile with constraint
-                    profile = await memory_repo.load_profile(state.salesperson_id)
-                    if not profile:
-                        profile = profile_manager.create_profile(state.salesperson_id)
-                    profile = profile_manager.add_constraint(profile, rule.rule_id)
+            # Check for frustration in message (non-critical, swallow errors)
+            try:
+                profile = await memory_repo.load_profile(state.salesperson_id)
+                if not profile:
+                    profile = profile_manager.create_profile(state.salesperson_id)
+                if profile_manager.detect_frustration(profile, payload.message):
                     await memory_repo.save_profile(profile)
-
-                    # Notify about new constraint
-                    yield _sse_data({'type': 'constraint_added', 'constraint': rule.model_dump(mode="json")})
-
-            # D.3: Also check for frustration in message
-            profile = await memory_repo.load_profile(state.salesperson_id)
-            if not profile:
-                profile = profile_manager.create_profile(state.salesperson_id)
-            if profile_manager.detect_frustration(profile, payload.message):
-                await memory_repo.save_profile(profile)
+            except Exception as _mem_e:
+                print(f"Warning: profile frustration check failed (non-fatal): {_mem_e}")
 
             done_chunk = _sse_data({'type': 'done'})
-            async for chunk in process_with_agents(state, payload.message):
+            async for chunk in process_with_central_agent(state, payload.message):
                 if chunk != done_chunk:
                     if '"type": "assistant_message"' in chunk or '"type": "agent_message"' in chunk or '"type": "content"' in chunk:
                         assistant_emitted = True
@@ -1288,12 +1136,11 @@ async def chat_stream(request: Request, payload: ChatRequest):
             if not assistant_emitted:
                 yield _sse_data({
                     'type': 'assistant_message',
-                    'agent': 'sales_orchestrator',
+                    'agent': 'central_agent',
                     'content': 'Mình cần thêm chút thông tin trước khi tiếp tục.',
                 })
 
-            # Checkpoint/approval flow disabled — agents produce output inline
-            checkpoint = None
+            # Checkpoint/approval flow disabled — diagrams are generated inline by skills
 
             # Save final state to in-memory store
             update_session(state)
@@ -1489,13 +1336,13 @@ class WorkflowInteractionRequest(BaseModel):
 @limiter.limit("20/minute")
 async def answer_question(request: Request, payload: AnswerQuestionRequest):
     """
-    C.5 Â§2: Answer a question from the QuestionStack.
+    C.5 §2: Answer a question from the QuestionStack.
     Maps answer to brief field, re-validates, returns updated question list.
     """
     state = await get_session_or_404(payload.session_id)
 
-    # Get sales_orchestrator to handle validation response
-    orchestrator = get_sales_orchestrator()
+    # Get central_agent to handle validation response
+    orchestrator = get_central_agent()
 
     # Special case: desired_output question routes to state.desired_outputs, not the brief
     if payload.question_id == "desired_output":
@@ -1510,7 +1357,7 @@ async def answer_question(request: Request, payload: AnswerQuestionRequest):
             print(f"Warning: failed to persist session after desired_output answer: {exc}")
         return {
             "status": "ready",
-            "message": f"Got it â€” will generate: {', '.join(outputs)}. Send your next message to proceed.",
+            "message": f"Got it -- will generate: {', '.join(outputs)}. Send your next message to proceed.",
             "questions": [],
             "validation_status": state.validation_status,
             "brief": state.brief.model_dump() if state.brief else None,
@@ -1552,7 +1399,7 @@ async def answer_question(request: Request, payload: AnswerQuestionRequest):
 @limiter.limit("20/minute")
 async def skip_question(request: Request, payload: SkipQuestionRequest):
     """
-    C.5 Â§6: Skip an optional question.
+    C.5 §6: Skip an optional question.
     Records the assumption as implicit approval.
     """
     state = await get_session_or_404(payload.session_id)
@@ -1562,7 +1409,7 @@ async def skip_question(request: Request, payload: SkipQuestionRequest):
     question_manager.skip_optional(payload.question_id)
 
     # Re-validate
-    orchestrator = get_sales_orchestrator()
+    orchestrator = get_central_agent()
     validation_output, should_dispatch = await orchestrator.validate_before_dispatch(
         state
     )
@@ -1595,7 +1442,7 @@ async def skip_question(request: Request, payload: SkipQuestionRequest):
 @app.post("/chat/answer_free_text")
 async def answer_free_text(request: ChatRequest):
     """
-    C.5 Â§5: Answer multiple questions with free text.
+    C.5 §5: Answer multiple questions with free text.
     The backend maps the free text to appropriate brief fields.
     """
     if not request.session_id:
@@ -1603,8 +1450,8 @@ async def answer_free_text(request: ChatRequest):
 
     state = await get_session_or_404(request.session_id)
 
-    # Get sales_orchestrator
-    orchestrator = get_sales_orchestrator()
+    # Get central_agent
+    orchestrator = get_central_agent()
 
     # Handle free text answer
     answers = {"free_text": request.message}
@@ -1647,7 +1494,7 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
             raise HTTPException(status_code=400, detail="session_id, question_id, and answer are required")
 
         state = await get_session_or_404(payload.session_id)
-        orchestrator = get_sales_orchestrator()
+        orchestrator = get_central_agent()
 
         if payload.question_id == "desired_output":
             outputs = await orchestrator.extract_desired_outputs(payload.answer)
@@ -1688,7 +1535,7 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
         question_manager = get_question_manager()
         question_manager.skip_optional(payload.question_id)
 
-        orchestrator = get_sales_orchestrator()
+        orchestrator = get_central_agent()
         validation_output, should_dispatch = await orchestrator.validate_before_dispatch(state)
         update_session(state)
         await persist_session_best_effort(state, "workflow.skip_question")
@@ -1708,7 +1555,7 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
             raise HTTPException(status_code=400, detail="session_id and message are required")
 
         state = await get_session_or_404(payload.session_id)
-        orchestrator = get_sales_orchestrator()
+        orchestrator = get_central_agent()
         validation_output = await orchestrator.handle_validation_response(
             state, {"free_text": payload.message}
         )
@@ -2016,20 +1863,12 @@ async def debug_config():
 
     result = validate_environment()
 
-    try:
-        registry = get_registry()
-        result["agents"] = {
-            "count": len(registry.all()),
-            "names": registry.all_names(),
-            "routing": registry.routing_descriptions(),
-        }
-    except Exception as exc:
-        print(f"Warning: /debug/config agents summary failed: {exc}")
-        result["agents"] = {
-            "count": 0,
-            "names": [],
-            "routing": {},
-        }
+    skill_reg = get_skill_registry()
+    result["skills"] = {
+        "count": len(skill_reg.all()),
+        "names": skill_reg.all_names(),
+        "descriptions": skill_reg.descriptions(),
+    }
 
     return result
 
@@ -2070,36 +1909,22 @@ async def download_artifact(artifact_id: str):
 
 @app.get("/debug/agents")
 async def debug_agents():
-    """Debug endpoint to list all agents."""
+    """Debug endpoint to list all skills."""
     try:
-        registry = get_registry()
-        agents = []
-        for name in registry.all_names():
-            agent = registry.get(name)
-            if not agent:
+        skill_reg = get_skill_registry()
+        skills = []
+        for name in skill_reg.all_names():
+            skill = skill_reg.get(name)
+            if not skill:
                 continue
-            agents.append(
-                {
-                    "name": getattr(agent, "name", name),
-                    "display_name": getattr(agent, "display_name", None) or getattr(agent, "name", name),
-                    "role": getattr(agent, "role_description", ""),
-                    "enabled": bool(getattr(agent, "enabled", True)),
-                }
-            )
-        return {"agents": agents}
+            skills.append({
+                "name": skill.name,
+                "description": skill.description,
+            })
+        return {"skills": skills}
     except Exception as exc:
         print(f"Warning: /debug/agents failed: {exc}")
-        return {
-            "agents": [
-                {"name": "sales_orchestrator", "display_name": "Sales Orchestrator", "role": "", "enabled": True},
-                {"name": "requirement_elicitation", "display_name": "Requirement Elicitation", "role": "", "enabled": True},
-                {"name": "market_strategy", "display_name": "Market Strategy", "role": "", "enabled": True},
-                {"name": "product_solution", "display_name": "Product Solution", "role": "", "enabled": True},
-                {"name": "design", "display_name": "Design", "role": "", "enabled": True},
-                {"name": "client_simulator", "display_name": "Client Simulator", "role": "", "enabled": True},
-                {"name": "compliance", "display_name": "Compliance", "role": "", "enabled": True},
-            ]
-        }
+        return {"skills": []}
 
 
 # =============================================================================
@@ -2116,4 +1941,7 @@ if __name__ == "__main__":
         port=port,
         reload=DEBUG,
     )
+
+
+
 
