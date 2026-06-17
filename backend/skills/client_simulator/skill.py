@@ -43,7 +43,6 @@ class ClientSimulatorSkill(BaseSkill):
                 system=system,
                 user_msg=user_msg,
                 history=context.messages,
-                max_tokens=3000,
             )
         except Exception as e:
             return SkillOutput(

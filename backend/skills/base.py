@@ -7,9 +7,11 @@ A skill is a focused executor: receives context + task, executes, returns struct
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from abc import ABC, abstractmethod
+from functools import partial
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
@@ -169,7 +171,7 @@ class BaseSkill(ABC):
         system: str,
         user_msg: str,
         history: list[dict],
-        max_tokens: int = 3000,
+        max_tokens: int = None,
         temperature: float = 0.7,
     ) -> str:
         """Call LLM (non-streaming) and return stripped response text."""
@@ -184,12 +186,12 @@ class BaseSkill(ABC):
                 messages.append({"role": role, "content": content})
         messages.append({"role": "user", "content": user_msg})
 
-        response = client.create_completion(
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=False,
-        )
+        call_kwargs = dict(messages=messages, temperature=temperature, stream=False)
+        if max_tokens is not None:
+            call_kwargs["max_tokens"] = max_tokens
+        # Run the synchronous OpenAI call in a thread pool so the event loop stays free
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(None, partial(client.create_completion, **call_kwargs))
         raw = response.choices[0].message.content or ""
         return strip_think_blocks(raw)
 

@@ -20,6 +20,7 @@ import json
 import os
 import re
 from datetime import datetime
+from functools import partial
 from typing import Any, AsyncGenerator, Optional
 
 from schemas.state import (
@@ -46,6 +47,8 @@ def _load_central_skill() -> str:
 
 
 _CENTRAL_SKILL = _load_central_skill()
+
+_SKILL_TIMEOUT_S = 80  # per-skill wall-clock timeout; emit failed event instead of hanging
 
 
 # ---------------------------------------------------------------------------
@@ -182,8 +185,7 @@ class CentralAgent:
             if not group:
                 continue
 
-            coroutines = []
-            names = []
+            tasks: dict[asyncio.Task, str] = {}
             for item in group:
                 skill_name = item.get("skill", "")
                 task_desc = item.get("task", message)
@@ -191,7 +193,6 @@ class CentralAgent:
                 if not skill:
                     print(f"[CentralAgent] Skill not found: {skill_name}, skipping")
                     continue
-                names.append(skill_name)
                 ctx = SkillContext(
                     task=task_desc,
                     brief=state.brief,
@@ -203,40 +204,39 @@ class CentralAgent:
                     constraints=state.constraints,
                     session_id=state.session_id,
                 )
-                coroutines.append(skill.execute(ctx))
+                t = asyncio.create_task(
+                    asyncio.wait_for(skill.execute(ctx), timeout=_SKILL_TIMEOUT_S)
+                )
+                tasks[t] = skill_name
+                yield {"type": "agent_status", "agent": skill_name, "status": "thinking"}
 
-            if not names:
+            if not tasks:
                 continue
 
-            for n in names:
-                yield {"type": "agent_status", "agent": n, "status": "thinking"}
-
-            results = await asyncio.gather(*coroutines, return_exceptions=True)
-
-            for skill_name, result in zip(names, results):
-                if isinstance(result, Exception):
-                    print(f"[CentralAgent] Skill {skill_name} error: {result}")
-                    yield {"type": "agent_status", "agent": skill_name, "status": "failed",
-                           "message": str(result)}
-                    continue
-
-                out: SkillOutput = result
-                all_outputs[skill_name] = out
-
-                # Store as AgentOutput for checkpoint compatibility
-                state.outputs[skill_name] = AgentOutput(
-                    agent=skill_name,
-                    status="COMPLETE" if out.status == "COMPLETE" else "FAILED",
-                    payload=out.payload,
-                    summary=out.summary,
-                    confidence=out.confidence,
-                )
-
-                yield {"type": "agent_status", "agent": skill_name, "status": "completed"}
-
-                # Stream skill content immediately so user sees progress
-                if out.content:
-                    yield {"type": "agent_message", "agent": skill_name, "content": out.content}
+            pending = set(tasks.keys())
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    skill_name = tasks[task]
+                    try:
+                        out: SkillOutput = task.result()
+                        all_outputs[skill_name] = out
+                        state.outputs[skill_name] = AgentOutput(
+                            agent=skill_name,
+                            status="COMPLETE" if out.status == "COMPLETE" else "FAILED",
+                            payload=out.payload,
+                            summary=out.summary,
+                            confidence=out.confidence,
+                        )
+                        yield {"type": "agent_status", "agent": skill_name, "status": "completed"}
+                    except asyncio.TimeoutError:
+                        print(f"[CentralAgent] Skill {skill_name} timed out after {_SKILL_TIMEOUT_S}s")
+                        yield {"type": "agent_status", "agent": skill_name, "status": "failed",
+                               "message": f"Timed out after {_SKILL_TIMEOUT_S}s"}
+                    except Exception as e:
+                        print(f"[CentralAgent] Skill {skill_name} error: {e}")
+                        yield {"type": "agent_status", "agent": skill_name, "status": "failed",
+                               "message": str(e)}
 
         # Step 4: Synthesize final response
         if all_outputs:
@@ -279,14 +279,19 @@ class CentralAgent:
             user_prompt += f"## Current Brief\n{brief_block}\n\n"
         user_prompt += f"## User Message\n{message}\n\nReturn JSON planning decision (ready_to_execute must be true)."
 
-        response = client.create_completion(
-            messages=[
-                {"role": "system", "content": _PLANNING_SYSTEM},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.2,
-            max_tokens=1200,
-            stream=False,
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(
+            None,
+            partial(
+                client.create_completion,
+                messages=[
+                    {"role": "system", "content": _PLANNING_SYSTEM},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.2,
+                max_tokens=1200,
+                stream=False,
+            ),
         )
 
         raw = response.choices[0].message.content or "{}"
@@ -345,7 +350,6 @@ class CentralAgent:
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=0.5,
-                max_tokens=4000,
                 stream=True,
             )
         except Exception as e:
