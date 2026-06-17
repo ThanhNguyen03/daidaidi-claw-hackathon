@@ -324,7 +324,8 @@ export function ChatWindow({
         {messages.map((msg, index) => {
           const prevMsg = index > 0 ? messages[index - 1] : null;
           const isGrouped = prevMsg && prevMsg.role === msg.role && prevMsg.agent === msg.agent;
-          return <MessageBubble key={index} message={msg} isGrouped={!!isGrouped} />;
+          const isLastMsg = index === messages.length - 1;
+          return <MessageBubble key={index} message={msg} isGrouped={!!isGrouped} isStreaming={isLastMsg && isLoading && msg.role === 'assistant'} />;
         })}
 
         {/* Thinking Indicator — shows while waiting for first content OR during <think> reasoning */}

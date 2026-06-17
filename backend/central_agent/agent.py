@@ -449,10 +449,12 @@ Format rules:
         r"alo|hello bạn|hi bạn|"
         r"cảm ơn|cảm ơn bạn|cảm ơn nhiều|cám ơn|"
         r"được rồi|được|ổn rồi|ổn|tốt rồi|tốt|tuyệt|tuyệt vời|hay quá|ngon|"
-        r"sẵn sàng|bắt đầu thôi|bắt đầu nào|"
+        r"sẵn sàng|bắt đầu|bắt đầu thôi|bắt đầu nào|bắt đầu đi|"
+        r"tiếp tục|tiếp|tiếp đi|tiếp thôi|"
         r"hiểu rồi|rõ rồi|nhận được|rõ|ừ|ừm|vâng|dạ|dạ bạn|"
         r"tạm biệt|hẹn gặp lại|bái bai|"
-        r"xin chao|chao ban|cam on|ok|oke|okie|duoc|tuyet|san sang|vang|da|tam biet"
+        r"xin chao|chao ban|cam on|ok|oke|okie|duoc|tuyet|san sang|vang|da|tam biet|"
+        r"bat dau|bat dau thoi|tiep tuc|tiep"
         r")[\s!.?🙏👋😊🎉✨]*$",
         re.IGNORECASE,
     )

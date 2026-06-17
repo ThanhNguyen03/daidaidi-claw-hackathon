@@ -557,6 +557,7 @@ function fixMalformedTables(content: string): string {
 interface MessageBubbleProps {
   message: Message;
   isGrouped?: boolean;
+  isStreaming?: boolean;
 }
 
 const AGENT_COLORS: Record<string, string> = {
@@ -583,7 +584,7 @@ const AGENT_NAMES: Record<string, string> = {
   system: 'System',
 };
 
-export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps) {
+export function MessageBubble({ message, isGrouped = false, isStreaming = false }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const agentName = message.agent ? AGENT_NAMES[message.agent] || message.agent : null;
@@ -695,6 +696,13 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
         const el = child as React.ReactElement<{ className?: string; children?: React.ReactNode }>;
         if (el.props.className === 'language-mermaid') {
           const chart = String(el.props.children ?? '').replace(/\n$/, '');
+          if (isStreaming) {
+            return (
+              <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflow: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0' }}>
+                <code>{chart}</code>
+              </pre>
+            );
+          }
           return <MermaidDiagram chart={chart} />;
         }
       }
