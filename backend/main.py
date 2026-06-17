@@ -1140,22 +1140,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
                     'content': 'Mình cần thêm chút thông tin trước khi tiếp tục.',
                 })
 
-            # Day 5: Check if we need to create a checkpoint
-            # This runs after agents complete, looking for quote/plan outputs
-            # Guard with try-except to prevent reviewer errors from breaking the stream
-            try:
-                checkpoint = await _maybe_create_checkpoint(state)
-            except Exception as e:
-                print(f"Warning: Failed to create checkpoint: {e}")
-                checkpoint = None
-
-            if checkpoint:
-                # Convert checkpoint to dict with datetime serialization
-                checkpoint_dict = checkpoint.model_dump()
-                for dt_field in ['created_at', 'updated_at', 'decided_at']:
-                    if checkpoint_dict.get(dt_field) and hasattr(checkpoint_dict[dt_field], 'isoformat'):
-                        checkpoint_dict[dt_field] = checkpoint_dict[dt_field].isoformat()
-                yield _sse_data({'type': 'checkpoint_card', 'checkpoint': checkpoint_dict})
+            # Checkpoint/approval flow disabled — diagrams are generated inline by skills
 
             # Save final state to in-memory store
             update_session(state)

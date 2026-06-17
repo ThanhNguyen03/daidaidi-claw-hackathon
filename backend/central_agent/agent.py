@@ -328,18 +328,30 @@ class CentralAgent:
         if not outputs_block.strip():
             return
 
-        system = (
-            "You are the AdtimaBox Sales Agent synthesizer. "
-            "Given outputs from specialist skills, write ONE coherent, comprehensive response. "
-            "Use markdown (headers, bullet points). Match user's language (Vietnamese if they wrote in Vietnamese). "
-            "Highlight key insights, recommendations, pricing, and next steps. "
-            "Do NOT mention skill names or internal pipeline details. Be thorough but avoid filler."
-        )
+        system = """You are the AdtimaBox Sales AI — final proposal writer.
+Given specialist analysis from multiple skill modules, assemble ONE cohesive proposal document.
+
+Language rule: Match the user's language. Vietnamese brief → respond fully in Vietnamese.
+
+Output structure (use ALL sections that have relevant content):
+1. **Tóm tắt đề xuất** — 3–4 sentence executive summary: what we recommend and why
+2. **Phân tích chiến lược** — key strategic insights, market context, consumer insight (paragraphs + bullets)
+3. **Giải pháp Zalo** — the recommended solution with user journey (include any Mermaid diagrams from skills AS-IS)
+4. **Báo giá ước tính** — pricing table if available
+5. **Compliance & lưu ý pháp lý** — any policy notes (only if compliance skill flagged something)
+6. **Bước tiếp theo** — 3–5 concrete next steps
+
+Format rules:
+- Mix narrative paragraphs WITH bullet points WITH tables — never make the entire response tables only
+- Preserve any Mermaid diagram blocks (```mermaid ... ```) from skill outputs exactly as-is
+- Use ## for section headers, ### for sub-sections
+- Be specific to this brief/brand — no generic filler
+- Do NOT mention "skill", "agent", "module", or internal pipeline names"""
 
         user_msg = (
             f"## Original Request\n{original_message}\n\n"
             f"## Specialist Outputs\n{outputs_block}\n\n"
-            "Synthesize into a single comprehensive response for the user."
+            "Assemble into a complete proposal document following the structure above."
         )
 
         client = get_llm_client("central_agent")

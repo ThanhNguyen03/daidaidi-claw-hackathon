@@ -5,25 +5,77 @@
  * Uses Tailwind CSS for styling.
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useEffect } from 'react';
 import type { Message } from '../lib/types';
 import { Bot, User, Sparkles, FileText, Users, Target, Clock, TrendingUp } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
+// Mermaid diagram renderer — dynamically imports mermaid to avoid SSR issues
+let _mermaidIdCounter = 0;
+function MermaidDiagram({ chart }: { chart: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const idRef = useRef(`mermaid-diag-${++_mermaidIdCounter}`);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const mermaid = (await import('mermaid')).default;
+        mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+        const { svg } = await mermaid.render(idRef.current, chart);
+        if (!cancelled && containerRef.current) {
+          containerRef.current.innerHTML = svg;
+        }
+      } catch {
+        if (!cancelled && containerRef.current) {
+          containerRef.current.innerHTML = `<pre style="font-size:0.8em;overflow:auto;padding:8px">${chart.replace(/</g, '&lt;')}</pre>`;
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [chart]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="mermaid-diagram my-4 flex justify-center overflow-x-auto"
+      style={{ minHeight: '80px' }}
+    />
+  );
+}
+
 // Detect and fix tables that have header + data but NO delimiter row
 // Example: "| A | B |" + "| X | Y |" (missing |---|---|)
+// Skips content inside fenced code blocks (``` ... ```)
 function fixMissingDelimiterTables(content: string): string {
   const lines = content.split('\n');
   const result: string[] = [];
   let addedDelimiterThisBlock = false;
+  let inCodeBlock = false;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    const pipeCount = (line.match(/\|/g) || []).length;
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Track fenced code blocks
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      result.push(line);
+      addedDelimiterThisBlock = false;
+      continue;
+    }
+
+    // Never touch content inside code blocks
+    if (inCodeBlock) {
+      result.push(line);
+      continue;
+    }
+
+    const pipeCount = (trimmed.match(/\|/g) || []).length;
 
     // Check if this is a table row (has 3+ pipes)
     if (pipeCount < 3) {
-      result.push(lines[i]);
+      result.push(line);
       addedDelimiterThisBlock = false;
       continue;
     }
@@ -35,7 +87,6 @@ function fixMissingDelimiterTables(content: string): string {
 
       // Previous line is table row, current is table row, no delimiter between
       if (prevPipeCount >= 3 && !prevLine.includes('---')) {
-        // Need to insert delimiter row between them - but only once per table block
         const cols = pipeCount - 1;
         const delimiter = '| ' + Array(cols).fill('---').join(' | ') + ' |';
         result.push(delimiter);
@@ -43,7 +94,7 @@ function fixMissingDelimiterTables(content: string): string {
       }
     }
 
-    result.push(lines[i]);
+    result.push(line);
   }
 
   return result.join('\n');
@@ -223,15 +274,24 @@ function formatStructuredAgentTables(content: string): string {
 
 // Helper to fix malformed markdown tables (all on one line)
 // Handles cases like: "| H1 | H2 | |----|----|----| | C1 | C2 |"
+// Properly tracks fenced code blocks and skips content inside them
 function fixMalformedTables(content: string): string {
   const lines = content.split('\n');
   const result: string[] = [];
+  let inCodeBlock = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
 
-    // Skip empty lines and code blocks
-    if (!trimmed || trimmed.startsWith('```')) {
+    // Track fenced code blocks
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      result.push(line);
+      continue;
+    }
+
+    // Skip empty lines and content inside code blocks
+    if (!trimmed || inCodeBlock) {
       result.push(line);
       continue;
     }
@@ -551,11 +611,22 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
                   </code>
                 );
               },
-              pre: ({ children }) => (
-                <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflow: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0' }}>
-                  {children}
-                </pre>
-              ),
+              pre: ({ children }) => {
+                // Intercept mermaid code blocks and render as diagram
+                const child = React.Children.toArray(children)[0];
+                if (React.isValidElement(child)) {
+                  const el = child as React.ReactElement<{ className?: string; children?: React.ReactNode }>;
+                  if (el.props.className === 'language-mermaid') {
+                    const chart = String(el.props.children ?? '').replace(/\n$/, '');
+                    return <MermaidDiagram chart={chart} />;
+                  }
+                }
+                return (
+                  <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflow: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0' }}>
+                    {children}
+                  </pre>
+                );
+              },
               hr: () => <hr style={{ border: 'none', borderTop: '1px solid var(--color-border)', margin: '1.5rem 0' }} />,
               blockquote: ({ children }) => (
                 <blockquote style={{
