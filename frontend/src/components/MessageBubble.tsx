@@ -272,9 +272,67 @@ function formatStructuredAgentTables(content: string): string {
   return result.join('\n');
 }
 
-// Helper to fix malformed markdown tables (all on one line)
-// Handles cases like: "| H1 | H2 | |----|----|----| | C1 | C2 |"
-// Properly tracks fenced code blocks and skips content inside them
+// Parse a single-line concatenated table like:
+// "| H1 | H2 | H3 | | --- | --- | --- | |---|---|---| | D1 | D2 | D3 | | D4 | | D5 |"
+// into proper multi-line markdown table rows, preserving empty cells.
+function tryFixConcatenatedTable(line: string): string[] | null {
+  // Quick reject: no "| |" row boundary means nothing to split
+  if (!/\|\s*\|/.test(line)) return null;
+
+  // Split by | to get all raw cells (preserves empty cells)
+  const raw = line.split('|');
+  if (raw[0].trim() === '') raw.shift();
+  if (raw.length > 0 && raw[raw.length - 1].trim() === '') raw.pop();
+  const cells = raw.map(c => c.trim());
+  if (cells.length < 4) return null;
+
+  // A cell is a delimiter (only dashes/colons, non-empty)
+  const isDelim = (c: string) => c.length > 0 && /^[:\-]+$/.test(c);
+
+  // Determine N: count consecutive non-delim, non-empty cells at the start
+  let N = 0;
+  for (const c of cells) {
+    if (isDelim(c) || c === '') break;
+    N++;
+  }
+  if (N < 1) return null;
+
+  // Verify there's a delimiter region after the header
+  const sepIdx = cells[N] === '' ? N + 1 : N; // skip optional row-boundary empty
+  if (sepIdx >= cells.length || !isDelim(cells[sepIdx])) return null;
+
+  // Build output rows
+  const rows: string[] = [];
+
+  // Header row
+  rows.push('| ' + cells.slice(0, N).join(' | ') + ' |');
+  // Normalized delimiter
+  rows.push('| ' + Array(N).fill('---').join(' | ') + ' |');
+
+  // Skip all delimiter and separator cells to find first data cell
+  let i = N;
+  while (i < cells.length && (isDelim(cells[i]) || cells[i] === '')) i++;
+
+  // Parse data rows: collect exactly N cells per row
+  while (i < cells.length) {
+    const rowCells: string[] = [];
+    for (let j = 0; j < N && i < cells.length; j++, i++) {
+      rowCells.push(cells[i]); // include empty cells (they're valid data)
+    }
+    // Skip trailing row-separator empty cells between rows
+    while (i < cells.length && cells[i] === '') i++;
+
+    if (rowCells.some(c => c !== '')) {
+      while (rowCells.length < N) rowCells.push('');
+      rows.push('| ' + rowCells.join(' | ') + ' |');
+    }
+  }
+
+  return rows.length > 2 ? rows : null;
+}
+
+// Fix malformed markdown tables that are concatenated onto a single line.
+// Also tracks fenced code blocks and skips content inside them.
 function fixMalformedTables(content: string): string {
   const lines = content.split('\n');
   const result: string[] = [];
@@ -283,85 +341,25 @@ function fixMalformedTables(content: string): string {
   for (const line of lines) {
     const trimmed = line.trim();
 
-    // Track fenced code blocks
     if (trimmed.startsWith('```')) {
       inCodeBlock = !inCodeBlock;
       result.push(line);
       continue;
     }
 
-    // Skip empty lines and content inside code blocks
     if (!trimmed || inCodeBlock) {
       result.push(line);
       continue;
     }
 
-    // Check if line contains a table delimiter pattern like |----| or |:----:|
-    if (trimmed.includes('|---') || trimmed.includes('|:--')) {
-      // This line likely contains header + delimiter + data all on one line
-      // Split by | but keep the delimiters
-      const parts = trimmed.split('|').filter(p => p !== '');
-
-      if (parts.length >= 3) {
-        // Find the delimiter part (contains only - or :)
-        const partsWithDelim: string[] = [];
-        let currentPart = '';
-
-        for (const part of parts) {
-          const p = part.trim();
-
-          if (p.match(/^[:\-\s]+$/)) {
-            // This is a delimiter
-            if (currentPart) {
-              partsWithDelim.push(currentPart.trim());
-              currentPart = '';
-            }
-            partsWithDelim.push(p);
-          } else {
-            currentPart += (currentPart ? '|' : '') + p;
-          }
-        }
-        if (currentPart) {
-          partsWithDelim.push(currentPart.trim());
-        }
-
-        // If we have at least 3 parts (header, delimiter, data), split into lines
-        if (partsWithDelim.length >= 3) {
-          // More precise: find the index of the delimiter
-          let headerEnd = -1;
-          let delimiterIdx = -1;
-
-          for (let i = 0; i < parts.length; i++) {
-            const p = parts[i].trim();
-            if (p.match(/^[:\-\s]+$/)) {
-              delimiterIdx = i;
-              break;
-            }
-          }
-
-          if (delimiterIdx > 0) {
-            // Build header row
-            const headerParts = parts.slice(0, delimiterIdx);
-            if (headerParts.length > 0) {
-              result.push('| ' + headerParts.join(' | ') + ' |');
-            }
-
-            // Build delimiter row
-            const delimParts = parts.slice(delimiterIdx, delimiterIdx + 1);
-            result.push('| ' + delimParts.join(' | ').replace(/:/g, '-') + ' |');
-
-            // Build data row
-            const dataParts = parts.slice(delimiterIdx + 1);
-            if (dataParts.length > 0) {
-              result.push('| ' + dataParts.join(' | ') + ' |');
-            }
-            continue;
-          }
-        }
+    if (trimmed.startsWith('|')) {
+      const fixed = tryFixConcatenatedTable(trimmed);
+      if (fixed && fixed.length > 2) {
+        result.push(...fixed);
+        continue;
       }
     }
 
-    // Default: keep line as is
     result.push(line);
   }
 
