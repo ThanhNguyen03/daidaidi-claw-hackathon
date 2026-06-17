@@ -316,7 +316,15 @@ class CentralAgent:
         original_message: str,
         skill_outputs: dict[str, SkillOutput],
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream a synthesized final response from all skill outputs."""
+        """Stream a synthesized final response from all skill outputs.
+
+        The LLM client only exposes a synchronous streaming iterator.  Running
+        `for chunk in stream` on the event-loop thread blocks uvicorn from
+        handling health-check requests, which causes AgentBase Runtime to kill
+        the container mid-stream.  We fix this by running the sync iterator in
+        a thread-pool worker and feeding chunks through an asyncio.Queue so the
+        event loop stays free at all times.
+        """
         from llm.greennode import get_llm_client
         from main import _ThinkFilter
 
@@ -355,37 +363,64 @@ Format rules:
         )
 
         client = get_llm_client("central_agent")
-        try:
-            stream = client.create_completion(
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_msg},
-                ],
-                temperature=0.5,
-                stream=True,
-            )
-        except Exception as e:
-            print(f"[CentralAgent] Synthesis stream failed: {e}")
-            # Fallback: emit skill outputs directly
-            for name, out in skill_outputs.items():
-                if out.content:
-                    yield {"type": "content", "content": f"\n\n## {name.replace('_', ' ').title()}\n{out.content}"}
-            return
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=512)
+        _DONE = object()
+
+        def _stream_worker() -> None:
+            """Run the blocking LLM stream in a thread; push chunks to queue."""
+            try:
+                stream = client.create_completion(
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    temperature=0.5,
+                    stream=True,
+                )
+                for chunk in stream:
+                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+            except Exception as exc:
+                loop.call_soon_threadsafe(queue.put_nowait, exc)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+
+        producer = loop.run_in_executor(None, _stream_worker)
 
         tf = _ThinkFilter()
         accumulated = ""
+        _TOKEN_TIMEOUT = 60.0  # seconds to wait for the next token before giving up
 
-        for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                token = chunk.choices[0].delta.content
-                for kind, text in tf.push(token):
-                    if kind == "think_start":
-                        yield {"type": "thinking_start"}
-                    elif kind == "think_end":
-                        yield {"type": "thinking_end"}
-                    elif kind == "content" and text:
-                        accumulated += text
-                        yield {"type": "content", "content": text}
+        try:
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=_TOKEN_TIMEOUT)
+                except asyncio.TimeoutError:
+                    print("[CentralAgent] Synthesis: no token received for 60s, aborting stream")
+                    break
+
+                if item is _DONE:
+                    break
+
+                if isinstance(item, Exception):
+                    print(f"[CentralAgent] Synthesis stream error: {item}")
+                    for name, out in skill_outputs.items():
+                        if out.content:
+                            yield {"type": "content", "content": f"\n\n## {name.replace('_', ' ').title()}\n{out.content}"}
+                    return
+
+                if item.choices and item.choices[0].delta.content:
+                    token = item.choices[0].delta.content
+                    for kind, text in tf.push(token):
+                        if kind == "think_start":
+                            yield {"type": "thinking_start"}
+                        elif kind == "think_end":
+                            yield {"type": "thinking_end"}
+                        elif kind == "content" and text:
+                            accumulated += text
+                            yield {"type": "content", "content": text}
+        finally:
+            await producer  # ensure thread is joined regardless of early exit
 
         for kind, text in tf.flush():
             if kind == "content" and text:
@@ -509,13 +544,18 @@ Format rules:
     async def _extract_brief_from_text(self, state: SalesCaseState, text: str) -> dict:
         from llm.greennode import get_llm_client
         client = get_llm_client("central_agent")
+        loop = asyncio.get_running_loop()
         try:
-            response = client.create_completion(
-                messages=[
-                    {"role": "system", "content": "Extract brief fields from text. Return JSON only: industry, goal, target_audience, budget_vnd (number|null), timeline, additional_context."},
-                    {"role": "user", "content": text},
-                ],
-                temperature=0.1, max_tokens=300, stream=False,
+            response = await loop.run_in_executor(
+                None,
+                partial(
+                    client.create_completion,
+                    messages=[
+                        {"role": "system", "content": "Extract brief fields from text. Return JSON only: industry, goal, target_audience, budget_vnd (number|null), timeline, additional_context."},
+                        {"role": "user", "content": text},
+                    ],
+                    temperature=0.1, max_tokens=300, stream=False,
+                ),
             )
             raw = strip_think_blocks(response.choices[0].message.content or "{}")
             return json.loads(extract_json_block(raw))

@@ -28,7 +28,7 @@ function MermaidDiagram({ chart }: { chart: string }) {
         }
       } catch {
         if (!cancelled && containerRef.current) {
-          containerRef.current.innerHTML = `<pre style="font-size:0.8em;overflow:auto;padding:8px">${chart.replace(/</g, '&lt;')}</pre>`;
+          containerRef.current.innerHTML = `<pre style="font-size:1em;overflow:auto;padding:8px">${chart.replace(/</g, '&lt;')}</pre>`;
         }
       }
     })();
@@ -710,7 +710,7 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
     return (
       <div className="flex items-center gap-3 my-4">
         <div className="flex-1 h-px bg-border" />
-        <span className="text-[11px] text-text-muted whitespace-nowrap">{message.content}</span>
+        <span className="text-[13px] text-text-muted whitespace-nowrap">{message.content}</span>
         <div className="flex-1 h-px bg-border" />
       </div>
     );
@@ -719,19 +719,19 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
   // User messages: show in chat bubble (like now)
   if (isUser) {
     return (
-      <div className={`flex gap-2 sm:gap-3 ${isGrouped ? 'mt-1' : 'mt-3 sm:mt-4'}`}>
+      <div className={`flex w-full flex-row-reverse gap-2 sm:gap-3 ${isGrouped ? 'mt-1' : 'mt-3 sm:mt-4'}`}>
         {/* Avatar */}
         {!isGrouped && (
-          <div className="shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center bg-[#e5e7eb] text-[#374151]">
-            <User size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          <div className="shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-[#e5e7eb] text-[#374151]">
+            <User size={16} className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
         )}
 
         {/* Spacer for grouped user messages */}
-        {isGrouped && <div className="w-7 sm:w-8" />}
+        {isGrouped && <div className="w-8 sm:w-10" />}
 
         {/* Message content */}
-        <div className="flex flex-col items-end" style={{ maxWidth: '85%' }}>
+        <div className="ml-auto flex flex-col items-end" style={{ maxWidth: '85%' }}>
           {/* Message bubble */}
           <div
             className="px-3 sm:px-4 py-2 sm:py-3 wrap-break-word"
@@ -740,7 +740,7 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
               color: '#ffffff',
               borderRadius: '1rem 1rem 0.25rem 1rem',
               boxShadow: 'var(--shadow-sm)',
-              fontSize: '13px',
+              fontSize: '15px',
               lineHeight: 1.6,
             }}
           >
@@ -749,7 +749,7 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
 
           {/* Timestamp */}
           {!isGrouped && (
-            <span className="text-[10px] sm:text-xs text-gray-400 mt-1 mr-1">
+            <span className="text-[12px] sm:text-sm text-gray-400 mt-1 mr-1">
               {new Date(message.timestamp).toLocaleTimeString()}
             </span>
           )}
@@ -785,7 +785,7 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
       <div className="flex flex-col items-start flex-1" style={{ maxWidth: '100%' }}>
         {/* Agent name */}
         {showHeader && (
-          <span className="text-[10px] sm:text-xs font-medium mb-1.5 sm:mb-2 ml-1" style={{ color: agentColor }}>
+          <span className="text-[12px] sm:text-sm font-medium mb-1.5 sm:mb-2 ml-1" style={{ color: agentColor }}>
             {agentName}
           </span>
         )}
@@ -794,7 +794,7 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
           className="w-full"
           style={{
             color: 'var(--color-text)',
-            fontSize: '14px',
+            fontSize: '16px',
             lineHeight: 1.7,
           }}
         >

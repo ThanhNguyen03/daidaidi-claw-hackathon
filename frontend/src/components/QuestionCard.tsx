@@ -84,7 +84,7 @@ export function QuestionCard({
   };
 
   const questionTextStyle: React.CSSProperties = {
-    fontSize: '14px',
+    fontSize: '16px',
     color: '#374151',
     lineHeight: 1.6,
     wordBreak: 'break-word',
@@ -97,7 +97,7 @@ export function QuestionCard({
     border: '1px solid #d1d5db',
     backgroundColor: '#ffffff',
     color: '#374151',
-    fontSize: '14px',
+    fontSize: '16px',
     cursor: 'text',
     width: '100%',
     pointerEvents: 'auto',
@@ -113,7 +113,7 @@ export function QuestionCard({
     display: 'flex',
     alignItems: 'center',
     gap: '6px',
-    fontSize: '14px',
+    fontSize: '16px',
     fontWeight: 500,
     whiteSpace: 'nowrap',
   };
@@ -126,7 +126,7 @@ export function QuestionCard({
       {/* Header */}
       <div style={headerStyle}>
         <HelpCircle size={18} />
-        <span style={{ fontWeight: 600, fontSize: '14px' }}>Need some information to proceed</span>
+        <span style={{ fontWeight: 600, fontSize: '16px' }}>Need some information to proceed</span>
       </div>
 
       {/* Questions list */}
@@ -145,7 +145,7 @@ export function QuestionCard({
                   borderRadius: '50%',
                   backgroundColor: '#4f46e5',
                   color: '#ffffff',
-                  fontSize: '12px',
+                  fontSize: '14px',
                   fontWeight: 600,
                   flexShrink: 0,
                 }}
@@ -163,7 +163,7 @@ export function QuestionCard({
                     display: 'inline-flex',
                     padding: '3px 8px',
                     borderRadius: '4px',
-                    fontSize: '10px',
+                    fontSize: '12px',
                     fontWeight: 600,
                     textTransform: 'uppercase',
                     backgroundColor: '#fee2e2',
@@ -178,7 +178,7 @@ export function QuestionCard({
                     display: 'inline-flex',
                     padding: '3px 8px',
                     borderRadius: '4px',
-                    fontSize: '10px',
+                    fontSize: '12px',
                     fontWeight: 500,
                     backgroundColor: '#e0e7ff',
                     color: '#4f46e5',
@@ -286,7 +286,7 @@ export function QuestionCard({
               <span className="hidden sm:inline">{isSubmitting ? 'Sending...' : 'Send'}</span>
             </button>
           </div>
-          <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '8px' }}>
+          <p style={{ fontSize: '14px', color: '#6b7280', marginTop: '8px' }}>
             I'll automatically map your answer to the right fields.
           </p>
         </form>
