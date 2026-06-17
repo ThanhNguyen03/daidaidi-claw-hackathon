@@ -66,12 +66,6 @@ next-env.d.ts
 htmlcov/
 .tox/
 
-# Markdown
-docs
-DEPLOY.md
-CHECK.md
-PLAN.md
-
 # Agent skill system artifacts
 **/SKILL.md
 **/reference/**
