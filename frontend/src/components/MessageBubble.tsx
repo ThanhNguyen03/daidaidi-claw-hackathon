@@ -492,10 +492,6 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
           </span>
         )}
 
-        {/* Check if this is a brief document - render custom UI */}
-        {isBriefDocument(message.content) ? (
-          <BriefDocument content={message.content} />
-        ) : (
         <div
           className="w-full"
           style={{
@@ -504,7 +500,6 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
             lineHeight: 1.7,
           }}
         >
-          {/* Preprocess content to fix malformed tables */}
           <ReactMarkdown
             key={message.content}
             components={{
@@ -647,7 +642,6 @@ export function MessageBubble({ message, isGrouped = false }: MessageBubbleProps
             {fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(message.content)))}
           </ReactMarkdown>
         </div>
-        )}
 
         {/* Timestamp */}
         {!isGrouped && (
