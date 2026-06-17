@@ -48,7 +48,7 @@ def _load_central_skill() -> str:
 
 _CENTRAL_SKILL = _load_central_skill()
 
-_SKILL_TIMEOUT_S = 80  # per-skill wall-clock timeout; emit failed event instead of hanging
+_SKILL_TIMEOUT_S = 150  # per-skill wall-clock timeout; emit failed event instead of hanging
 
 
 # ---------------------------------------------------------------------------

@@ -171,7 +171,7 @@ class BaseSkill(ABC):
         system: str,
         user_msg: str,
         history: list[dict],
-        max_tokens: int = None,
+        max_tokens: int = 2000,
         temperature: float = 0.7,
     ) -> str:
         """Call LLM (non-streaming) and return stripped response text."""
