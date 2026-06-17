@@ -114,7 +114,7 @@ export default function Home() {
     };
 
     checkConnection();
-    const interval = setInterval(checkConnection, 30000);
+    const interval = setInterval(checkConnection, 300000);
     return () => clearInterval(interval);
   }, []);
 
