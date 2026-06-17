@@ -878,7 +878,7 @@ async def process_with_agents(
         if not content_text:
             continue
 
-        yield _sse_data({‘type’: ‘agent_message’, ‘agent’: agent_name, ‘content’: content_text})
+        yield _sse_data({"type": "agent_message", "agent": agent_name, "content": content_text})
         emitted_agent_message = True
 
         state.messages.append(
@@ -898,16 +898,16 @@ async def process_with_agents(
 
         if fallback_summary:
             yield _sse_data({
-                ‘type’: ‘assistant_message’,
-                ‘agent’: ‘sales_orchestrator’,
-                ‘content’: fallback_summary,
+                "type": "assistant_message",
+                "agent": "sales_orchestrator",
+                "content": fallback_summary,
             })
 
     state.summary = (
-        f"User: {message[:30]}... -> Agents: {‘, ‘.join(state.outputs.keys())}"
+        f"User: {message[:30]}... -> Agents: {', '.join(state.outputs.keys())}"
     )
 
-    yield _sse_data({‘type’: ‘done’})
+    yield _sse_data({"type": "done"})
 
 
 # =============================================================================
@@ -2016,12 +2016,20 @@ async def debug_config():
 
     result = validate_environment()
 
-    registry = get_registry()
-    result["agents"] = {
-        "count": len(registry.all()),
-        "names": registry.all_names(),
-        "routing": registry.routing_descriptions(),
-    }
+    try:
+        registry = get_registry()
+        result["agents"] = {
+            "count": len(registry.all()),
+            "names": registry.all_names(),
+            "routing": registry.routing_descriptions(),
+        }
+    except Exception as exc:
+        print(f"Warning: /debug/config agents summary failed: {exc}")
+        result["agents"] = {
+            "count": 0,
+            "names": [],
+            "routing": {},
+        }
 
     return result
 
@@ -2073,6 +2081,7 @@ async def debug_agents():
             agents.append(
                 {
                     "name": getattr(agent, "name", name),
+                    "display_name": getattr(agent, "display_name", None) or getattr(agent, "name", name),
                     "role": getattr(agent, "role_description", ""),
                     "enabled": bool(getattr(agent, "enabled", True)),
                 }
@@ -2080,7 +2089,17 @@ async def debug_agents():
         return {"agents": agents}
     except Exception as exc:
         print(f"Warning: /debug/agents failed: {exc}")
-        return {"agents": []}
+        return {
+            "agents": [
+                {"name": "sales_orchestrator", "display_name": "Sales Orchestrator", "role": "", "enabled": True},
+                {"name": "requirement_elicitation", "display_name": "Requirement Elicitation", "role": "", "enabled": True},
+                {"name": "market_strategy", "display_name": "Market Strategy", "role": "", "enabled": True},
+                {"name": "product_solution", "display_name": "Product Solution", "role": "", "enabled": True},
+                {"name": "design", "display_name": "Design", "role": "", "enabled": True},
+                {"name": "client_simulator", "display_name": "Client Simulator", "role": "", "enabled": True},
+                {"name": "compliance", "display_name": "Compliance", "role": "", "enabled": True},
+            ]
+        }
 
 
 # =============================================================================

@@ -111,6 +111,36 @@ class Orchestrator:
                 return msg.get("content", "")
         return ""
 
+    def _count_consecutive_casual_rounds(self, state: SalesCaseState) -> int:
+        """Count consecutive casual-style assistant turns at the tail of history.
+
+        A short assistant reply (< 200 chars, no structured content) is a proxy
+        for a casual exchange.  We stop counting as soon as we see a substantive
+        reply, so the result is the number of uninterrupted casual back-and-forths
+        that happened *before* the current user message.
+        """
+        count = 0
+        for msg in reversed(state.messages):
+            role = msg.get("role", "")
+            content = (msg.get("content") or "").strip()
+            if role == "assistant":
+                # Heuristic: short reply with no markdown structure → casual
+                if len(content) < 220 and "\n\n" not in content and "##" not in content:
+                    count += 1
+                else:
+                    break
+        return count
+
+    def _recent_conversation_snippet(self, state: SalesCaseState, n: int = 6) -> str:
+        """Return the last n messages as a compact transcript for LLM context."""
+        tail = state.messages[-n:] if len(state.messages) >= n else state.messages
+        lines = []
+        for msg in tail:
+            role = msg.get("role", "user")
+            content = (msg.get("content") or "").strip()[:300]
+            lines.append(f"{role.upper()}: {content}")
+        return "\n".join(lines)
+
     def _question_manager_for_state(self, state: SalesCaseState):
         question_manager = get_question_manager()
         question_manager.ensure_session(state.session_id)
@@ -187,12 +217,26 @@ class Orchestrator:
             knowledge_top_k=3,
         )
         client = get_validation_service().client
+
+        casual_rounds = self._count_consecutive_casual_rounds(state)
+        recent_convo = self._recent_conversation_snippet(state, n=6)
+
         context = []
         if state.brief:
             if self._brief_has_substance(state.brief):
                 context.append("The session already contains a real brief.")
             elif state.brief.additional_context:
                 context.append("The session only has raw additional_context so far.")
+
+        suggest_rule = ""
+        if casual_rounds >= 1:
+            suggest_rule = (
+                f"- IMPORTANT: The user has sent {casual_rounds} casual message(s) in a row without requesting "
+                "any sales work. If this message is also casual_chat, naturally weave 2-3 concrete suggested "
+                "starter questions into your reply (e.g. 'Bạn muốn lập brief cho chiến dịch nào?' or "
+                "'Mình có thể giúp bạn tạo proposal cho dự án gì?'). Do NOT list them as a menu — "
+                "integrate them organically into the reply. Keep the overall tone warm and inviting."
+            )
 
         prompt = f"""
 Classify the user's latest message for a sales assistant.
@@ -210,9 +254,13 @@ Rules:
 - If the message is ambiguous but looks like a sales request, choose sales_request.
 - For casual_chat assistant_reply: Use the company name, product, and agent persona from your system context to write a warm, on-brand reply. Introduce yourself naturally (e.g. AdtimaBox Sales Agent). Reply in the same language as the user's message. Keep it concise (1-3 sentences).
 - Do not mention internal routing, pipeline stages, agent names, or layer names.
+{suggest_rule}
 
 Latest message:
 {message}
+
+Recent conversation (last few turns):
+{recent_convo if recent_convo else "none"}
 
 Session context:
 {chr(10).join(context) if context else "none"}
@@ -231,7 +279,7 @@ Session context:
                 ],
                 stream=False,
                 temperature=0.1,
-                max_tokens=300,
+                max_tokens=500,
             )
             content = response.choices[0].message.content if response.choices else "{}"
             if "```json" in content:
