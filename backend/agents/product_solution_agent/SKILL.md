@@ -25,13 +25,13 @@ Draw the full user journey as a Mermaid flowchart. Always include this section.
 
 ```mermaid
 flowchart TD
-    A["Entry Point\n(QR / Zalo Ad / OA Message)"] --> B["Zalo Mini App\nLanding"]
-    B --> C["Register / Verify\n(SĐT + OTP)"]
-    C --> D["Game / Activity\n(spin, quiz, scan QR...)"]
-    D --> E["Nhận Voucher\n(e-voucher / mã QR)"]
-    E --> F["Redeem tại điểm bán\nOffline"]
-    F --> G["Data captured\n→ Zalo OA follow-up"]
-    G --> H["ZNS Reactivation\n(7–30 ngày sau)"]
+    A["Entry: QR / Zalo Ad / OA"] --> B["Zalo Mini App Landing"]
+    B --> C["Register: SĐT + OTP"]
+    C --> D["Game / Activity"]
+    D --> E["Nhận Voucher"]
+    E --> F["Redeem tại điểm bán"]
+    F --> G["Data → Zalo OA follow-up"]
+    G --> H["ZNS Reactivation 7-30 ngày"]
 ```
 
 Customize the diagram for THIS specific brief — change nodes, labels, and flow to match the actual campaign mechanic.
@@ -69,7 +69,7 @@ Short bullet list:
 ## IMPORTANT OUTPUT RULES
 
 - ALWAYS include the Mermaid flowchart — this replaces the need for a separate wireframe approval step
-- Mermaid must use safe syntax only: quote every node label, keep node IDs simple, and escape special characters such as `"`, `[ ]`, `{ }`, `|`, `&`, and line breaks
+- Mermaid must use safe syntax only: quote every node label, keep node IDs simple (letters/numbers only), NO `\n` inside labels — use a space or split into two nodes instead, and avoid special characters `"`, `|`, `&` inside labels
 - Write in Vietnamese if brief is in Vietnamese
 - Pricing estimates are OK to be ranges — never fabricate exact confirmed pricing
 - Keep total response under 900 words

@@ -21,6 +21,7 @@ import os
 import re
 from datetime import datetime
 from functools import partial
+import random
 from typing import Any, AsyncGenerator, Optional
 
 from schemas.state import (
@@ -436,24 +437,128 @@ Format rules:
             })
 
     # ------------------------------------------------------------------
-    # Casual chat
-    # ------------------------------------------------------------------
-
     _CASUAL_PATTERNS = re.compile(
-        r"^(hi|hello|hey|xin chao|chao|chao ban|ok|okay|cam on|thank|thanks|"
-        r"good morning|good afternoon|good evening|buoi sang|buoi chieu|buoi toi)[\s!.?]*$",
+        r"^("
+        r"hi+|hello+|hey+|howdy|yo+|sup|what'?s up|whats up|how are you|how r u|hru|"
+        r"good morning|good afternoon|good evening|good day|good night|morning|evening|"
+        r"ok+|okay|k+|kk|cool|nice|great|awesome|perfect|sounds good|"
+        r"thanks?|thank you|ty|thx|cheers|much appreciated|appreciate it|"
+        r"bye|goodbye|see ya|ttyl|later|cya|"
+        r"ready|let'?s go|let'?s start|sure|got it|understood|noted|will do|"
+        r"xin chào|chào|chào bạn|chào buổi sáng|chào buổi chiều|chào buổi tối|"
+        r"alo|hello bạn|hi bạn|"
+        r"cảm ơn|cảm ơn bạn|cảm ơn nhiều|cám ơn|"
+        r"được rồi|được|ổn rồi|ổn|tốt rồi|tốt|tuyệt|tuyệt vời|hay quá|ngon|"
+        r"sẵn sàng|bắt đầu thôi|bắt đầu nào|"
+        r"hiểu rồi|rõ rồi|nhận được|rõ|ừ|ừm|vâng|dạ|dạ bạn|"
+        r"tạm biệt|hẹn gặp lại|bái bai|"
+        r"xin chao|chao ban|cam on|ok|oke|okie|duoc|tuyet|san sang|vang|da|tam biet"
+        r")[\s!.?🙏👋😊🎉✨]*$",
         re.IGNORECASE,
     )
 
+    _VI_CHARS = re.compile(
+        r"[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]",
+        re.IGNORECASE,
+    )
+    _VI_TOKENS = re.compile(
+        r"\b(xin|chao|ban|cam|oke|vang|tuyet|duoc|biet|nhan|tam|biet|buoi|sang|chieu|toi)\b",
+        re.IGNORECASE,
+    )
+
+    _REPLIES_VI = [
+        (
+            "Xin chào! 👋 Mình là **AdtimaBox Sales AI** — trợ lý tư vấn giải pháp Zalo của Adtima.\n\n"
+            "Bạn đang có chiến dịch nào cần tư vấn không? Mình có thể giúp:\n"
+            "- Phân tích thị trường & ý tưởng campaign\n"
+            "- Thiết kế user journey trên Zalo MiniApp\n"
+            "- Báo giá gói CShub & add-ons\n\n"
+            "Cứ chia sẻ brief — dù sơ lược cũng được, mình sẽ phân tích ngay! 🚀"
+        ),
+        (
+            "Chào bạn! 😊 Mình là **AdtimaBox Sales AI**.\n\n"
+            "Hôm nay bạn đang phụ trách chiến dịch hay brand nào vậy? "
+            "Chia sẻ brief với mình — mình sẽ đề xuất giải pháp Zalo phù hợp nhất cho mục tiêu của bạn."
+        ),
+        (
+            "Hello! ✨ Mình là **AdtimaBox Sales AI** của Adtima.\n\n"
+            "Bạn muốn bắt đầu từ đâu?\n"
+            "- Có brief chiến dịch → mình phân tích & lên giải pháp\n"
+            "- Chưa có brief → mình hỏi thêm để hiểu nhu cầu\n"
+            "- Muốn xem báo giá → mình tạo bảng giá ước tính\n\n"
+            "Cứ nhắn là mình hỗ trợ ngay nhé! 💪"
+        ),
+        (
+            "Chào! 🙌 Sẵn sàng hỗ trợ bạn rồi.\n\n"
+            "Mình là **AdtimaBox Sales AI** — chuyên tư vấn giải pháp marketing trên nền tảng Zalo. "
+            "Bạn đang có brief hay yêu cầu gì muốn mình xử lý không?"
+        ),
+        (
+            "Xin chào bạn! 👋\n\n"
+            "Mình là **AdtimaBox Sales AI**. Để mình giúp bạn hiệu quả nhất, "
+            "bạn có thể chia sẻ:\n"
+            "- **Ngành hàng / brand** bạn đang phụ trách\n"
+            "- **Mục tiêu** chiến dịch (thu data, tăng traffic OA, gamification…)\n"
+            "- **Ngân sách** ước tính nếu có\n\n"
+            "Mình sẽ đề xuất giải pháp ngay! ✨"
+        ),
+        (
+            "Chào! Mình đây — **AdtimaBox Sales AI** 🤖\n\n"
+            "Gửi brief cho mình nhé — dù chỉ 1-2 dòng mô tả campaign cũng được. "
+            "Mình sẽ phân tích và trả về đề xuất chi tiết về giải pháp Zalo, user flow, và báo giá."
+        ),
+    ]
+
+    _REPLIES_EN = [
+        (
+            "Hey there! 👋 I'm **AdtimaBox Sales AI** — Adtima's Zalo ecosystem advisor.\n\n"
+            "What can I help you with today? I can:\n"
+            "- Analyze your market & propose campaign ideas\n"
+            "- Design a Zalo MiniApp user journey\n"
+            "- Generate a pricing estimate for CShub packages\n\n"
+            "Just drop your brief and I'll get to work! 🚀"
+        ),
+        (
+            "Hello! 😊 I'm **AdtimaBox Sales AI**.\n\n"
+            "What campaign or brand are you working on? "
+            "Share a brief — even a rough one — and I'll put together a tailored Zalo solution for you."
+        ),
+        (
+            "Hi! ✨ I'm **AdtimaBox Sales AI** by Adtima.\n\n"
+            "Where would you like to start?\n"
+            "- Have a brief → I'll analyze and propose a solution\n"
+            "- No brief yet → I'll ask a few questions to scope it\n"
+            "- Need pricing → I'll generate an estimate right away\n\n"
+            "Just let me know! 💪"
+        ),
+        (
+            "Hey! 🙌 Ready to help.\n\n"
+            "I'm **AdtimaBox Sales AI** — specialized in Zalo marketing solutions. "
+            "Got a brief or a request you'd like me to work on?"
+        ),
+        (
+            "Hello there! 👋\n\n"
+            "I'm **AdtimaBox Sales AI**. To give you the best recommendation, feel free to share:\n"
+            "- **Industry / brand** you're working with\n"
+            "- **Campaign objective** (data capture, OA traffic, gamification…)\n"
+            "- **Estimated budget** if you have one\n\n"
+            "I'll come back with a full proposal! ✨"
+        ),
+        (
+            "Hi! I'm **AdtimaBox Sales AI** 🤖\n\n"
+            "Send me your brief — even just 1-2 lines describing the campaign. "
+            "I'll analyze it and return a detailed Zalo solution with user flow and pricing."
+        ),
+    ]
+
     def _is_casual(self, message: str) -> bool:
         stripped = message.strip()
-        return bool(self._CASUAL_PATTERNS.match(stripped)) and len(stripped) < 40
+        return bool(self._CASUAL_PATTERNS.match(stripped)) and len(stripped) < 60
 
     async def _casual_reply(self, message: str) -> str:
-        return (
-            "Xin chao! Minh la AdtimaBox Sales AI. "
-            "Ban co the chia se brief hoac yeu cau cua ban, minh se phan tich va de xuat giai phap phu hop."
-        )
+        lang = "vi" if (self._VI_CHARS.search(message) or self._VI_TOKENS.search(message)) else "en"
+        pool = self._REPLIES_VI if lang == "vi" else self._REPLIES_EN
+        return random.choice(pool)
 
     # ------------------------------------------------------------------
     # Compat endpoints (for /chat/answer, /chat/skip_question)

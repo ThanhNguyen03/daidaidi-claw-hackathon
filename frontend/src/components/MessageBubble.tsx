@@ -12,6 +12,21 @@ import ReactMarkdown from 'react-markdown';
 
 // Mermaid diagram renderer — dynamically imports mermaid to avoid SSR issues
 let _mermaidIdCounter = 0;
+
+/** Fix common LLM-generated mermaid issues before handing to the renderer. */
+function sanitizeMermaid(raw: string): string {
+  let s = raw.trim();
+  // Normalize line endings
+  s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // Normalize curly/smart quotes to straight quotes
+  s = s.replace(/[“”„‟]/g, '"');
+  // Replace literal \n escape sequences inside labels with a space.
+  // Mermaid v11 does not support \n inside quoted labels.
+  s = s.replace(/\\n/g, ' ');
+  // Strip markdown bold/italic that LLMs sometimes inject inside labels
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, '$1');
+  return s;
+}
 function MermaidDiagram({ chart }: { chart: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(`mermaid-diag-${++_mermaidIdCounter}`);
@@ -19,16 +34,17 @@ function MermaidDiagram({ chart }: { chart: string }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const cleaned = sanitizeMermaid(chart);
       try {
         const mermaid = (await import('mermaid')).default;
         mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
-        const { svg } = await mermaid.render(idRef.current, chart);
+        const { svg } = await mermaid.render(idRef.current, cleaned);
         if (!cancelled && containerRef.current) {
           containerRef.current.innerHTML = svg;
         }
       } catch {
         if (!cancelled && containerRef.current) {
-          containerRef.current.innerHTML = `<pre style="font-size:1em;overflow:auto;padding:8px">${chart.replace(/</g, '&lt;')}</pre>`;
+          containerRef.current.innerHTML = `<pre style="font-size:0.85em;overflow:auto;padding:8px;background:#f6f8fa;border-radius:6px;text-align:left">${cleaned.replace(/</g, '&lt;')}</pre>`;
         }
       }
     })();
