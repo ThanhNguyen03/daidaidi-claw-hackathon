@@ -1,6 +1,6 @@
 # AdtimaBox Sales AI
 
-An AI sales assistant for Adtima's sales team — built as a multi-skill agent that handles sales planning, proposal generation (user journey, PPTX, quotation), compliance review, and client simulation over a real-time SSE chat interface.
+An AI sales assistant for Adtima's sales team — built as a multi-skill agent that handles sales planning, proposal generation (user journey, PPTX, quotation), and compliance review over a real-time SSE chat interface.
 
 ## Architecture
 
@@ -9,16 +9,12 @@ Frontend (Next.js)
   └─ POST /chat/stream  →  SSE stream
        Backend (FastAPI)
          ├─ CentralAgent           — orchestrates the full pipeline
-         │    ├─ Scoping           — extracts & validates the sales brief
          │    ├─ Market Strategy   — market insight + sales planning
          │    ├─ Product Solution  — AdtimaBox/CShub recommendation + Mermaid user journey
-         │    ├─ Compliance        — policy review (pre-checkpoint reviewer)
+         │    ├─ Compliance        — policy & advertising law review
          │    ├─ Client Simulator  — adversarial client Q&A
-         │    ├─ Design            — wireframes / user-flow diagrams
-         │    ├─ Proposal Assembler— assembles final proposal document
-         │    └─ Data Masking      — anonymises sensitive data
-         ├─ Checkpoint Manager     — human-approval gate before any artifact generation
-         └─ Memory                 — feedback rules + salesperson profile (SQLite / AgentBase)
+         │    └─ Design            — wireframes / user-flow diagrams
+         └─ Memory                 — feedback rules + salesperson profile (SQLite)
 ```
 
 **LLM provider:** GreenNode MAAS (OpenAI-compatible endpoint), models `minimax/minimax-m2.5` and `qwen/qwen3-5-27b`.  
@@ -52,10 +48,11 @@ cp backend/.env.example backend/.env
 3. Fill in `backend/.env`:
    ```env
    LLM_API_KEY=your_actual_api_key
-   MODEL_ORCHESTRATOR=minimax/minimax-m2.5
+   MODEL_SALES_ORCHESTRATOR=minimax/minimax-m2.5
    MODEL_MARKET_STRATEGY=qwen/qwen3-5-27b
    MODEL_PRODUCT_SOLUTION=qwen/qwen3-5-27b
    MODEL_COMPLIANCE=qwen/qwen3-5-27b
+   MODEL_CLIENT_SIMULATOR=qwen/qwen3-5-27b
    MODEL_DESIGN=minimax/minimax-m2.5
    MODEL_VALIDATION=minimax/minimax-m2.5
    ```
@@ -94,23 +91,17 @@ Open http://localhost:3000, enter a name (demo mode — no real auth), and start
 │   ├── skills/                      # One folder per skill
 │   │   ├── base.py                  # BaseSkill contract
 │   │   ├── registry.py              # Skill registry
-│   │   ├── scoping/
 │   │   ├── market_strategy/
 │   │   ├── product_solution/
 │   │   ├── compliance/
 │   │   ├── client_simulator/
-│   │   ├── design/
-│   │   ├── proposal_assembler/
-│   │   └── data_masking/
+│   │   └── design/
 │   ├── agents/                      # Per-agent SKILL.md knowledge files
 │   │   ├── sales_orchestrator_agent/
 │   │   ├── market_strategy_agent/
 │   │   ├── product_solution_agent/
 │   │   ├── compliance_policy_agent/
-│   │   └── ...
-│   ├── checkpoint/
-│   │   ├── manager.py               # Human-approval checkpoint state machine
-│   │   └── compliance.py            # Pre-checkpoint compliance review hook
+│   │   └── client_simulator_agent/
 │   ├── memory/
 │   │   ├── constraint_injection.py  # Injects learned feedback rules into prompts
 │   │   └── feedback_extractor.py    # Detects & saves feedback rules from chat
@@ -121,7 +112,7 @@ Open http://localhost:3000, enter a name (demo mode — no real auth), and start
 │   │   └── embeddings.py            # Embedding provider (GreenNode bge-m3)
 │   ├── generation/
 │   │   ├── pptx.py                  # python-pptx deck generation
-│   │   └── userflow.py              # Mermaid / FigJam user-flow generation
+│   │   └── userflow.py              # Mermaid user-flow generation
 │   ├── schemas/
 │   │   └── state.py                 # SalesCaseState (shared pipeline state)
 │   ├── llm/
@@ -139,10 +130,9 @@ Open http://localhost:3000, enter a name (demo mode — no real auth), and start
         ├── components/
         │   ├── ChatWindow.tsx       # Message list + composer
         │   ├── MessageBubble.tsx    # Markdown render, Mermaid diagrams
-        │   ├── Sidebar.tsx          # Mode switcher, agent status, theme toggle
+        │   ├── Sidebar.tsx          # Agent status, theme toggle
         │   ├── ContextPanel.tsx     # Brief summary, constraints, artifacts
         │   ├── QuestionCard.tsx     # Inline question cards (yellow border)
-        │   ├── BrainstormView.tsx   # Group-chat brainstorm UI
         │   └── MobileNav.tsx
         ├── hooks/
         │   └── useChat.ts           # SSE-backed chat hook
@@ -155,27 +145,11 @@ Open http://localhost:3000, enter a name (demo mode — no real auth), and start
 
 | Skill | What it does |
 |-------|-------------|
-| **Scoping** | Extracts and validates the sales brief; asks clarifying questions |
 | **Market Strategy** | Market insight, competitor analysis, sales planning |
 | **Product Solution** | AdtimaBox / Zalo Mini App package recommendation + Mermaid user-journey diagram |
-| **Compliance** | Flags policy risks in proposals; runs as a pre-checkpoint reviewer |
+| **Compliance** | Flags policy risks in proposals; reviews against Zalo policy and advertising law |
 | **Client Simulator** | Adversarial client Q&A to stress-test the proposal |
-| **Design** | Wireframes and user-flow diagrams (FigJam / HTML fallback) |
-| **Proposal Assembler** | Merges all skill outputs into a final proposal document |
-| **Data Masking** | Anonymises sensitive client data before external processing |
-
-## Modes
-
-| Mode | Behaviour |
-|------|-----------|
-| **Chat** | Q&A / advisory — minimal skill dispatch, answers from KB + memory |
-| **Planning** | Builds a structured sales plan; dispatches Market Strategy |
-| **Execute** | Full pipeline — proposal, user journey, PPTX, quotation; all gated by human checkpoint |
-| **Brainstorm** | Multi-agent group discussion; orchestrator acts as moderator |
-
-## Human Checkpoint
-
-Before any artifact is generated (PPTX, quotation, wireframe), the backend emits a `checkpoint_card` SSE event. The frontend renders an inline card with **Approve / Edit / Reject** controls. Compliance findings attach to the card automatically (block/warn/info severity). The pipeline does not execute until the user approves.
+| **Design** | Wireframes and user-flow diagrams (HTML / Figma export if token set) |
 
 ## SSE Event Types
 
@@ -187,9 +161,9 @@ Before any artifact is generated (PPTX, quotation, wireframe), the backend emits
 | `agent_status` | `thinking` / `completed` / `failed` per skill |
 | `agent_message` | Full message from a skill |
 | `question_card` | Rendered by `QuestionCard.tsx` — asks for missing brief info |
-| `checkpoint_card` | Human-approval gate before generation |
 | `thinking_start` / `thinking_end` | Wraps `<think>` blocks (stripped from output) |
 | `constraint_added` | Feedback rule saved to memory |
+| `session_updated` | Brief state synced after each turn |
 
 ## Configuration
 
@@ -201,17 +175,16 @@ LLM_BASE_URL=https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1/
 LLM_API_KEY=your_key
 
 # Model per skill (use model IDs from the /v1/models list)
-MODEL_ORCHESTRATOR=minimax/minimax-m2.5
+MODEL_SALES_ORCHESTRATOR=minimax/minimax-m2.5
 MODEL_MARKET_STRATEGY=qwen/qwen3-5-27b
 MODEL_PRODUCT_SOLUTION=qwen/qwen3-5-27b
 MODEL_COMPLIANCE=qwen/qwen3-5-27b
+MODEL_CLIENT_SIMULATOR=qwen/qwen3-5-27b
 MODEL_DESIGN=minimax/minimax-m2.5
 MODEL_VALIDATION=minimax/minimax-m2.5
 
-# Feature flags
-ENABLE_CHECKPOINT=true
-ENABLE_BRAINSTORM=true
-ENABLE_AUTO_APPROVE_SESSION=false
+# Optional: Figma export for the Design skill
+FIGMA_ACCESS_TOKEN=figd_xxxxxxxxxxxxxxxxxxxxxxxx
 
 # KB embeddings — defaults to GreenNode-hosted bge-m3 (no local download)
 KB_EMBEDDING_PROVIDER=greennode
