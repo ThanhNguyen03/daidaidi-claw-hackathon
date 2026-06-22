@@ -791,10 +791,19 @@ async def process_with_central_agent(
             yield _sse_data(event)
 
     if not has_content:
+        # Something went wrong in the agent (exception / silent failure).
+        # If we have prior context, say something useful; otherwise ask for brief.
+        has_prior_context = any(m.get("role") == "assistant" for m in state.messages)
+        fallback_msg = (
+            "Mình đang gặp sự cố kỹ thuật. Bạn có thể thử gửi lại câu hỏi không?"
+            if has_prior_context
+            else "Để mình tư vấn tốt hơn, bạn có thể chia sẻ brief không? "
+                 "(ngành hàng, mục tiêu, đối tượng mục tiêu)"
+        )
         yield _sse_data({
             "type": "assistant_message",
             "agent": "central_agent",
-            "content": "Mình cần thêm thông tin để hỗ trợ bạn. Bạn có thể chia sẻ thêm về yêu cầu không?",
+            "content": fallback_msg,
         })
 
     state.summary = f"User: {message[:40]}... -> Skills: {', '.join(state.outputs.keys()) or 'none'}"

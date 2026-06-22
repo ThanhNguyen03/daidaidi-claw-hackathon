@@ -57,132 +57,164 @@ _SKILL_TIMEOUT_S = 150  # per-skill wall-clock timeout; emit failed event instea
 # Assessment + Planning prompt
 # ---------------------------------------------------------------------------
 
-_PLANNING_SYSTEM = """You are the AdtimaBox Sales AI — requirement assessment and planning engine.
+_PLANNING_SYSTEM = """You are the AdtimaBox Sales AI — planning engine for a sales consulting assistant.
 
-Given the conversation and current brief, decide ONE of two actions:
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ACTION A — CLARIFY (needs_clarification: true)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Use ONLY when BOTH of these are completely unknown:
-  1. Industry / business sector of the brand
-  2. Primary business objective (what outcome does the client want?)
-
-When clarifying, prioritize questions from LAYER 0 (current state) first:
-  • Does the brand have any existing loyalty / CRM / engagement program? What platform?
-  • What does the current customer journey look like today? What are the key actors?
-  • What is the single biggest pain point in the current flow?
-
-Then LAYER 1 (objective) if needed:
-  • Primary goal: acquire new leads / retain customers / increase purchase frequency / collect data / brand awareness?
-  • What does success look like in 3–6 months?
-  • Long-term loyalty platform or short-term campaign?
-
-Rules for clarification:
-  - Max 3 questions per turn — prioritize the most blocking unknowns
-  - Write the message in the SAME LANGUAGE as the user's message
-  - Warm and consultative tone — NOT interrogative. Group questions naturally
-  - Do NOT ask about pricing, packages, or solutions in this phase
+You receive up to four context blocks:
+  • Conversation History — ALL prior messages in this session (USER and ASSISTANT turns)
+  • Accumulated Brief — client info extracted across all prior turns
+  • Already Executed Skills — what was analyzed in earlier turns of this session
+  • Current Message — what the user just typed
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ACTION B — EXECUTE (needs_clarification: false)
+STEP 1 — DECIDE: CLARIFY or EXECUTE?
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Use when ANY of these are true:
-  • Industry or business sector is mentioned (FMCG, pharma, F&B, retail, finance…)
-  • Goal is stated, even vaguely (loyalty, data collection, campaign, awareness…)
-  • User mentions any Zalo product (ZNS, MiniApp, OA, ZBS, CShub)
-  • User asks for pricing, proposal, strategy, wireframe, or analysis directly
-  • Brief already has industry OR goal from previous turns
-  • Message contains enough business context (50+ words describing a business problem)
-  • User is continuing a conversation with clarification answers
 
-When in doubt → EXECUTE. Skills handle missing info with reasonable assumptions.
+Look at Conversation History. Count ASSISTANT turns.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-AVAILABLE SKILLS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- market_strategy: market analysis, competitive landscape, consumer insight, case studies
-- product_solution: package/pricing matching, MiniApp flow design, integration architecture, quotations
-- compliance: Zalo platform policy, PDPL, Vietnamese advertising law, risk classification
-- client_simulator: buyer objections, competitor defense, pitch coaching
-- design: wireframes, Mermaid user flow diagrams, screen specifications, integration assessment
-- proposal_assembler: final synthesis — assembles all skill outputs into a complete client-ready proposal document
+IF there are ZERO ASSISTANT turns in Conversation History AND the user message is too vague to act on:
+  → ACTION A (Clarify). Ask 1–3 targeted questions.
+  → "Too vague to act on" means: no industry/sector AND no goal/objective anywhere in the message or brief.
+  → If the message contains ANY business context (brand name, industry, product type, objective,
+     campaign type, Zalo product mention, target audience) → go directly to ACTION B instead.
 
-Dispatch rules:
-  - ALWAYS include market_strategy + product_solution for any sales or campaign request
-  - Add compliance when: data collection, advertising content, pharma/FMCG health claims
-  - Add client_simulator ONLY when user explicitly requests objection prep or pitch simulation
-  - Add design ONLY when user explicitly requests wireframes, user flow diagrams, or solution design
-  - Add proposal_assembler ONLY as a FINAL step after other skills complete — when user asks for a full proposal, presentation deck, or complete pitch document. MUST run after market_strategy + product_solution (not in parallel with them)
-  - Group independent skills in the same parallel sub-array; proposal_assembler must be in its own sequential step
+IN ALL OTHER SITUATIONS → ACTION B (Execute). This includes:
+  → Conversation History has ANY ASSISTANT turn (ongoing conversation → never re-clarify)
+  → Brief already has industry or goal from a previous turn
+  → User is asking a follow-up ("suggest thêm đi", "còn gì không", "đi sâu hơn về pricing")
+  → User sent a rich brief in this message (even if it's the first message)
+
+When in doubt → EXECUTE. Skills handle incomplete briefs with reasonable assumptions.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OUTPUT — return ONLY valid JSON, no markdown fences:
+STEP 2 — SELECT SKILLS AND WRITE TASKS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Case A (clarify):
+For ACTION B, ALWAYS include ALL FOUR core skills. No exceptions.
+Your job is to write a SPECIFIC, CONTEXT-AWARE task for each skill — not to decide whether to include them.
+
+CORE SKILLS (always include all four):
+
+  market_strategy   → Write a task about: market landscape, brand positioning, consumer insight,
+                       campaign idea, case studies relevant to the brief.
+
+  product_solution  → Write a task about: which Zalo products fit (OA / ZNS / MiniApp / Ads),
+                       solution architecture, CShub package, pricing estimate, integration plan.
+
+  compliance        → Write a task about: data collection rules, PDPL compliance, Zalo platform
+                       policies, advertising regulations, health/FMCG claims if applicable.
+
+  design            → Write a task about: user journey/flow from first touchpoint to conversion,
+                       key screens/touchpoints, Mermaid diagram of the flow if useful.
+
+OPTIONAL SKILLS (include only when explicitly requested by the user):
+
+  client_simulator  → Only if user explicitly asks for objection handling, competitor Q&A,
+                       or pitch practice. Write task about the specific simulation needed.
+
+  proposal_assembler → Only if user explicitly asks for a full proposal, pitch deck, or complete
+                        document. MUST be alone in its OWN group, placed LAST in skill_plan.
+
+TASK WRITING RULES:
+  • Reference specific details from the brief/history (brand name, objective, TA, platform)
+  • For follow-up messages, write tasks that DEEPEN or EXTEND the prior analysis
+  • Each task must be specific enough that the skill can act without re-reading the history
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — STRUCTURE THE PLAN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+skill_plan is a list of groups. Skills in the same group run in parallel.
+Groups run sequentially (group[0] completes → group[1] starts).
+proposal_assembler must always be alone in the LAST group.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT — valid JSON only, no markdown fences:
+
+Case A (clarify — only on first message with zero business context):
 {
   "brief_update": {"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null},
   "needs_clarification": true,
-  "clarification_message": "<warm message with 1-3 questions in user's language>"
+  "clarification_message": "<warm, consultative 1-3 questions in user's language. Focus on industry + objective.>"
 }
 
-Case B (execute):
+Case B (execute — the normal case for any business brief):
 {
-  "brief_update": {"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null},
+  "brief_update": {"industry": "<extracted or null>", "goal": "<extracted or null>", "target_audience": "<extracted or null>", "budget_vnd": null, "timeline": null, "additional_context": null},
   "needs_clarification": false,
   "skill_plan": [
-    [{"skill": "market_strategy", "task": "<specific task>"}, {"skill": "product_solution", "task": "<specific task>"}],
-    [{"skill": "proposal_assembler", "task": "<assemble full proposal from above outputs>"}]
+    [
+      {"skill": "market_strategy", "task": "<specific task referencing brand/objective/TA from the brief>"},
+      {"skill": "product_solution", "task": "<specific Zalo product + pricing task for this brief>"},
+      {"skill": "compliance", "task": "<specific compliance check based on brief context>"},
+      {"skill": "design", "task": "<specific user flow design task for this solution>"}
+    ]
   ]
 }
 
-Note: skill_plan is a list of parallel groups. Skills in the same group run concurrently. proposal_assembler MUST always be in its own group AFTER analysis skills."""
+EXAMPLE — Red Bull voucher + data collection brief:
+{
+  "brief_update": {"industry": "FMCG / Energy Drink", "goal": "Tăng redeem voucher offline + thu thập data người dùng + reactivate via Zalo", "target_audience": "18-45 NAT, blue collar", "budget_vnd": null, "timeline": null, "additional_context": "Game-based campaign on Zalo, idea phải trendy và dễ chơi"},
+  "needs_clarification": false,
+  "skill_plan": [
+    [
+      {"skill": "market_strategy", "task": "Phân tích chiến lược campaign gamification cho Red Bull trên Zalo: consumer insight blue collar 18-45, case studies game trendy, positioning so với đối thủ FMCG, go-to-market approach"},
+      {"skill": "product_solution", "task": "Đề xuất giải pháp Zalo cho Red Bull: MiniApp game + OA CRM + ZNS reactivation, CShub package phù hợp, báo giá chi tiết, kiến trúc kỹ thuật tích hợp với offline voucher redemption"},
+      {"skill": "compliance", "task": "Kiểm tra compliance cho Red Bull campaign: PDPL data collection consent flow, Zalo OA policy cho FMCG, quy định quảng cáo energy drink, quy trình reactivate data đúng luật"},
+      {"skill": "design", "task": "Thiết kế userflow đầy đủ: từ scan QR offline → MiniApp game → nhận voucher → thu thập data → ZNS reactivation flow. Mermaid diagram các màn hình chính"}
+    ]
+  ]
+}"""
 
 
 # ---------------------------------------------------------------------------
-# Keyword-based fallback skill picker
+# Context-aware skill plan builder (uses accumulated brief + history)
 # ---------------------------------------------------------------------------
 
-def _pick_skills_from_message(message: str) -> list[list[dict[str, str]]]:
-    """Fallback: pick skills by keyword scan without LLM. Returns a complete skill_plan."""
-    msg = message.lower()
-    first_group: list[dict[str, str]] = []
+def _build_contextual_skill_plan(state, message: str) -> list[list[dict[str, str]]]:
+    """Fallback plan builder when the planning LLM fails.
 
-    if any(w in msg for w in ["brief", "campaign", "chien dich", "chien luoc", "market", "strategy",
-                               "idea", "y tuong", "zalo", "brand", "audience", "ta:", "target",
-                               "loyalty", "crm", "engagement"]):
-        first_group.append({"skill": "market_strategy", "task": f"Analyze and develop market strategy for this request: {message[:500]}"})
+    Strategy:
+    - If skills were already run this session, re-run the same set (they were chosen
+      for a reason) with a task focused on the current message.
+    - If there's history but no prior outputs, default to the full core set.
+    - New session with no history: run the core pair only.
+    No keyword matching — the LLM handles semantic decisions; this is just a safety net.
+    """
+    task_short = message[:400]
 
-    if any(w in msg for w in ["bao gia", "bao gi", "price", "gia", "quote", "solution",
-                               "product", "miniapp", "mini app", "userflow", "flow", "package",
-                               "cshub", "pricing", "tier"]):
-        first_group.append({"skill": "product_solution", "task": f"Develop product solution, pricing, and userflow for: {message[:500]}"})
+    prior_skill_names: list[str] = list(state.outputs.keys()) if state.outputs else []
 
-    if any(w in msg for w in ["data", "collect", "thu thap", "pdpl", "policy", "compliance",
-                               "legal", "advertising", "quang cao", "zalo oa", "pharma", "duoc"]):
-        first_group.append({"skill": "compliance", "task": f"Check compliance requirements for: {message[:500]}"})
-
-    if any(w in msg for w in ["wireframe", "design", "ui", "screen", "man hinh", "giao dien", "figma",
-                               "userflow", "flow diagram", "mermaid"]):
-        first_group.append({"skill": "design", "task": f"Design solution and user flow for: {message[:500]}"})
-
-    if any(w in msg for w in ["objection", "competitor", "pitch", "client sim", "simulate", "phan tich doi thu"]):
-        first_group.append({"skill": "client_simulator", "task": f"Simulate client perspective for: {message[:500]}"})
-
-    if not first_group:
+    if prior_skill_names:
+        # Re-run whatever was run before, scoped to the current message
+        _SEQUENTIAL = {"proposal_assembler"}
         first_group = [
-            {"skill": "market_strategy", "task": f"Analyze and provide market insights for: {message[:500]}"},
-            {"skill": "product_solution", "task": f"Develop solution and pricing for: {message[:500]}"},
+            {"skill": s, "task": f"Continue analysis, now focusing on: {task_short}"}
+            for s in prior_skill_names
+            if s not in _SEQUENTIAL
         ]
+        if not first_group:
+            first_group = [
+                {"skill": "market_strategy", "task": f"Analyze and expand on: {task_short}"},
+                {"skill": "product_solution", "task": f"Develop recommendation for: {task_short}"},
+            ]
+        plan: list[list[dict[str, str]]] = [first_group]
+        if "proposal_assembler" in prior_skill_names:
+            plan.append([{"skill": "proposal_assembler", "task": f"Reassemble proposal incorporating: {task_short}"}])
+        return plan
 
-    plan: list[list[dict[str, str]]] = [first_group]
+    if state.messages:
+        # Has conversation history but first skill run — use the full core set
+        return [[
+            {"skill": "market_strategy", "task": f"Analyze and expand on: {task_short}"},
+            {"skill": "product_solution", "task": f"Develop product recommendation for: {task_short}"},
+            {"skill": "compliance", "task": f"Check compliance considerations for: {task_short}"},
+            {"skill": "design", "task": f"Design solution journey for: {task_short}"},
+        ]]
 
-    # proposal_assembler runs as a final sequential step when a full proposal is explicitly requested
-    if any(w in msg for w in ["full proposal", "de xuat day du", "presentation", "deck", "pitch deck",
-                               "ban de xuat", "tong hop", "assemble", "complete proposal"]):
-        plan.append([{"skill": "proposal_assembler", "task": f"Assemble complete client proposal from all skill outputs for: {message[:500]}"}])
-
-    return plan
+    # No history, no prior outputs — minimal safe default
+    return [[
+        {"skill": "market_strategy", "task": f"Analyze and develop strategy for: {task_short}"},
+        {"skill": "product_solution", "task": f"Develop solution and pricing for: {task_short}"},
+    ]]
 
 
 class CentralAgent:
@@ -244,7 +276,7 @@ class CentralAgent:
         # Step 3B: Brief clear → execute skills
         skill_plan: list[list[dict]] = assessment.get("skill_plan") or []
         if not skill_plan:
-            skill_plan = _pick_skills_from_message(message)
+            skill_plan = _build_contextual_skill_plan(state, message)
 
         skill_registry = get_skill_registry()
         all_outputs: dict[str, SkillOutput] = {}
@@ -333,8 +365,19 @@ class CentralAgent:
             return {
                 "brief_update": {},
                 "needs_clarification": False,
-                "skill_plan": _pick_skills_from_message(message),
+                "skill_plan": _build_contextual_skill_plan(state, message),
             }
+
+    @staticmethod
+    def _format_prior_skills(state: SalesCaseState) -> str:
+        """Summarize which skills ran this session and what they found."""
+        if not state.outputs:
+            return ""
+        lines = []
+        for skill_name, output in state.outputs.items():
+            summary = (output.summary or "")[:200].replace("\n", " ")
+            lines.append(f"- {skill_name} ({output.status}): {summary}")
+        return "\n".join(lines)
 
     async def _plan(self, state: SalesCaseState, message: str) -> dict[str, Any]:
         """Single LLM call: assess brief completeness, extract fields, decide clarify or execute."""
@@ -344,13 +387,16 @@ class CentralAgent:
 
         brief_block = self._format_brief(state.brief)
         history_block = self._format_history(state.messages[-8:])
+        prior_skills_block = self._format_prior_skills(state)
 
         user_prompt = ""
         if history_block:
             user_prompt += f"## Conversation History\n{history_block}\n\n"
         if brief_block and brief_block != "No brief yet.":
-            user_prompt += f"## Current Brief\n{brief_block}\n\n"
-        user_prompt += f"## Latest User Message\n{message}\n\nReturn assessment JSON."
+            user_prompt += f"## Accumulated Brief\n{brief_block}\n\n"
+        if prior_skills_block:
+            user_prompt += f"## Already Executed This Session\n{prior_skills_block}\n\n"
+        user_prompt += f"## Current Message\n{message}\n\nReturn assessment JSON."
 
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
@@ -373,9 +419,29 @@ class CentralAgent:
 
         result = json.loads(raw)
 
-        # Safety: if skill_plan is empty in execute mode, add keyword fallback
+        # Hard guard: if this session already has prior ASSISTANT turns,
+        # never re-clarify — the agent must continue, not restart.
+        # (The system prompt says the same thing; this is a belt-and-suspenders override.)
+        prior_assistant_turns = [m for m in state.messages if m.get("role") == "assistant"]
+        if prior_assistant_turns and result.get("needs_clarification"):
+            result["needs_clarification"] = False
+
+        # Safety: if LLM returned execute mode but no skill_plan, build one from context.
         if not result.get("needs_clarification") and not result.get("skill_plan"):
-            result["skill_plan"] = _pick_skills_from_message(message)
+            result["skill_plan"] = _build_contextual_skill_plan(state, message)
+
+        # Safety: ensure all 4 core skills are always present in skill_plan[0].
+        # If the LLM dropped one, add it back with a generic task.
+        CORE_SKILLS = ["market_strategy", "product_solution", "compliance", "design"]
+        if result.get("skill_plan") and not result.get("needs_clarification"):
+            first_group = result["skill_plan"][0]
+            present = {s["skill"] for s in first_group}
+            for skill in CORE_SKILLS:
+                if skill not in present:
+                    first_group.append({
+                        "skill": skill,
+                        "task": f"Analyze and provide insights relevant to this brief: {message[:400]}",
+                    })
 
         return result
 
@@ -672,17 +738,42 @@ Format rules:
         )
 
     async def extract_desired_outputs(self, answer: str) -> list[str]:
-        lower = answer.lower()
-        outputs = []
-        if any(w in lower for w in ["pptx", "powerpoint", "slide", "deck"]):
-            outputs.append("pptx")
-        if any(w in lower for w in ["figma", "wireframe", "wire", "ui"]):
-            outputs.append("figma")
-        if any(w in lower for w in ["flow", "diagram", "mermaid", "userflow"]):
-            outputs.append("userflow")
-        if any(w in lower for w in ["quote", "pricing", "price", "cost", "bao gia"]):
-            outputs.append("quote")
-        return outputs or ["pptx"]
+        """Determine which output artifacts the user wants. Uses LLM — no keyword matching."""
+        from llm.greennode import get_llm_client
+        system = (
+            "You are a parser. The user described what output artifact(s) they want. "
+            "Return ONLY a JSON array of strings from this set: [\"pptx\", \"figma\", \"userflow\", \"quote\"]. "
+            "pptx = presentation/slide deck. figma = wireframe/UI design. "
+            "userflow = user journey / flow diagram / Mermaid diagram. quote = pricing table / báo giá. "
+            "Include all that apply. If unclear, return [\"pptx\"]. No explanation — JSON array only."
+        )
+        try:
+            client = get_llm_client("central_agent")
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None,
+                partial(
+                    client.create_completion,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": answer},
+                    ],
+                    temperature=0,
+                    max_tokens=64,
+                    stream=False,
+                ),
+            )
+            raw = (response.choices[0].message.content or "").strip()
+            raw = strip_think_blocks(raw)
+            raw = extract_json_block(raw)
+            parsed = json.loads(raw)
+            if isinstance(parsed, list) and all(isinstance(x, str) for x in parsed):
+                valid = {"pptx", "figma", "userflow", "quote"}
+                result = [x for x in parsed if x in valid]
+                return result or ["pptx"]
+        except Exception as e:
+            print(f"[CentralAgent] extract_desired_outputs LLM failed ({e}), using pptx default")
+        return ["pptx"]
 
     async def validate_before_dispatch(self, state: SalesCaseState):
         output = AgentOutput(
