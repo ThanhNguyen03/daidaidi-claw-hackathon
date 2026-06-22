@@ -46,6 +46,7 @@ def _build_registry() -> SkillRegistry:
     _try_register(registry, "skills.compliance.skill", "ComplianceSkill")
     _try_register(registry, "skills.client_simulator.skill", "ClientSimulatorSkill")
     _try_register(registry, "skills.design.skill", "DesignSkill")
+    _try_register(registry, "skills.proposal_assembler.skill", "ProposalAssemblerSkill")
 
     print(f"[SkillRegistry] Loaded: {registry.all_names()}")
     return registry

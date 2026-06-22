@@ -70,6 +70,7 @@ interface UseChatReturn {
   rejectCheckpoint: () => Promise<void>;
   editCheckpoint: (params: Record<string, unknown>) => Promise<void>;
   clearError: () => void;
+  resetSession: () => void;  // Clear session and start fresh
   // Day 7: Brainstorm actions
   addParticipant: (agentName: string) => void;
   removeParticipant: (agentName: string) => void;
@@ -80,8 +81,11 @@ interface UseChatReturn {
 export function useChat(options: UseChatOptions): UseChatReturn {
   const { salespersonId, displayName, mode = 'chat' } = options;
 
-  // State
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  // State — restore sessionId from sessionStorage so context survives page refresh
+  const [sessionId, setSessionId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return sessionStorage.getItem(`chat_session_${salespersonId}`) || null;
+  });
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -134,6 +138,20 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       }
     }
   }, []);
+
+  // Expose a resetSession helper so UI can start a fresh conversation
+  const resetSession = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem(`chat_session_${salespersonId}`);
+    }
+    setSessionId(null);
+    setMessages([]);
+    setBrief(null);
+    setPendingQuestions([]);
+    setActiveCheckpoint(null);
+    setArtifacts([]);
+    setBrainState(null);
+  }, [salespersonId]);
 
   // Ref for aborting requests
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -237,9 +255,17 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     async (data: { type: string; [key: string]: unknown }) => {
       switch (data.type) {
         case 'session':
-          // New session created
-          if (data.session_id && !sessionId) {
-            setSessionId(data.session_id as string);
+          // Session confirmed — persist id and sync brief from BE
+          if (data.session_id) {
+            const sid = data.session_id as string;
+            setSessionId(sid);
+            if (typeof window !== 'undefined') {
+              sessionStorage.setItem(`chat_session_${salespersonId}`, sid);
+            }
+          }
+          // Sync brief from BE (provides latest accumulated brief on session resume)
+          if (data.brief && typeof data.brief === 'object') {
+            setBrief(data.brief as Brief);
           }
           break;
 
@@ -309,12 +335,16 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           break;
 
         case 'session_updated':
-          // Session state updated
+          // Session state updated — sync brief and persist session id
           if (data.session_id) {
-            setSessionId(data.session_id as string);
+            const sid = data.session_id as string;
+            setSessionId(sid);
+            if (typeof window !== 'undefined') {
+              sessionStorage.setItem(`chat_session_${salespersonId}`, sid);
+            }
           }
-          // Update brief if provided
-          if (data.brief) {
+          // Only update brief if BE returned a non-empty brief object
+          if (data.brief && typeof data.brief === 'object' && Object.keys(data.brief as object).length > 0) {
             setBrief(data.brief as Brief);
           }
           break;
@@ -912,6 +942,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     rejectCheckpoint,
     editCheckpoint,
     clearError,
+    resetSession,
     // Day 7: Brainstorm actions
     addParticipant,
     removeParticipant,

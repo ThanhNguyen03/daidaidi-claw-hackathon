@@ -2,14 +2,15 @@
 Central Agent
 =============
 Single entry point that:
-1. Parses the user message and extracts brief fields
-2. Picks relevant skills based on message content (keyword + LLM)
-3. Executes all chosen skills in parallel
+1. Assesses whether the client brief is clear enough to run analysis
+2. If incomplete: asks targeted clarifying questions (max 3 per turn, Layer 0 first)
+3. If clear: picks relevant skills and executes in parallel
 4. Streams a synthesized final response
 
 Design principles:
-- NEVER block on missing info -- always execute with what we have
-- If planning LLM call fails, fall back to running all core skills
+- Clarify first using the 6-layer requirement elicitation framework
+- Execute as soon as industry + basic goal are known (don't over-ask)
+- If planning LLM fails, fall back to direct skill execution (never block)
 - Skills run concurrently; synthesis streams tokens as they arrive
 """
 
@@ -53,93 +54,139 @@ _SKILL_TIMEOUT_S = 150  # per-skill wall-clock timeout; emit failed event instea
 
 
 # ---------------------------------------------------------------------------
-# Planning prompt
+# Assessment + Planning prompt
 # ---------------------------------------------------------------------------
 
-_PLANNING_SYSTEM = """You are the AdtimaBox Sales AI planning engine.
-Given a user message, return a JSON object with:
-1. Extracted brief fields (use null for anything not mentioned)
-2. Which skills to call and what task to give each
+_PLANNING_SYSTEM = """You are the AdtimaBox Sales AI — requirement assessment and planning engine.
 
-Available skills:
-- market_strategy: market analysis, campaign ideas, audience insight, Zalo strategy, case studies
-- product_solution: MiniApp architecture, pricing/quote, CShub packages, integration design, userflow
-- compliance: Zalo policy, PDPL, advertising law, risk flags
+Given the conversation and current brief, decide ONE of two actions:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ACTION A — CLARIFY (needs_clarification: true)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Use ONLY when BOTH of these are completely unknown:
+  1. Industry / business sector of the brand
+  2. Primary business objective (what outcome does the client want?)
+
+When clarifying, prioritize questions from LAYER 0 (current state) first:
+  • Does the brand have any existing loyalty / CRM / engagement program? What platform?
+  • What does the current customer journey look like today? What are the key actors?
+  • What is the single biggest pain point in the current flow?
+
+Then LAYER 1 (objective) if needed:
+  • Primary goal: acquire new leads / retain customers / increase purchase frequency / collect data / brand awareness?
+  • What does success look like in 3–6 months?
+  • Long-term loyalty platform or short-term campaign?
+
+Rules for clarification:
+  - Max 3 questions per turn — prioritize the most blocking unknowns
+  - Write the message in the SAME LANGUAGE as the user's message
+  - Warm and consultative tone — NOT interrogative. Group questions naturally
+  - Do NOT ask about pricing, packages, or solutions in this phase
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ACTION B — EXECUTE (needs_clarification: false)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Use when ANY of these are true:
+  • Industry or business sector is mentioned (FMCG, pharma, F&B, retail, finance…)
+  • Goal is stated, even vaguely (loyalty, data collection, campaign, awareness…)
+  • User mentions any Zalo product (ZNS, MiniApp, OA, ZBS, CShub)
+  • User asks for pricing, proposal, strategy, wireframe, or analysis directly
+  • Brief already has industry OR goal from previous turns
+  • Message contains enough business context (50+ words describing a business problem)
+  • User is continuing a conversation with clarification answers
+
+When in doubt → EXECUTE. Skills handle missing info with reasonable assumptions.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AVAILABLE SKILLS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- market_strategy: market analysis, competitive landscape, consumer insight, case studies
+- product_solution: package/pricing matching, MiniApp flow design, integration architecture, quotations
+- compliance: Zalo platform policy, PDPL, Vietnamese advertising law, risk classification
 - client_simulator: buyer objections, competitor defense, pitch coaching
-- design: wireframes, UI screens, Mermaid diagrams
+- design: wireframes, Mermaid user flow diagrams, screen specifications, integration assessment
+- proposal_assembler: final synthesis — assembles all skill outputs into a complete client-ready proposal document
 
-Rules:
-- ALWAYS set ready_to_execute: true -- never block on missing info
-- For any sales brief or campaign request, ALWAYS include at least market_strategy and product_solution
-- Include compliance if campaign involves data collection or advertising
-- Group skills that can run in parallel in the same sub-array
-- task string: be specific and include all context from the message so skill can run without extra info
+Dispatch rules:
+  - ALWAYS include market_strategy + product_solution for any sales or campaign request
+  - Add compliance when: data collection, advertising content, pharma/FMCG health claims
+  - Add client_simulator ONLY when user explicitly requests objection prep or pitch simulation
+  - Add design ONLY when user explicitly requests wireframes, user flow diagrams, or solution design
+  - Add proposal_assembler ONLY as a FINAL step after other skills complete — when user asks for a full proposal, presentation deck, or complete pitch document. MUST run after market_strategy + product_solution (not in parallel with them)
+  - Group independent skills in the same parallel sub-array; proposal_assembler must be in its own sequential step
 
-Return ONLY valid JSON, no markdown fences:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT — return ONLY valid JSON, no markdown fences:
+
+Case A (clarify):
 {
-  "brief_update": {
-    "industry": null,
-    "goal": null,
-    "target_audience": null,
-    "budget_vnd": null,
-    "timeline": null,
-    "additional_context": null
-  },
-  "ready_to_execute": true,
+  "brief_update": {"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null},
+  "needs_clarification": true,
+  "clarification_message": "<warm message with 1-3 questions in user's language>"
+}
+
+Case B (execute):
+{
+  "brief_update": {"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null},
+  "needs_clarification": false,
   "skill_plan": [
-    [
-      {"skill": "market_strategy", "task": "<detailed task>"},
-      {"skill": "product_solution", "task": "<detailed task>"},
-      {"skill": "compliance", "task": "<detailed task>"}
-    ]
+    [{"skill": "market_strategy", "task": "<specific task>"}, {"skill": "product_solution", "task": "<specific task>"}],
+    [{"skill": "proposal_assembler", "task": "<assemble full proposal from above outputs>"}]
   ]
-}"""
+}
+
+Note: skill_plan is a list of parallel groups. Skills in the same group run concurrently. proposal_assembler MUST always be in its own group AFTER analysis skills."""
 
 
 # ---------------------------------------------------------------------------
 # Keyword-based fallback skill picker
 # ---------------------------------------------------------------------------
 
-def _pick_skills_from_message(message: str) -> list[dict[str, str]]:
-    """Fallback: pick skills by keyword scan without LLM."""
+def _pick_skills_from_message(message: str) -> list[list[dict[str, str]]]:
+    """Fallback: pick skills by keyword scan without LLM. Returns a complete skill_plan."""
     msg = message.lower()
-    skills = []
+    first_group: list[dict[str, str]] = []
 
-    # Always include market_strategy for any sales/campaign mention
     if any(w in msg for w in ["brief", "campaign", "chien dich", "chien luoc", "market", "strategy",
-                               "idea", "y tuong", "zalo", "brand", "audience", "ta:", "target"]):
-        skills.append({"skill": "market_strategy", "task": f"Analyze and develop market strategy for this request: {message[:500]}"})
+                               "idea", "y tuong", "zalo", "brand", "audience", "ta:", "target",
+                               "loyalty", "crm", "engagement"]):
+        first_group.append({"skill": "market_strategy", "task": f"Analyze and develop market strategy for this request: {message[:500]}"})
 
-    # Product solution for pricing/solution/proposal/userflow mentions
-    if any(w in msg for w in ["proposal", "bao gia", "bao gi", "price", "gia", "quote", "solution",
-                               "product", "miniapp", "mini app", "userflow", "flow", "package"]):
-        skills.append({"skill": "product_solution", "task": f"Develop product solution, pricing, and userflow for: {message[:500]}"})
+    if any(w in msg for w in ["bao gia", "bao gi", "price", "gia", "quote", "solution",
+                               "product", "miniapp", "mini app", "userflow", "flow", "package",
+                               "cshub", "pricing", "tier"]):
+        first_group.append({"skill": "product_solution", "task": f"Develop product solution, pricing, and userflow for: {message[:500]}"})
 
-    # Compliance for data/privacy/advertising mentions
     if any(w in msg for w in ["data", "collect", "thu thap", "pdpl", "policy", "compliance",
-                               "legal", "advertising", "quang cao", "zalo oa"]):
-        skills.append({"skill": "compliance", "task": f"Check compliance requirements for: {message[:500]}"})
+                               "legal", "advertising", "quang cao", "zalo oa", "pharma", "duoc"]):
+        first_group.append({"skill": "compliance", "task": f"Check compliance requirements for: {message[:500]}"})
 
-    # Design for wireframe/UI/screen mentions
-    if any(w in msg for w in ["wireframe", "design", "ui", "screen", "man hinh", "giao dien", "figma"]):
-        skills.append({"skill": "design", "task": f"Design wireframes/UI for: {message[:500]}"})
+    if any(w in msg for w in ["wireframe", "design", "ui", "screen", "man hinh", "giao dien", "figma",
+                               "userflow", "flow diagram", "mermaid"]):
+        first_group.append({"skill": "design", "task": f"Design solution and user flow for: {message[:500]}"})
 
-    # Client simulator for objection/competitor mentions
-    if any(w in msg for w in ["objection", "competitor", "pitch", "client sim", "simulate"]):
-        skills.append({"skill": "client_simulator", "task": f"Simulate client perspective for: {message[:500]}"})
+    if any(w in msg for w in ["objection", "competitor", "pitch", "client sim", "simulate", "phan tich doi thu"]):
+        first_group.append({"skill": "client_simulator", "task": f"Simulate client perspective for: {message[:500]}"})
 
-    # Default: if nothing matched, run the core three
-    if not skills:
-        skills = [
+    if not first_group:
+        first_group = [
             {"skill": "market_strategy", "task": f"Analyze and provide market insights for: {message[:500]}"},
             {"skill": "product_solution", "task": f"Develop solution and pricing for: {message[:500]}"},
         ]
 
-    return skills
+    plan: list[list[dict[str, str]]] = [first_group]
+
+    # proposal_assembler runs as a final sequential step when a full proposal is explicitly requested
+    if any(w in msg for w in ["full proposal", "de xuat day du", "presentation", "deck", "pitch deck",
+                               "ban de xuat", "tong hop", "assemble", "complete proposal"]):
+        plan.append([{"skill": "proposal_assembler", "task": f"Assemble complete client proposal from all skill outputs for: {message[:500]}"}])
+
+    return plan
 
 
 class CentralAgent:
-    """Central agent: classify intent, extract brief, dispatch skills, synthesize."""
+    """Central agent: assess brief completeness, clarify if needed, then dispatch skills."""
 
     def __init__(self):
         self.name = "central_agent"
@@ -156,9 +203,16 @@ class CentralAgent:
     async def run(
         self, state: SalesCaseState, message: str
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Process a user message. Always executes skills -- never blocks on missing info."""
+        """
+        Process a user message.
+        Step 1: Casual check → greet if casual
+        Step 2: Assess brief + plan → either clarify or execute
+        Step 3A: If clarification needed → stream questions and stop
+        Step 3B: If ready → execute skills in parallel
+        Step 4: Synthesize and stream final response
+        """
 
-        # Step 1: Quick check -- is this just a greeting/casual chat?
+        # Step 1: Quick check — is this just a greeting/casual chat?
         if self._is_casual(message):
             response = await self._casual_reply(message)
             yield {"type": "content", "content": response}
@@ -169,16 +223,29 @@ class CentralAgent:
             yield {"type": "done"}
             return
 
-        # Step 2: Plan (LLM extracts brief + picks skills) with fallback
-        plan = await self._plan_with_fallback(state, message)
-        self._apply_brief_update(state, plan.get("brief_update") or {})
+        # Step 2: Assess brief completeness + plan (LLM decides clarify vs execute)
+        assessment = await self._assess_and_plan(state, message)
+        self._apply_brief_update(state, assessment.get("brief_update") or {})
 
-        skill_plan: list[list[dict]] = plan.get("skill_plan") or []
+        # Step 3A: Brief incomplete → ask clarifying questions
+        if assessment.get("needs_clarification"):
+            clarification_msg = (
+                assessment.get("clarification_message")
+                or self._fallback_clarification(message)
+            )
+            yield {"type": "content", "content": clarification_msg}
+            state.messages.append({
+                "role": "assistant", "content": clarification_msg,
+                "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+            })
+            yield {"type": "done"}
+            return
+
+        # Step 3B: Brief clear → execute skills
+        skill_plan: list[list[dict]] = assessment.get("skill_plan") or []
         if not skill_plan:
-            # Hard fallback -- keyword-based skill selection
-            skill_plan = [_pick_skills_from_message(message)]
+            skill_plan = _pick_skills_from_message(message)
 
-        # Step 3: Execute all skill groups
         skill_registry = get_skill_registry()
         all_outputs: dict[str, SkillOutput] = {}
 
@@ -244,41 +311,46 @@ class CentralAgent:
             async for event in self._synthesize(state, message, all_outputs):
                 yield event
         else:
-            yield {"type": "content", "content": "Xin loi, cac skill khong tra ve ket qua. Vui long thu lai."}
+            yield {"type": "content", "content": "Xin lỗi, các skill không trả về kết quả. Vui lòng thử lại."}
 
         yield {"type": "done"}
 
     # ------------------------------------------------------------------
-    # Planning
+    # Assessment + Planning
     # ------------------------------------------------------------------
 
-    async def _plan_with_fallback(self, state: SalesCaseState, message: str) -> dict[str, Any]:
-        """Call planning LLM. On any failure, return a keyword-based fallback plan."""
+    async def _assess_and_plan(self, state: SalesCaseState, message: str) -> dict[str, Any]:
+        """
+        Assess brief completeness and return either:
+        - {"needs_clarification": True, "clarification_message": "..."} → ask questions
+        - {"needs_clarification": False, "skill_plan": [...]} → execute skills
+        Falls back to execute mode if LLM fails.
+        """
         try:
             return await self._plan(state, message)
         except Exception as e:
-            print(f"[CentralAgent] Planning LLM failed ({e}), using keyword fallback")
+            print(f"[CentralAgent] Assessment LLM failed ({e}), defaulting to execute mode")
             return {
                 "brief_update": {},
-                "ready_to_execute": True,
-                "skill_plan": [_pick_skills_from_message(message)],
+                "needs_clarification": False,
+                "skill_plan": _pick_skills_from_message(message),
             }
 
     async def _plan(self, state: SalesCaseState, message: str) -> dict[str, Any]:
-        """Single LLM call: extract brief fields + pick skills."""
+        """Single LLM call: assess brief completeness, extract fields, decide clarify or execute."""
         from llm.greennode import get_llm_client
 
         client = get_llm_client("central_agent")
 
         brief_block = self._format_brief(state.brief)
-        history_block = self._format_history(state.messages[-4:])
+        history_block = self._format_history(state.messages[-8:])
 
         user_prompt = ""
         if history_block:
             user_prompt += f"## Conversation History\n{history_block}\n\n"
         if brief_block and brief_block != "No brief yet.":
             user_prompt += f"## Current Brief\n{brief_block}\n\n"
-        user_prompt += f"## User Message\n{message}\n\nReturn JSON planning decision (ready_to_execute must be true)."
+        user_prompt += f"## Latest User Message\n{message}\n\nReturn assessment JSON."
 
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
@@ -290,7 +362,7 @@ class CentralAgent:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.2,
-                max_tokens=1200,
+                max_tokens=1500,
                 stream=False,
             ),
         )
@@ -300,12 +372,35 @@ class CentralAgent:
         raw = extract_json_block(raw)
 
         result = json.loads(raw)
-        # Safety: always force ready_to_execute = true
-        result["ready_to_execute"] = True
-        # Safety: ensure skill_plan exists
-        if not result.get("skill_plan"):
-            result["skill_plan"] = [_pick_skills_from_message(message)]
+
+        # Safety: if skill_plan is empty in execute mode, add keyword fallback
+        if not result.get("needs_clarification") and not result.get("skill_plan"):
+            result["skill_plan"] = _pick_skills_from_message(message)
+
         return result
+
+    def _fallback_clarification(self, message: str) -> str:
+        """Fallback clarification message when LLM fails to generate one."""
+        lang = "vi" if (self._VI_CHARS.search(message) or self._VI_TOKENS.search(message)) else "en"
+        if lang == "vi":
+            return (
+                "Để mình có thể tư vấn giải pháp phù hợp nhất, bạn có thể chia sẻ thêm một chút:\n\n"
+                "1. **Ngành hàng / lĩnh vực** brand đang hoạt động? (FMCG, dược phẩm, F&B, bán lẻ...)\n"
+                "2. **Mục tiêu chính** của campaign / chương trình này là gì? "
+                "(thu data khách hàng, tăng loyalty, tăng doanh số...)\n"
+                "3. Brand hiện **đang có chương trình nào tương tự chưa**, "
+                "hay đây là lần đầu tiên triển khai trên Zalo?\n\n"
+                "Dù chỉ 1–2 dòng mô tả cũng được — mình sẽ phân tích ngay!"
+            )
+        return (
+            "To give you the most relevant recommendation, could you share:\n\n"
+            "1. **Industry / sector** the brand operates in? (FMCG, pharma, F&B, retail...)\n"
+            "2. **Primary objective** of this campaign or program? "
+            "(data capture, loyalty, sales increase, awareness...)\n"
+            "3. Does the brand **already have any loyalty/CRM program**, "
+            "or is this a fresh start on Zalo?\n\n"
+            "Even 1–2 sentences is enough — I'll take it from there!"
+        )
 
     # ------------------------------------------------------------------
     # Synthesis
@@ -317,15 +412,7 @@ class CentralAgent:
         original_message: str,
         skill_outputs: dict[str, SkillOutput],
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream a synthesized final response from all skill outputs.
-
-        The LLM client only exposes a synchronous streaming iterator.  Running
-        `for chunk in stream` on the event-loop thread blocks uvicorn from
-        handling health-check requests, which causes AgentBase Runtime to kill
-        the container mid-stream.  We fix this by running the sync iterator in
-        a thread-pool worker and feeding chunks through an asyncio.Queue so the
-        event loop stays free at all times.
-        """
+        """Stream a synthesized final response from all skill outputs."""
         from llm.greennode import get_llm_client
         from main import _ThinkFilter
 
@@ -369,7 +456,6 @@ Format rules:
         _DONE = object()
 
         def _stream_worker() -> None:
-            """Run the blocking LLM stream in a thread; push chunks to queue."""
             try:
                 stream = client.create_completion(
                     messages=[
@@ -390,7 +476,7 @@ Format rules:
 
         tf = _ThinkFilter()
         accumulated = ""
-        _TOKEN_TIMEOUT = 60.0  # seconds to wait for the next token before giving up
+        _TOKEN_TIMEOUT = 60.0
 
         try:
             while True:
@@ -421,7 +507,7 @@ Format rules:
                             accumulated += text
                             yield {"type": "content", "content": text}
         finally:
-            await producer  # ensure thread is joined regardless of early exit
+            await producer
 
         for kind, text in tf.flush():
             if kind == "content" and text:
@@ -599,7 +685,6 @@ Format rules:
         return outputs or ["pptx"]
 
     async def validate_before_dispatch(self, state: SalesCaseState):
-        has_brief = bool(state.brief and (state.brief.industry or state.brief.goal))
         output = AgentOutput(
             agent="central_agent",
             status="COMPLETE",
@@ -688,9 +773,10 @@ Format rules:
     @staticmethod
     def _format_history(messages: list[dict]) -> str:
         lines = []
-        for m in messages[-4:]:
+        for m in messages[-8:]:
             role = m.get("role", "")
-            content = (m.get("content") or "")[:200]
+            # 800 chars per message — enough to preserve full clarification Q&A
+            content = (m.get("content") or "")[:800]
             if role and content:
                 lines.append(f"{role.upper()}: {content}")
         return "\n".join(lines)

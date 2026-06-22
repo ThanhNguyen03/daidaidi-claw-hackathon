@@ -171,6 +171,30 @@ class ChatResponse(BaseModel):
 # In-memory state store
 _session_store: dict[str, SalesCaseState] = {}
 
+
+def _brief_to_dict(brief) -> dict | None:
+    """Serialize brief to dict, filtering out None values. Returns None if no fields set."""
+    if not brief:
+        return None
+    raw = brief.model_dump(mode="json")
+    filtered = {k: v for k, v in raw.items() if v is not None}
+    return filtered if filtered else None
+
+
+def _merge_brief_into_state(state: SalesCaseState, incoming: "Brief") -> None:
+    """Merge non-None fields from incoming brief into state.brief.
+
+    Never clears fields that the agent already extracted from conversation.
+    FE-provided values take priority for fields they explicitly set.
+    """
+    from schemas.state import Brief as BriefModel
+    if not state.brief:
+        state.brief = BriefModel()
+    for field in BriefModel.model_fields:
+        value = getattr(incoming, field, None)
+        if value is not None:
+            setattr(state.brief, field, value)
+
 # =============================================================================
 # Artifact Store
 # =============================================================================
@@ -1071,8 +1095,10 @@ async def chat_stream(request: Request, payload: ChatRequest):
         mode=payload.mode,
     )
 
+    # Merge FE brief into state brief — never replace entirely.
+    # FE may send partial or outdated brief; BE accumulates fields across turns.
     if payload.brief:
-        state.brief = payload.brief
+        _merge_brief_into_state(state, payload.brief)
 
     # Always sync the mode on the session -- user may have switched modes
     # between requests while keeping the same session (brief/history carries over).
@@ -1087,8 +1113,9 @@ async def chat_stream(request: Request, payload: ChatRequest):
 
     async def event_generator():
         try:
-            # Send session info first
-            yield _sse_data({'type': 'session', 'session_id': state.session_id})
+            # Send session info + current brief so FE can immediately sync state
+            initial_brief = _brief_to_dict(state.brief)
+            yield _sse_data({'type': 'session', 'session_id': state.session_id, 'brief': initial_brief})
 
             # Send user message event
             yield _sse_data({'type': 'user_message', 'content': payload.message})
@@ -1152,12 +1179,8 @@ async def chat_stream(request: Request, payload: ChatRequest):
             except Exception as e:
                 print(f"Warning: Failed to persist session: {e}")
 
-            # Send session update
-            # Serialize brief with datetime handling
-            brief_dict = None
-            if state.brief:
-                brief_dict = state.brief.model_dump(mode="json")
-            yield _sse_data({'type': 'session_updated', 'session_id': state.session_id, 'brief': brief_dict})
+            # Send session update with latest brief (only non-None fields)
+            yield _sse_data({'type': 'session_updated', 'session_id': state.session_id, 'brief': _brief_to_dict(state.brief)})
             yield done_chunk
         except Exception as exc:
             print(f"Error in chat stream: {exc}")

@@ -22,7 +22,7 @@ class DesignSkill(BaseSkill):
     def __init__(self):
         super().__init__(
             name="design",
-            description="UI/UX design specialist: wireframes, Mermaid user flow diagrams, screen specifications",
+            description="Solution Designer: full user journey design, screen specifications, Mermaid flow diagrams, integration assessment",
             model_key="MODEL_DESIGN",
             skill_md_path=_SKILL_MD,
         )
