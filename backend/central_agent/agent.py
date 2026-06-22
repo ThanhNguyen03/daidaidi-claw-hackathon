@@ -57,112 +57,57 @@ _SKILL_TIMEOUT_S = 150  # per-skill wall-clock timeout; emit failed event instea
 # Assessment + Planning prompt
 # ---------------------------------------------------------------------------
 
-_PLANNING_SYSTEM = """You are the AdtimaBox Sales AI — planning engine for a sales consulting assistant.
+_PLANNING_SYSTEM_TEMPLATE = """You are the AdtimaBox Sales AI — planning engine.
 
-You receive up to four context blocks:
-  • Conversation History — ALL prior messages in this session (USER and ASSISTANT turns)
-  • Accumulated Brief — client info extracted across all prior turns
-  • Already Executed Skills — what was analyzed in earlier turns of this session
-  • Current Message — what the user just typed
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 1 — DECIDE: CLARIFY or EXECUTE?
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Look at Conversation History. Count ASSISTANT turns.
-
-IF there are ZERO ASSISTANT turns in Conversation History AND the user message is too vague to act on:
-  → ACTION A (Clarify). Ask 1–3 targeted questions.
-  → "Too vague to act on" means: no industry/sector AND no goal/objective anywhere in the message or brief.
-  → If the message contains ANY business context (brand name, industry, product type, objective,
-     campaign type, Zalo product mention, target audience) → go directly to ACTION B instead.
-
-IN ALL OTHER SITUATIONS → ACTION B (Execute). This includes:
-  → Conversation History has ANY ASSISTANT turn (ongoing conversation → never re-clarify)
-  → Brief already has industry or goal from a previous turn
-  → User is asking a follow-up ("suggest thêm đi", "còn gì không", "đi sâu hơn về pricing")
-  → User sent a rich brief in this message (even if it's the first message)
-
-When in doubt → EXECUTE. Skills handle incomplete briefs with reasonable assumptions.
+You receive:
+  • Conversation History — all prior messages (USER and ASSISTANT turns)
+  • Accumulated Brief — client info extracted so far
+  • Already Executed Skills — what ran in earlier turns this session
+  • Current Message — what the user just sent
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 2 — SELECT SKILLS AND WRITE TASKS
+STEP 1 — CLARIFY or EXECUTE?
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-For ACTION B, ALWAYS include ALL FOUR core skills. No exceptions.
-Your job is to write a SPECIFIC, CONTEXT-AWARE task for each skill — not to decide whether to include them.
+CLARIFY only when ALL three are true simultaneously:
+  1. No ASSISTANT turn appears in Conversation History (first-ever response)
+  2. No industry/sector mentioned anywhere (message or accumulated brief)
+  3. No goal/objective mentioned anywhere (message or accumulated brief)
 
-CORE SKILLS (always include all four):
-
-  market_strategy   → Write a task about: market landscape, brand positioning, consumer insight,
-                       campaign idea, case studies relevant to the brief.
-
-  product_solution  → Write a task about: which Zalo products fit (OA / ZNS / MiniApp / Ads),
-                       solution architecture, CShub package, pricing estimate, integration plan.
-
-  compliance        → Write a task about: data collection rules, PDPL compliance, Zalo platform
-                       policies, advertising regulations, health/FMCG claims if applicable.
-
-  design            → Write a task about: user journey/flow from first touchpoint to conversion,
-                       key screens/touchpoints, Mermaid diagram of the flow if useful.
-
-OPTIONAL SKILLS (include only when explicitly requested by the user):
-
-  client_simulator  → Only if user explicitly asks for objection handling, competitor Q&A,
-                       or pitch practice. Write task about the specific simulation needed.
-
-  proposal_assembler → Only if user explicitly asks for a full proposal, pitch deck, or complete
-                        document. MUST be alone in its OWN group, placed LAST in skill_plan.
-
-TASK WRITING RULES:
-  • Reference specific details from the brief/history (brand name, objective, TA, platform)
-  • For follow-up messages, write tasks that DEEPEN or EXTEND the prior analysis
-  • Each task must be specific enough that the skill can act without re-reading the history
+EXECUTE in every other situation — ongoing conversation, partial brief, any business context.
+When in doubt → EXECUTE. Skills handle incomplete info with reasonable assumptions.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 3 — STRUCTURE THE PLAN
+STEP 2 — MATCH BRIEF TO SKILLS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-skill_plan is a list of groups. Skills in the same group run in parallel.
-Groups run sequentially (group[0] completes → group[1] starts).
-proposal_assembler must always be alone in the LAST group.
+
+Available skills (name: description):
+{skill_catalog}
+
+For each skill above, ask: "Does the user's brief or current request genuinely need this?"
+Select a skill only if YES. Do not select a skill just because it's common or safe.
+
+Read the FULL context — Conversation History + Accumulated Brief + Current Message.
+The current message is the primary signal for which skills to select:
+  → Specific ask ("nói về pháp lý", "userflow chi tiết hơn") → pick only matching skills
+  → Broad brief covering multiple areas → pick all skills that match those areas
+  → "proposal", "tổng hợp lại" → proposal_assembler (alone, last group, explicit request only)
+
+Write a SPECIFIC task for every selected skill — reference the brand, objective, TA, and
+exactly what aspect of the brief that skill should address. Vague tasks produce vague output.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OUTPUT — valid JSON only, no markdown fences:
+STEP 3 — OUTPUT (valid JSON only, no markdown fences)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Case A (clarify — only on first message with zero business context):
-{
-  "brief_update": {"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null},
-  "needs_clarification": true,
-  "clarification_message": "<warm, consultative 1-3 questions in user's language. Focus on industry + objective.>"
-}
+Skills in the same array run in parallel. Arrays run sequentially.
+proposal_assembler must be alone in the last array if included.
 
-Case B (execute — the normal case for any business brief):
-{
-  "brief_update": {"industry": "<extracted or null>", "goal": "<extracted or null>", "target_audience": "<extracted or null>", "budget_vnd": null, "timeline": null, "additional_context": null},
-  "needs_clarification": false,
-  "skill_plan": [
-    [
-      {"skill": "market_strategy", "task": "<specific task referencing brand/objective/TA from the brief>"},
-      {"skill": "product_solution", "task": "<specific Zalo product + pricing task for this brief>"},
-      {"skill": "compliance", "task": "<specific compliance check based on brief context>"},
-      {"skill": "design", "task": "<specific user flow design task for this solution>"}
-    ]
-  ]
-}
+Case A — clarify:
+{{"brief_update": {{"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": true, "clarification_message": "<1-3 warm questions in user's language>"}}
 
-EXAMPLE — Red Bull voucher + data collection brief:
-{
-  "brief_update": {"industry": "FMCG / Energy Drink", "goal": "Tăng redeem voucher offline + thu thập data người dùng + reactivate via Zalo", "target_audience": "18-45 NAT, blue collar", "budget_vnd": null, "timeline": null, "additional_context": "Game-based campaign on Zalo, idea phải trendy và dễ chơi"},
-  "needs_clarification": false,
-  "skill_plan": [
-    [
-      {"skill": "market_strategy", "task": "Phân tích chiến lược campaign gamification cho Red Bull trên Zalo: consumer insight blue collar 18-45, case studies game trendy, positioning so với đối thủ FMCG, go-to-market approach"},
-      {"skill": "product_solution", "task": "Đề xuất giải pháp Zalo cho Red Bull: MiniApp game + OA CRM + ZNS reactivation, CShub package phù hợp, báo giá chi tiết, kiến trúc kỹ thuật tích hợp với offline voucher redemption"},
-      {"skill": "compliance", "task": "Kiểm tra compliance cho Red Bull campaign: PDPL data collection consent flow, Zalo OA policy cho FMCG, quy định quảng cáo energy drink, quy trình reactivate data đúng luật"},
-      {"skill": "design", "task": "Thiết kế userflow đầy đủ: từ scan QR offline → MiniApp game → nhận voucher → thu thập data → ZNS reactivation flow. Mermaid diagram các màn hình chính"}
-    ]
-  ]
-}"""
+Case B — execute:
+{{"brief_update": {{"industry": "<or null>", "goal": "<or null>", "target_audience": "<or null>", "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": false, "skill_plan": [[{{"skill": "<name>", "task": "<specific task>"}}]]}}"""
 
 
 # ---------------------------------------------------------------------------
@@ -170,50 +115,38 @@ EXAMPLE — Red Bull voucher + data collection brief:
 # ---------------------------------------------------------------------------
 
 def _build_contextual_skill_plan(state, message: str) -> list[list[dict[str, str]]]:
-    """Fallback plan builder when the planning LLM fails.
+    """Fallback plan builder used when the planning LLM fails or returns an empty plan.
 
-    Strategy:
-    - If skills were already run this session, re-run the same set (they were chosen
-      for a reason) with a task focused on the current message.
-    - If there's history but no prior outputs, default to the full core set.
-    - New session with no history: run the core pair only.
-    No keyword matching — the LLM handles semantic decisions; this is just a safety net.
+    Priority:
+    1. Prior outputs exist → re-run those same skills (they were contextually chosen)
+    2. History exists but no prior outputs → run all registered non-sequential skills
+    3. Fresh session → run all registered non-sequential skills (safe default)
     """
+    from skills.registry import get_skill_registry
     task_short = message[:400]
+    _SEQUENTIAL = {"proposal_assembler"}
 
-    prior_skill_names: list[str] = list(state.outputs.keys()) if state.outputs else []
+    registry = get_skill_registry()
+    all_skill_names = registry.all_names()
+    core_skills = [n for n in all_skill_names if n not in _SEQUENTIAL]
+
+    prior_skill_names = [n for n in state.outputs.keys() if n not in _SEQUENTIAL] if state.outputs else []
 
     if prior_skill_names:
-        # Re-run whatever was run before, scoped to the current message
-        _SEQUENTIAL = {"proposal_assembler"}
         first_group = [
-            {"skill": s, "task": f"Continue analysis, now focusing on: {task_short}"}
+            {"skill": s, "task": f"Continue and deepen analysis for: {task_short}"}
             for s in prior_skill_names
-            if s not in _SEQUENTIAL
         ]
-        if not first_group:
-            first_group = [
-                {"skill": "market_strategy", "task": f"Analyze and expand on: {task_short}"},
-                {"skill": "product_solution", "task": f"Develop recommendation for: {task_short}"},
-            ]
         plan: list[list[dict[str, str]]] = [first_group]
-        if "proposal_assembler" in prior_skill_names:
-            plan.append([{"skill": "proposal_assembler", "task": f"Reassemble proposal incorporating: {task_short}"}])
+        if "proposal_assembler" in (state.outputs or {}):
+            plan.append([{"skill": "proposal_assembler",
+                           "task": f"Reassemble proposal incorporating: {task_short}"}])
         return plan
 
-    if state.messages:
-        # Has conversation history but first skill run — use the full core set
-        return [[
-            {"skill": "market_strategy", "task": f"Analyze and expand on: {task_short}"},
-            {"skill": "product_solution", "task": f"Develop product recommendation for: {task_short}"},
-            {"skill": "compliance", "task": f"Check compliance considerations for: {task_short}"},
-            {"skill": "design", "task": f"Design solution journey for: {task_short}"},
-        ]]
-
-    # No history, no prior outputs — minimal safe default
+    # Default: run all core skills
     return [[
-        {"skill": "market_strategy", "task": f"Analyze and develop strategy for: {task_short}"},
-        {"skill": "product_solution", "task": f"Develop solution and pricing for: {task_short}"},
+        {"skill": s, "task": f"Analyze and provide insights for: {task_short}"}
+        for s in core_skills
     ]]
 
 
@@ -380,10 +313,18 @@ class CentralAgent:
         return "\n".join(lines)
 
     async def _plan(self, state: SalesCaseState, message: str) -> dict[str, Any]:
-        """Single LLM call: assess brief completeness, extract fields, decide clarify or execute."""
+        """Single LLM call: match the brief to available skills, decide clarify or execute."""
         from llm.greennode import get_llm_client
 
         client = get_llm_client("central_agent")
+
+        # Build a live skill catalog from the registry — no hardcoded skill names.
+        registry = get_skill_registry()
+        skill_catalog = "\n".join(
+            f"  {name}: {desc}"
+            for name, desc in registry.descriptions().items()
+        )
+        system_prompt = _PLANNING_SYSTEM_TEMPLATE.format(skill_catalog=skill_catalog)
 
         brief_block = self._format_brief(state.brief)
         history_block = self._format_history(state.messages[-8:])
@@ -396,7 +337,7 @@ class CentralAgent:
             user_prompt += f"## Accumulated Brief\n{brief_block}\n\n"
         if prior_skills_block:
             user_prompt += f"## Already Executed This Session\n{prior_skills_block}\n\n"
-        user_prompt += f"## Current Message\n{message}\n\nReturn assessment JSON."
+        user_prompt += f"## Current Message\n{message}\n\nReturn JSON."
 
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
@@ -404,7 +345,7 @@ class CentralAgent:
             partial(
                 client.create_completion,
                 messages=[
-                    {"role": "system", "content": _PLANNING_SYSTEM},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.2,
@@ -419,29 +360,28 @@ class CentralAgent:
 
         result = json.loads(raw)
 
-        # Hard guard: if this session already has prior ASSISTANT turns,
-        # never re-clarify — the agent must continue, not restart.
-        # (The system prompt says the same thing; this is a belt-and-suspenders override.)
+        # Guard: if prior ASSISTANT turns exist, never re-clarify.
         prior_assistant_turns = [m for m in state.messages if m.get("role") == "assistant"]
         if prior_assistant_turns and result.get("needs_clarification"):
             result["needs_clarification"] = False
 
-        # Safety: if LLM returned execute mode but no skill_plan, build one from context.
+        # Safety net: if LLM returned execute but no skill_plan, build from session state.
         if not result.get("needs_clarification") and not result.get("skill_plan"):
             result["skill_plan"] = _build_contextual_skill_plan(state, message)
 
-        # Safety: ensure all 4 core skills are always present in skill_plan[0].
-        # If the LLM dropped one, add it back with a generic task.
-        CORE_SKILLS = ["market_strategy", "product_solution", "compliance", "design"]
-        if result.get("skill_plan") and not result.get("needs_clarification"):
-            first_group = result["skill_plan"][0]
-            present = {s["skill"] for s in first_group}
-            for skill in CORE_SKILLS:
-                if skill not in present:
-                    first_group.append({
-                        "skill": skill,
-                        "task": f"Analyze and provide insights relevant to this brief: {message[:400]}",
-                    })
+        # Validate that all skill names in the plan exist in the registry.
+        # Drop any hallucinated skill names silently.
+        valid_skill_names = set(registry.all_names())
+        if result.get("skill_plan"):
+            result["skill_plan"] = [
+                [s for s in group if s.get("skill") in valid_skill_names]
+                for group in result["skill_plan"]
+            ]
+            # Drop empty groups
+            result["skill_plan"] = [g for g in result["skill_plan"] if g]
+            # If everything was stripped, fallback
+            if not result["skill_plan"]:
+                result["skill_plan"] = _build_contextual_skill_plan(state, message)
 
         return result
 
@@ -490,31 +430,57 @@ class CentralAgent:
         if not outputs_block.strip():
             return
 
-        system = """You are the AdtimaBox Sales AI — final proposal writer.
+        # Detect whether this is the first response or a targeted follow-up.
+        # Prior assistant turns = this is a follow-up; the user already has the full picture.
+        is_followup = any(m.get("role") == "assistant" for m in state.messages)
+
+        if not is_followup:
+            system = """You are the AdtimaBox Sales AI — final proposal writer.
 Given specialist analysis from multiple skill modules, assemble ONE cohesive proposal document.
 
 Language rule: Match the user's language. Vietnamese brief → respond fully in Vietnamese.
 
 Output structure (use ALL sections that have relevant content):
 1. **Tóm tắt đề xuất** — 3–4 sentence executive summary: what we recommend and why
-2. **Phân tích chiến lược** — key strategic insights, market context, consumer insight (paragraphs + bullets)
-3. **Giải pháp Zalo** — the recommended solution with user journey (include any Mermaid diagrams from skills AS-IS)
+2. **Phân tích chiến lược** — key strategic insights, market context, consumer insight
+3. **Giải pháp Zalo** — recommended solution with user journey (include Mermaid diagrams AS-IS)
 4. **Báo giá ước tính** — pricing table if available
-5. **Compliance & lưu ý pháp lý** — any policy notes (only if compliance skill flagged something)
+5. **Compliance & lưu ý pháp lý** — policy notes (only if compliance skill flagged something)
 6. **Bước tiếp theo** — 3–5 concrete next steps
 
 Format rules:
-- Mix narrative paragraphs WITH bullet points WITH tables — never make the entire response tables only
-- Preserve any Mermaid diagram blocks (```mermaid ... ```) from skill outputs exactly as-is
+- Mix narrative paragraphs WITH bullet points WITH tables
+- Preserve any Mermaid diagram blocks (```mermaid ... ```) exactly as-is
 - Use ## for section headers, ### for sub-sections
 - Be specific to this brief/brand — no generic filler
 - Do NOT mention "skill", "agent", "module", or internal pipeline names"""
 
-        user_msg = (
-            f"## Original Request\n{original_message}\n\n"
-            f"## Specialist Outputs\n{outputs_block}\n\n"
-            "Assemble into a complete proposal document following the structure above."
-        )
+            user_msg = (
+                f"## Original Request\n{original_message}\n\n"
+                f"## Specialist Outputs\n{outputs_block}\n\n"
+                "Assemble into a complete proposal document following the structure above."
+            )
+        else:
+            # Follow-up mode: the user already received the full analysis.
+            # Respond ONLY to what they specifically asked about — do not rebuild the whole document.
+            system = """You are the AdtimaBox Sales AI — follow-up responder.
+The user already received a full initial analysis. They are now asking for something specific.
+
+Your job: respond ONLY to what they asked about in the Current Request.
+- Do NOT restate the whole proposal or repeat sections that were already covered.
+- DO go deeper, add detail, add examples, or clarify the specific aspects they asked about.
+- If they asked about 2 topics, cover both thoroughly.
+- Start directly with the content — no "As I mentioned before..." preamble.
+- Language: match the user's language (Vietnamese if they wrote in Vietnamese).
+- Preserve any Mermaid diagram blocks (```mermaid ... ```) exactly as-is.
+- Do NOT mention "skill", "agent", "module", or internal pipeline names."""
+
+            user_msg = (
+                f"## Current Request\n{original_message}\n\n"
+                f"## New Analysis (respond based on this)\n{outputs_block}\n\n"
+                "Respond directly to the Current Request. Be thorough on the specific topics asked. "
+                "Do not repeat what was already covered in the previous response."
+            )
 
         client = get_llm_client("central_agent")
         loop = asyncio.get_running_loop()
