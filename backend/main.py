@@ -800,6 +800,14 @@ async def process_with_central_agent(
             else "Để mình tư vấn tốt hơn, bạn có thể chia sẻ brief không? "
                  "(ngành hàng, mục tiêu, đối tượng mục tiêu)"
         )
+        # Save to state.messages so the NEXT turn knows there was an error and
+        # doesn't mis-interpret meta follow-ups like "lỗi gì vậy" as sales questions.
+        state.messages.append({
+            "role": "assistant",
+            "content": fallback_msg,
+            "agent": "central_agent",
+            "timestamp": datetime.now().isoformat(),
+        })
         yield _sse_data({
             "type": "assistant_message",
             "agent": "central_agent",

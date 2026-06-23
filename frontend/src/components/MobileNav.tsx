@@ -43,7 +43,7 @@ export function MobileNav({
         >
           {isOpen ? <X size={22} /> : <Menu size={22} />}
         </button>
-        <span className="text-sm font-semibold text-text">Sales AI</span>
+        <span className="text-sm font-semibold text-text">AdtimaBox Sales Agent</span>
         <div className="flex items-center gap-0.5">
           {onToggleContextPanel && (
             <button
@@ -67,7 +67,7 @@ export function MobileNav({
       {/* Mobile menu overlay */}
       {isOpen && (
         <div
-          className="md:hidden fixed inset-0 top-[52px] bg-black/40 z-30"
+          className="md:hidden fixed inset-0 top-13 bg-black/40 z-30"
           onClick={onToggle}
         />
       )}
@@ -75,14 +75,14 @@ export function MobileNav({
       {/* Sidebar drawer on mobile */}
       <div
         className={`
-          md:hidden fixed top-[52px] left-0 bottom-16 w-64 bg-surface border-r border-border z-40
+          md:hidden fixed top-13 left-0 bottom-16 w-64 bg-surface border-r border-border z-40
           transform transition-transform duration-200 ease-out shadow-xl
           ${isOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
       >
         <div className="p-4 overflow-y-auto h-full">
           <div className="mb-6">
-            <h1 className="text-[18px] font-bold text-text mb-1">Sales AI</h1>
+            <h1 className="text-[18px] font-bold text-text mb-1">AdtimaBox Sales Agent</h1>
             <p className="text-xs text-text-muted">Multi-Agent Assistant</p>
           </div>
 

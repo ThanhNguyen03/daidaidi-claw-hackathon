@@ -450,6 +450,12 @@ class CentralAgent:
             if out.content
         )
         if not outputs_block.strip():
+            msg = "Xin lỗi, mình chưa tổng hợp được kết quả phân tích. Bạn thử gửi lại câu hỏi không?"
+            yield {"type": "content", "content": msg}
+            state.messages.append({
+                "role": "assistant", "content": msg,
+                "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+            })
             return
 
         # Detect whether this is the first response or a targeted follow-up.
@@ -566,6 +572,7 @@ TIMELINES: Copy ```mermaid gantt blocks AS-IS. If none, use a Markdown table (Ph
                         {"role": "user", "content": user_msg},
                     ],
                     temperature=0.5,
+                    max_tokens=6000,
                     stream=True,
                 )
                 for chunk in stream:

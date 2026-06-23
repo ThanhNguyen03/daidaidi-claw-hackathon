@@ -26,9 +26,16 @@ function sanitizeMermaid(raw: string): string {
   s = s.replace(/\\n/g, ' ');
   // Strip markdown bold/italic inside labels
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '$1');
-  // Remove straight double-quotes inside square-bracket node labels.
-  // e.g. A[say "hello"] confuses the mermaid parser in v11; becomes A[say hello]
-  s = s.replace(/\[([^\[\]\n]*)\]/g, (_m, inner) => '[' + inner.replace(/"/g, '') + ']');
+  // Fix double-quotes inside square-bracket node labels.
+  // Case 1: A["Label with special chars → ✓"] — outer quotes are VALID Mermaid v10+ syntax;
+  //         preserve them so special characters (→ % : etc.) render correctly.
+  // Case 2: A[say "hello"] — stray inner quotes confuse the parser; strip them.
+  s = s.replace(/\[([^\[\]\n]*)\]/g, (_m, inner) => {
+    if (inner.startsWith('"') && inner.endsWith('"') && inner.length >= 2) {
+      return `[${inner}]`; // properly quoted label — keep as-is
+    }
+    return '[' + inner.replace(/"/g, '') + ']'; // strip stray quotes
+  });
   return s;
 }
 
@@ -120,11 +127,13 @@ function MermaidDiagram({ chart }: { chart: string }) {
       } catch (error) {
         console.error('[MermaidDiagram] render failed', { error, cleaned });
         if (!cancelled && containerRef.current) {
+          const isIncomplete = /\[[^\]]*$|\([^)]*$|\{[^}]*$/.test(cleaned);
+          const label = isIncomplete ? 'Diagram incomplete (output was cut short)' : 'Diagram syntax error';
           const escaped = cleaned.replace(/</g, '&lt;');
           containerRef.current.innerHTML = `
             <div style="font-size:0.85em;margin:8px 0;padding:8px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-surface-2);color:var(--color-text)">
-              <div style="font-weight:600;margin-bottom:4px">Mermaid render failed</div>
-              <pre style="margin:0;overflow:auto;white-space:pre-wrap;text-align:left">${escaped}</pre>
+              <div style="font-weight:600;margin-bottom:4px;color:var(--color-text-muted)">${label}</div>
+              <pre style="margin:0;overflow:auto;white-space:pre-wrap;text-align:left;opacity:0.7">${escaped}</pre>
             </div>`;
         }
       }
@@ -910,18 +919,8 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
     <div className={`flex gap-2 sm:gap-3 ${isGrouped ? 'mt-1' : 'mt-3 sm:mt-4'}`}>
       {/* Avatar */}
       {!isGrouped && (
-        <div
-          className="shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center"
-          style={{
-            backgroundColor: agentColor || '#6366f1',
-            color: '#ffffff',
-          }}
-        >
-          {message.agent === 'central_agent' ? (
-            <Sparkles size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          ) : (
-            <Bot size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          )}
+        <div className="shrink-0 aspect-square p-2 size-fit rounded-full flex items-center justify-center text-white bg-blue-500">
+          <Bot size={16} className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
         </div>
       )}
 
@@ -932,8 +931,8 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
       <div className="flex flex-col items-start flex-1" style={{ maxWidth: '100%' }}>
         {/* Agent name */}
         {showHeader && (
-          <span className="text-[12px] sm:text-sm font-medium mb-1.5 sm:mb-2 ml-1" style={{ color: agentColor }}>
-            {agentName}
+          <span className="text-[12px] sm:text-sm font-medium mb-1.5 sm:mb-2 ml-1 text-blue-500" >
+            AdtimaBox Agent
           </span>
         )}
 

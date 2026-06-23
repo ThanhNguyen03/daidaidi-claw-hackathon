@@ -22,7 +22,13 @@ from schemas.state import Brief, FeedbackRule
 def strip_think_blocks(text: str) -> str:
     """Remove <think>...</think> blocks from LLM output."""
     cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    return cleaned.strip()
+    result = cleaned.strip()
+    # If all tokens were consumed by an unclosed think block, the regex above won't match.
+    # Strip the partial <think>...</think> block so we don't return broken markup.
+    if not result and '<think>' in text:
+        after_think = re.sub(r'<think>.*', '', text, flags=re.DOTALL)
+        result = after_think.strip()
+    return result
 
 
 def extract_json_block(text: str) -> str:
@@ -213,7 +219,7 @@ TIMELINES:
         system: str,
         user_msg: str,
         history: list[dict],
-        max_tokens: int = 2000,
+        max_tokens: int = 4000,
         temperature: float = 0.7,
     ) -> str:
         """Call LLM (non-streaming) and return stripped response text."""

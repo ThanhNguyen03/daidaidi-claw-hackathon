@@ -172,7 +172,7 @@ export function Sidebar({
       <div className="mb-6">
         {!isCollapsed && (
           <>
-            <h1 className="text-[18px] font-bold text-text">Sales AI</h1>
+            <h1 className="text-[18px] font-bold text-text">AdtimaBox Sales Agent</h1>
             <p className="text-xs text-text-muted">Multi-Agent Assistant</p>
           </>
         )}
