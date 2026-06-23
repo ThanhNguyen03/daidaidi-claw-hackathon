@@ -50,9 +50,11 @@ def _load_central_skill() -> str:
 
 _CENTRAL_SKILL = _load_central_skill()
 
-_SKILL_TIMEOUT_S = 150  # per-skill wall-clock timeout; emit failed event instead of hanging
+_SKILL_TIMEOUT_S = 270  # per-skill wall-clock timeout; increased to give slow GreenNode MAAS room
 _RECENT_HISTORY_WINDOW = 20
 _SYNTHESIS_HISTORY_WINDOW = 12
+# Skills that must always run alone in the final group (they synthesize from others)
+_ALWAYS_SEQUENTIAL: set[str] = {"proposal_assembler"}
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +406,21 @@ class CentralAgent:
             # If everything was stripped, fallback
             if not result["skill_plan"]:
                 result["skill_plan"] = _build_contextual_skill_plan(state, message)
+
+            # Enforce sequential skills: pull them out of any mixed group and
+            # append them as their own final group so they always run after others.
+            plan = result["skill_plan"]
+            sequential_entries: list[dict] = []
+            cleaned: list[list[dict]] = []
+            for group in plan:
+                regular = [s for s in group if s.get("skill") not in _ALWAYS_SEQUENTIAL]
+                pulled  = [s for s in group if s.get("skill") in _ALWAYS_SEQUENTIAL]
+                if regular:
+                    cleaned.append(regular)
+                sequential_entries.extend(pulled)
+            if sequential_entries:
+                cleaned.append(sequential_entries)
+            result["skill_plan"] = cleaned
 
         return result
 

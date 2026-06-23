@@ -219,7 +219,7 @@ TIMELINES:
         system: str,
         user_msg: str,
         history: list[dict],
-        max_tokens: int = 4000,
+        max_tokens: int = 2500,
         temperature: float = 0.7,
     ) -> str:
         """Call LLM (non-streaming) and return stripped response text."""
