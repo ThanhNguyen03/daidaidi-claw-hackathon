@@ -69,11 +69,17 @@ function isInfoBox(content: string): boolean {
   // Accept either double-line ══ or cross-bar ├──┤ as the title separator
   const hasSep = /═{3,}/.test(content) || (content.includes('├') && content.includes('┤'));
   // Bar charts have lines that START with "NN% label" after stripping box borders.
-  // Prose text like "giảm giá 20-50%" does not count — the % is mid-sentence.
   const chartPctLines = content.split('\n').filter(l => {
     const inner = l.replace(/^[│┌└├─═\s]+/, '').trim();
     return /^\d{1,3}%\s+\S/.test(inner);
   }).length;
+
+  const nonEmptyLines = content.split('\n').filter(l => l.trim());
+  // Complex flow diagrams / user journeys are long — simple info boxes are short
+  if (nonEmptyLines.length > 25) return false;
+  // Multi-column layouts have multiple ┌ on the same line (e.g. 3-box row in a flow)
+  if (nonEmptyLines.some(l => (l.match(/┌/g) || []).length > 1)) return false;
+
   return hasBox && hasSep && chartPctLines < 2;
 }
 
