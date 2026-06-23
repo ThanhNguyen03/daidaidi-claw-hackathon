@@ -119,6 +119,9 @@ class AgentOutput(BaseModel):
         default_factory=dict, description="The actual result data"
     )
     summary: str = Field(..., description="Short summary for UI/transcript")
+    content: str = Field(
+        "", description="Full user-facing text for synthesis and transcript rendering"
+    )
     confidence: float = Field(0.5, ge=0.0, le=1.0, description="Confidence score 0-1")
     needs: Optional[NeedsRequest] = Field(None, description="Request for another agent")
     questions: list[Question] = Field(

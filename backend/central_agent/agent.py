@@ -51,6 +51,8 @@ def _load_central_skill() -> str:
 _CENTRAL_SKILL = _load_central_skill()
 
 _SKILL_TIMEOUT_S = 150  # per-skill wall-clock timeout; emit failed event instead of hanging
+_RECENT_HISTORY_WINDOW = 20
+_SYNTHESIS_HISTORY_WINDOW = 12
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +241,9 @@ class CentralAgent:
                 ctx = SkillContext(
                     task=task_desc,
                     brief=state.brief,
-                    messages=state.messages[-8:],
+                    # Keep a wider rolling window here because the session transcript
+                    # is the primary source of cross-turn context for re-entrant skills.
+                    messages=state.messages[-_RECENT_HISTORY_WINDOW:],
                     previous_outputs=merged_previous,
                     constraints=state.constraints,
                     session_id=state.session_id,
@@ -266,6 +270,7 @@ class CentralAgent:
                             status="COMPLETE" if out.status == "COMPLETE" else "FAILED",
                             payload=out.payload,
                             summary=out.summary,
+                            content=out.content,
                             confidence=out.confidence,
                         )
                         yield {"type": "agent_status", "agent": skill_name, "status": "completed"}
@@ -334,7 +339,7 @@ class CentralAgent:
         system_prompt = _PLANNING_SYSTEM_TEMPLATE.format(skill_catalog=skill_catalog)
 
         brief_block = self._format_brief(state.brief)
-        history_block = self._format_history(state.messages[-8:])
+        history_block = self._format_history(state.messages[-_RECENT_HISTORY_WINDOW:])
         prior_skills_block = self._format_prior_skills(state)
 
         user_prompt = ""
@@ -484,7 +489,7 @@ Your job: respond ONLY to what they asked about in the Current Request.
 
             # Include recent conversation history so the synthesizer knows what was already covered.
             history_lines = []
-            for m in state.messages[-6:]:
+            for m in state.messages[-_SYNTHESIS_HISTORY_WINDOW:]:
                 role = m.get("role", "")
                 content = (m.get("content") or "")[:800]
                 if role == "user":
@@ -849,7 +854,7 @@ Your job: respond ONLY to what they asked about in the Current Request.
     @staticmethod
     def _format_history(messages: list[dict]) -> str:
         lines = []
-        for m in messages[-8:]:
+        for m in messages[-_RECENT_HISTORY_WINDOW:]:
             role = m.get("role", "")
             # 800 chars per message — enough to preserve full clarification Q&A
             content = (m.get("content") or "")[:800]

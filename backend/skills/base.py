@@ -102,6 +102,15 @@ class BaseSkill(ABC):
     def _build_context_block(self, context: SkillContext) -> str:
         parts = []
 
+        recent_messages = []
+        for m in context.messages[-8:]:
+            role = m.get("role", "")
+            content = (m.get("content") or "")[:600]
+            if role in ("user", "assistant") and content:
+                recent_messages.append(f"{role.upper()}: {content}")
+        if recent_messages:
+            parts.append("## Recent Conversation\n" + "\n".join(recent_messages))
+
         if context.brief:
             b = context.brief
             lines = []
@@ -179,7 +188,7 @@ class BaseSkill(ABC):
 
         client = get_llm_client(self.name)
         messages = [{"role": "system", "content": system}]
-        for m in history[-4:]:
+        for m in history[-8:]:
             role = m.get("role", "")
             content = m.get("content", "")
             if role in ("user", "assistant") and content:

@@ -933,11 +933,11 @@ async def process_simple(
         }
     )
 
-    # Build messages: system prompt + rolling history (last 10 turns)
+    # Build messages: system prompt + rolling history.
     llm_messages = [{"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT}]
     llm_messages += [
         {"role": msg["role"], "content": msg["content"]}
-        for msg in state.messages[-10:]
+        for msg in state.messages[-20:]
     ]
 
     # Append brief context to the last user message when available
@@ -945,8 +945,16 @@ async def process_simple(
         context_parts = []
         if state.brief.industry:
             context_parts.append(f"Industry: {state.brief.industry}")
+        if state.brief.goal:
+            context_parts.append(f"Goal: {state.brief.goal}")
+        if state.brief.target_audience:
+            context_parts.append(f"Audience: {state.brief.target_audience}")
         if state.brief.budget_vnd:
             context_parts.append(f"Budget: {state.brief.budget_vnd:,} VND")
+        if state.brief.timeline:
+            context_parts.append(f"Timeline: {state.brief.timeline}")
+        if state.brief.additional_context:
+            context_parts.append(f"Additional context: {state.brief.additional_context}")
         if context_parts:
             llm_messages[-1]["content"] += f"\n\nContext: {', '.join(context_parts)}"
 
@@ -1034,7 +1042,7 @@ async def health_check():
 async def chat(request: ChatRequest):
     """Chat endpoint - non-streaming."""
     # Get or create session
-    state = get_or_create_session(
+    state = await get_or_create_session_async(
         session_id=request.session_id,
         salesperson_id=request.salesperson_id,
         mode=request.mode,
@@ -1098,7 +1106,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
         )
 
     # Get or create session
-    state = get_or_create_session(
+    state = await get_or_create_session_async(
         session_id=payload.session_id,
         salesperson_id=payload.salesperson_id,
         mode=payload.mode,

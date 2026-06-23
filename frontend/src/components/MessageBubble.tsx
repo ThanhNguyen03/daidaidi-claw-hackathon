@@ -38,14 +38,30 @@ function MermaidDiagram({ chart }: { chart: string }) {
       const cleaned = sanitizeMermaid(chart);
       try {
         const mermaid = (await import('mermaid')).default;
-        mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+        const isDarkMode =
+          typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: isDarkMode ? 'dark' : 'default',
+          securityLevel: 'loose',
+        });
+
+        // Parse first so we can distinguish syntax problems from render/runtime problems.
+        await mermaid.parse(cleaned);
+
         const { svg } = await mermaid.render(idRef.current, cleaned);
         if (!cancelled && containerRef.current) {
           containerRef.current.innerHTML = svg;
         }
-      } catch {
+      } catch (error) {
+        console.error('[MermaidDiagram] render failed', { error, cleaned });
         if (!cancelled && containerRef.current) {
-          containerRef.current.innerHTML = `<pre style="font-size:0.85em;overflow:auto;padding:8px;background:#f6f8fa;border-radius:6px;text-align:left">${cleaned.replace(/</g, '&lt;')}</pre>`;
+          const escaped = cleaned.replace(/</g, '&lt;');
+          containerRef.current.innerHTML = `
+            <div style="font-size:0.85em;margin:8px 0;padding:8px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-surface-2);color:var(--color-text)">
+              <div style="font-weight:600;margin-bottom:4px">Mermaid render failed</div>
+              <pre style="margin:0;overflow:auto;white-space:pre-wrap;text-align:left">${escaped}</pre>
+            </div>`;
         }
       }
     })();
@@ -306,13 +322,16 @@ function isDelimiterCells(cells: string[]): boolean {
 
 function isTableCandidateLine(line: string): boolean {
   const trimmed = line.trim();
-  return trimmed.startsWith('|') && trimmed.includes('|') && !trimmed.startsWith('```');
+  return trimmed.includes('|') && !trimmed.startsWith('```');
 }
 
 function parseTableBlock(lines: string[]): { headers: string[]; rows: string[][] } | null {
   const rows: string[][] = [];
 
   for (const line of lines) {
+    if (/^[┌┐└┘├┤┬┴┼─═\s]+$/.test(line.trim())) {
+      continue;
+    }
     const cells = splitTableRow(line);
     if (cells.length < 2) return null;
 
@@ -339,6 +358,25 @@ function parseTableBlock(lines: string[]): { headers: string[]; rows: string[][]
     headers: normalizeRow(headers),
     rows: dataRows.map(normalizeRow),
   };
+}
+
+function tryRenderPipeTable(content: string): React.ReactElement | null {
+  const lines = content
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0);
+
+  const candidateLines = lines.filter(line => isTableCandidateLine(line) || /^[┌┐└┘├┤┬┴┼─═\s]+$/.test(line));
+  if (candidateLines.length < 2) {
+    return null;
+  }
+
+  const parsed = parseTableBlock(candidateLines);
+  if (!parsed) {
+    return null;
+  }
+
+  return <TableBlock headers={parsed.headers} rows={parsed.rows} />;
 }
 
 function splitContentIntoBlocks(content: string): ContentBlock[] {
@@ -407,8 +445,8 @@ function TableBlock({
   rows: string[][];
 }) {
   return (
-    <div className="overflow-x-auto my-5 rounded-xl border-0 shadow-md" style={{ backgroundColor: 'var(--color-surface)' }}>
-      <table className="agent-output-table" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.875em' }}>
+    <div className="overflow-x-auto my-5 rounded-xl border border-border shadow-md" style={{ backgroundColor: 'var(--color-surface)' }}>
+      <table className="agent-output-table" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.875em', tableLayout: 'fixed' }}>
         <thead>
           <tr>
             {headers.map((header, index) => (
@@ -422,8 +460,8 @@ function TableBlock({
                   color: '#ffffff',
                   textTransform: 'uppercase',
                   letterSpacing: '0.08em',
-                  backgroundColor: '#4f46e5',
-                  borderBottom: '3px solid #4338ca',
+                  backgroundColor: 'var(--color-accent)',
+                  borderBottom: '3px solid color-mix(in srgb, var(--color-accent) 85%, black)',
                   whiteSpace: 'normal',
                   wordWrap: 'break-word',
                 }}
@@ -628,17 +666,17 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
       </a>
     ),
     table: ({ children }: { children: React.ReactNode }) => (
-      <div className="overflow-x-auto my-5 rounded-xl border-0 shadow-md" style={{ backgroundColor: 'var(--color-surface)' }}>
+      <div className="overflow-x-auto my-5 rounded-xl border border-border shadow-md" style={{ backgroundColor: 'var(--color-surface)' }}>
         <style>{`
           .agent-output-table tbody tr:nth-child(odd) {
-            background-color: rgba(79, 70, 229, 0.03);
+            background-color: color-mix(in srgb, var(--color-accent) 4%, transparent);
           }
           .agent-output-table tbody tr:hover {
-            background-color: rgba(79, 70, 229, 0.08);
+            background-color: color-mix(in srgb, var(--color-accent) 8%, transparent);
             transition: background-color 0.2s;
           }
         `}</style>
-        <table className="agent-output-table" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.875em' }}>
+        <table className="agent-output-table" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.875em', tableLayout: 'fixed' }}>
           {children}
         </table>
       </div>
@@ -655,8 +693,8 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
         color: '#ffffff',
         textTransform: 'uppercase',
         letterSpacing: '0.08em',
-        backgroundColor: '#4f46e5',
-        borderBottom: '3px solid #4338ca',
+        backgroundColor: 'var(--color-accent)',
+        borderBottom: '3px solid color-mix(in srgb, var(--color-accent) 85%, black)',
         whiteSpace: 'normal',
         wordWrap: 'break-word',
       }}>
@@ -713,6 +751,8 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
         if (!isStreaming && !el.props.className) {
           const chart = tryRenderAsciiChart(rawContent);
           if (chart) return chart;
+          const table = tryRenderPipeTable(rawContent);
+          if (table) return table;
         }
       }
       return (
