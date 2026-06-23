@@ -106,32 +106,23 @@ function isEmojiLead(s: string): boolean {
   return (cp >= 0x2600 && cp <= 0x27BF) || cp >= 0x1F000;
 }
 
+// All Unicode box-drawing characters (U+2500–U+257F) in one regex
+const BOX_DRAWING_RE = /[─-╿═-╬╠-╯]+/g;
+
 function parseInfoBox(content: string): { title: string; lines: InfoLine[] } | null {
-  const raw = content.split('\n');
+  // Strip ALL box-drawing chars from every line — handles nested boxes cleanly
+  const bodyLines = content
+    .split('\n')
+    .map(l => l.replace(BOX_DRAWING_RE, '').trim())
+    .filter(l => l.length > 0);
 
-  // Strip box-drawing border chars from each side, then trim
-  const stripped = raw.map(l =>
-    l.replace(/^[│┌└├┼╠╟╞─═┐┘]+/, '').replace(/[│┤┐┘─═╡╢╣]+$/, '').trim()
-  );
-
-  // Drop pure-border lines (only box-drawing chars remain after strip)
-  const bodyLines = stripped.filter(l => l && !/^[═─┌└┤├┐┘╠╡]+$/.test(l));
   if (bodyLines.length < 2) return null;
 
-  // Title = first content line; separator may appear right after as ══
-  let title = '';
-  let startIdx = 0;
-  for (let i = 0; i < bodyLines.length; i++) {
-    if (/═{3,}/.test(bodyLines[i])) { startIdx = i + 1; break; }
-    if (!title && /[A-Za-zÀ-ỹ]/.test(bodyLines[i])) {
-      title = bodyLines[i];
-      startIdx = i + 1;
-    }
-  }
+  // First non-empty line = title
+  const title = bodyLines[0];
 
   const lines: InfoLine[] = [];
-  for (const line of bodyLines.slice(startIdx)) {
-    if (!line) { lines.push({ type: 'spacer', text: '' }); continue; }
+  for (const line of bodyLines.slice(1)) {
     if (/^[□☐✓✗]/.test(line)) {
       lines.push({ type: 'checkbox', text: line.replace(/^[□☐✓✗]\s*/, '') });
     } else if (/^[•\-*▪◆►]/.test(line)) {
@@ -143,7 +134,7 @@ function parseInfoBox(content: string): { title: string; lines: InfoLine[] } | n
     }
   }
 
-  return { title, lines };
+  return lines.length > 0 ? { title, lines } : null;
 }
 
 function parseBarChart(content: string): { title: string; items: BarItem[] } | null {
