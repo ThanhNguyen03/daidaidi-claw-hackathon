@@ -508,11 +508,8 @@ TABLES (comparison data, pricing, feature lists):
   NEVER use ASCII box-drawing characters (┌─┐│└┘├┤) for tables.
 
 BAR CHARTS (budget breakdown, allocation, percentages):
-  Use ONLY this format — one item per line, percentage first:
-  35%  MiniApp Development
-  25%  Voucher System
-  15%  ZNS/Ads
-  Wrap in a box like:
+  Always wrap in a ``` plain code block. Use ONLY this format:
+  ```
   ┌─────────────────────────────────────────┐
   │  BUDGET BREAKDOWN                       │
   ╠═════════════════════════════════════════╣
@@ -520,7 +517,23 @@ BAR CHARTS (budget breakdown, allocation, percentages):
   │  25%  Voucher System                    │
   │  15%  ZNS/Ads                           │
   └─────────────────────────────────────────┘
-  NEVER use █ block characters for bars.
+  ```
+  Rules: percentage FIRST then label on same line. NEVER use █ block chars. NEVER put a box inside another box.
+
+INFO BOXES (game concepts, form wireframes, feature lists, structured text):
+  Always wrap in a ``` plain code block. Use ONLY this format:
+  ```
+  ┌─────────────────────────────────────────┐
+  │  TITLE HERE                             │
+  ├─────────────────────────────────────────┤
+  │  🎮 Section heading:                    │
+  │  • Bullet point one                     │
+  │  • Bullet point two                     │
+  │                                         │
+  │  □ Checkbox item                        │
+  └─────────────────────────────────────────┘
+  ```
+  Rules: ONE level of box only — NEVER nest a box inside another box. Use ├──┤ separator (not ╠═╣) for info boxes.
 
 DIAGRAMS (user flows, architecture):
   Use Mermaid in a ```mermaid block. Copy AS-IS from specialist outputs.
@@ -551,11 +564,11 @@ Your job: respond ONLY to what they asked about in the Current Request.
 - Do NOT mention "skill", "agent", "module", or internal pipeline names.
 
 OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
-
-TABLES: Use Markdown pipe tables (| col | col |) — NEVER ASCII box-drawing tables.
-BAR CHARTS: Use "NN%  Label" format one per line inside a ┌─╠═─┘ box — NEVER █ block chars.
-DIAGRAMS: Copy ```mermaid blocks AS-IS from the analysis. If none available, use a numbered list.
-TIMELINES: Copy ```mermaid gantt blocks AS-IS. If none, use a Markdown table (Phase | Duration | Description)."""
+TABLES: Markdown pipe tables — NEVER ASCII box-drawing for tables.
+BAR CHARTS: ``` plain block, ┌─╠═─┘ box, "NN%  Label" per line — NEVER █ block chars.
+INFO BOXES: ``` plain block, ┌─├─┘ box (├──┤ separator), bullet/checkbox lines — NEVER nested boxes.
+DIAGRAMS: ```mermaid AS-IS. If none, numbered list.
+TIMELINES: ```mermaid gantt AS-IS. If none, Markdown table."""
 
             # Include recent conversation history so the synthesizer knows what was already covered.
             history_lines = []

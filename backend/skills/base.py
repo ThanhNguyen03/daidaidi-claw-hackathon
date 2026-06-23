@@ -109,7 +109,8 @@ TABLES (comparisons, pricing, specs):
   | value    | value    | value    |
 
 BAR CHARTS (budget breakdown, allocation, share by %):
-  Use ONLY this exact format — percentage first, one item per line, inside a ┌─╠═─┘ box:
+  Always wrap in a plain ``` code block. Use ONLY this exact format:
+  ```
   ┌─────────────────────────────────────────┐
   │  BUDGET BREAKDOWN                       │
   ╠═════════════════════════════════════════╣
@@ -117,7 +118,21 @@ BAR CHARTS (budget breakdown, allocation, share by %):
   │  25%  Voucher System                    │
   │  15%  ZNS / Ads                         │
   └─────────────────────────────────────────┘
-  NEVER use █ block characters. NEVER put the percentage at the end.
+  ```
+  NEVER use █ block characters. NEVER put % at end of line. NEVER nest a box inside another box.
+
+INFO BOXES (game mechanics, form wireframes, step-by-step flows, feature descriptions):
+  Always wrap in a plain ``` code block. Use ONLY this exact format:
+  ```
+  ┌─────────────────────────────────────────┐
+  │  TITLE HERE                             │
+  ├─────────────────────────────────────────┤
+  │  🎮 Section heading:                    │
+  │  • Bullet item                          │
+  │  □ Checkbox item                        │
+  └─────────────────────────────────────────┘
+  ```
+  Use ├──┤ separator (dashes, not ╠═╣ double-lines). ONE level of box only — NEVER nested boxes.
 
 DIAGRAMS / USER FLOWS:
   Use Mermaid flowchart syntax inside ```mermaid fences.
