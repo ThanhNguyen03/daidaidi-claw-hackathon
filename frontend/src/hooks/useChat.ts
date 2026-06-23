@@ -86,103 +86,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     if (typeof window === 'undefined') return null;
     return sessionStorage.getItem(`chat_session_${salespersonId}`) || null;
   });
-  const [messages, setMessages] = useState<Message[]>([
-    // TEMP: ASCII chart render test — remove before prod
-    {
-      role: 'assistant',
-      content: `Đây là phân tích ngân sách và timeline cho chiến dịch:
-
-\`\`\`
-┌──────────────────────────────────────────┐
-│       Phân Bổ Ngân Sách Q3 2025         │
-├──────────────────────────────────────────┤
-│ 40% ZNS Messaging                        │
-│ (120M VND - thu hút & retarget)          │
-│ 25% Zalo OA Content                      │
-│ (75M VND - giữ chân follower)            │
-│ 20% Zalo Ads Display                     │
-│ (60M VND - tăng độ nhận biết)            │
-│ 15% Mini App Feature                     │
-│ (45M VND - trải nghiệm người dùng)       │
-└──────────────────────────────────────────┘
-\`\`\`
-
-Lộ trình triển khai theo tuần:
-
-\`\`\`
-Tuần 1            Tuần 2            Tuần 3            Tuần 4
-─────────────────────────────────────────────────────────────
-████████          ░░░░░░░░          ░░░░░░░░          ░░░░░░░░
-Setup & Config    Content Plan      ZNS Launch        Optimize
-- Tạo Zalo OA    - Viết content    - Gửi ZNS blast   - Đo KPI
-- Config ZNS     - Lên lịch đăng   - Bật Zalo Ads    - A/B test
-- Onboard team   - Duyệt creative  - Monitor reach   - Scale up
-
-\`\`\`
-
-
-\`\`\`
-┌─────────────────────────────────────────────────────────────────┐
-│  NGÂN SÁCH KHUYẾN NGHỊ: 235.000.000 VND                        │
-│  ════════════════════════════════════════════════════════════  │
-│                                                                 │
-│  ████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │
-│  68% Voucher & Rewards                                         │
-│     (100M quỹ thưởng + 12M hệ thống)                           │
-│                                                                 │
-│  ████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │
-│  29% Development & Setup                                        │
-│     (68M MiniApp + 18M Campaign)                               │
-│                                                                 │
-│  ██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │
-│  3% Operations & Support                                        │
-│     (37M hosting + support)                                    │
-└─────────────────────────────────────────────────────────────────┘
-
-\`\`\`
-
-\`\`\`
-┌─────────────────────────────────────────────────────────────────┐
-│  GAME: "THU THẬP NĂNG LƯỢNG RED BULL"                          │
-│  ════════════════════════════════════════════════════════════  │
-│                                                                 │
-│  🎯 Cách chơi:                                                 │
-│     • Màn hình có các lon Red Bull rơi từ trên xuống           │
-│     • Người dùng TAP vào lon để thu thập                       │
-│     • Thời gian: 30 giây                                       │
-│     • Mỗi 5 lon = 1 lượt quay Vòng Vòng May Mắn                │
-│                                                                 │
-│  🏆 Vòng quay thưởng:                                          │
-│     • Voucher giảm giá 20-50% tại cửa hàng                     │
-│     • Voucher mua 1 tặng 1 Red Bull                            │
-│     • Điểm thưởng tích lũy (đổi quà lớn)                       │
-│                                                                 │
-│  ⚡ Điểm mạnh:                                                 │
-│     • Chơi trong 30s — phù hợp giờ nghỉ ngắn                   │
-│     • Tap đơn giản — không cần kỹ năng                         │
-│     • Kết quả ngay — không chờ đợi                             │
-│     • Gắn sản phẩm — nhớ thương hiệu                           │
-└─────────────────────────────────────────────────────────────────┘
-\`\`\`
-
-\`\`\`
-┌─────────────────────────────────────────────────────────┐
-│  FORM ĐĂNG KÝ ZALO OA PHÁP LÝ                           │
-├─────────────────────────────────────────────────────────┤
-│  □ Tôi đồng ý với Điều khoản Dịch vụ                    │
-│                                                         │
-│  □ Tôi đồng ý nhận thông báo quảng cáo qua ZNS         │ ← BẮT BUỘC TÁCH RIÊNG
-│    (tin khuyến mãi, sản phẩm mới từ [Brand])           │
-│                                                         │
-│  □ Tôi đồng ý nhận email marketing (tùy chọn)          │
-│                                                         │
-│  [Đăng nhập bằng Zalo]                                  │
-└─────────────────────────────────────────────────────────┘
-\`\`\`
-`,
-      timestamp: new Date().toISOString(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingQuestions, setPendingQuestions] = useState<Question[]>([]);
@@ -617,6 +521,7 @@ Setup & Config    Content Plan      ZNS Launch        Optimize
           console.log('Unknown SSE event:', data);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [sessionId]
   );
 
