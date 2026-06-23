@@ -10,7 +10,7 @@ import type { Message } from '../lib/types';
 import { Bot, User, Sparkles, FileText, Users, Target, Clock, TrendingUp } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { tryRenderAsciiChart } from './AsciiChartRenderer';
+import { tryRenderAsciiChart, wrapAsciiBoxes } from './AsciiChartRenderer';
 
 // Mermaid diagram renderer — dynamically imports mermaid to avoid SSR issues
 let _mermaidIdCounter = 0;
@@ -702,7 +702,7 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
 
   const showHeader = !isGrouped && !isUser && !isSystem && agentName;
   const isAI = !isUser && !isSystem;
-  const processedContent = fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(message.content)));
+  const processedContent = wrapAsciiBoxes(fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(message.content))));
   const contentBlocks = useMemo(() => splitContentIntoBlocks(processedContent), [processedContent]);
   const markdownComponents: any = {
     p: ({ children }: { children: React.ReactNode }) => <p style={{ margin: '0.5rem 0', lineHeight: 1.7 }}>{children}</p>,

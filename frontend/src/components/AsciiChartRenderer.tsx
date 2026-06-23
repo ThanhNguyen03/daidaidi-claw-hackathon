@@ -485,3 +485,44 @@ export function tryRenderAsciiChart(content: string): React.ReactElement | null 
   }
   return null;
 }
+
+/**
+ * Pre-process raw markdown: any ┌…└ box that is NOT already inside a code fence
+ * gets wrapped in triple backticks so ReactMarkdown delivers it to the `pre` handler
+ * where tryRenderAsciiChart can act on it.
+ */
+export function wrapAsciiBoxes(text: string): string {
+  const lines = text.split('\n');
+  const out: string[] = [];
+  let inFence = false;
+  let inBox = false;
+
+  for (const line of lines) {
+    // Track existing code fences (``` or ~~~)
+    if (/^(`{3,}|~{3,})/.test(line)) {
+      inFence = !inFence;
+      if (!inFence) inBox = false;
+      out.push(line);
+      continue;
+    }
+
+    if (inFence) { out.push(line); continue; }
+
+    // Box start: line begins with ┌ (optionally preceded by spaces)
+    if (!inBox && /^\s*┌/.test(line)) {
+      out.push('```');
+      inBox = true;
+    }
+
+    out.push(line);
+
+    // Box end: line begins with └
+    if (inBox && /^\s*└/.test(line)) {
+      out.push('```');
+      inBox = false;
+    }
+  }
+
+  if (inBox) out.push('```'); // safety close
+  return out.join('\n');
+}
