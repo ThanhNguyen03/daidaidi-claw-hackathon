@@ -216,6 +216,12 @@ class CentralAgent:
         skill_registry = get_skill_registry()
         all_outputs: dict[str, SkillOutput] = {}
 
+        def _safe_field(v: Any, field: str, default: Any) -> Any:
+            """Safely read a field from either a dict or an object (handles old DB records)."""
+            if isinstance(v, dict):
+                return v.get(field, default) or default
+            return getattr(v, field, default) or default
+
         for group in skill_plan:
             if not group:
                 continue
@@ -228,10 +234,14 @@ class CentralAgent:
                 if not skill:
                     print(f"[CentralAgent] Skill not found: {skill_name}, skipping")
                     continue
-                # Merge prior session outputs with current-run group outputs.
-                # Skills re-running on follow-up questions can see what was analyzed before.
+                # Merge prior session outputs with current-run group outputs so skills
+                # can build on previous analysis when handling follow-up questions.
                 merged_previous = {
-                    k: {"content": v.content, "summary": v.summary, "payload": v.payload}
+                    k: {
+                        "content": _safe_field(v, "content", ""),
+                        "summary": _safe_field(v, "summary", ""),
+                        "payload": _safe_field(v, "payload", {}),
+                    }
                     for k, v in state.outputs.items()
                 }
                 merged_previous.update({

@@ -5,10 +5,11 @@
  * Uses Tailwind CSS for styling.
  */
 
-import React, { useMemo, useRef, useEffect } from 'react';
+import React, { useMemo, useRef, useEffect, useState } from 'react';
 import type { Message } from '../lib/types';
 import { Bot, User, Sparkles, FileText, Users, Target, Clock, TrendingUp } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { tryRenderAsciiChart } from './AsciiChartRenderer';
 
 // Mermaid diagram renderer — dynamically imports mermaid to avoid SSR issues
@@ -20,17 +21,35 @@ function sanitizeMermaid(raw: string): string {
   // Normalize line endings
   s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   // Normalize curly/smart quotes to straight quotes
-  s = s.replace(/[“”„‟]/g, '"');
+  s = s.replace(/[""„‟]/g, '"');
   // Replace literal \n escape sequences inside labels with a space.
-  // Mermaid v11 does not support \n inside quoted labels.
   s = s.replace(/\\n/g, ' ');
-  // Strip markdown bold/italic that LLMs sometimes inject inside labels
+  // Strip markdown bold/italic inside labels
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '$1');
+  // Remove straight double-quotes inside square-bracket node labels.
+  // e.g. A[say "hello"] confuses the mermaid parser in v11; becomes A[say hello]
+  s = s.replace(/\[([^\[\]\n]*)\]/g, (_m, inner) => '[' + inner.replace(/"/g, '') + ']');
   return s;
 }
+
+function useDarkMode(): boolean {
+  const [isDark, setIsDark] = useState(
+    () => typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
+  );
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setIsDark(document.documentElement.classList.contains('dark'));
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+  return isDark;
+}
+
 function MermaidDiagram({ chart }: { chart: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(`mermaid-diag-${++_mermaidIdCounter}`);
+  const isDarkMode = useDarkMode();
 
   useEffect(() => {
     let cancelled = false;
@@ -38,8 +57,6 @@ function MermaidDiagram({ chart }: { chart: string }) {
       const cleaned = sanitizeMermaid(chart);
       try {
         const mermaid = (await import('mermaid')).default;
-        const isDarkMode =
-          typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
         mermaid.initialize({
           startOnLoad: false,
           theme: isDarkMode ? 'dark' : 'default',
@@ -52,6 +69,9 @@ function MermaidDiagram({ chart }: { chart: string }) {
         const { svg } = await mermaid.render(idRef.current, cleaned);
         if (!cancelled && containerRef.current) {
           containerRef.current.innerHTML = svg;
+          // Force SVG background transparent so the container theme controls it.
+          const svgEl = containerRef.current.querySelector('svg');
+          if (svgEl) svgEl.style.background = 'transparent';
         }
       } catch (error) {
         console.error('[MermaidDiagram] render failed', { error, cleaned });
@@ -66,13 +86,13 @@ function MermaidDiagram({ chart }: { chart: string }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [chart]);
+  }, [chart, isDarkMode]);
 
   return (
     <div
       ref={containerRef}
       className="mermaid-diagram my-4 flex justify-center overflow-x-auto"
-      style={{ minHeight: '80px' }}
+      style={{ minHeight: '80px', background: 'var(--color-surface-2)', borderRadius: '8px', padding: '8px' }}
     />
   );
 }
@@ -877,7 +897,7 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
             }
 
             return (
-              <ReactMarkdown key={`markdown-${index}`} components={markdownComponents}>
+              <ReactMarkdown key={`markdown-${index}`} components={markdownComponents} remarkPlugins={[remarkGfm]}>
                 {block.content}
               </ReactMarkdown>
             );
