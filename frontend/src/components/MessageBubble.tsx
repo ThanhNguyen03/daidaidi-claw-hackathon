@@ -9,6 +9,7 @@ import React, { useMemo, useRef, useEffect } from 'react';
 import type { Message } from '../lib/types';
 import { Bot, User, Sparkles, FileText, Users, Target, Clock, TrendingUp } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { tryRenderAsciiChart } from './AsciiChartRenderer';
 
 // Mermaid diagram renderer — dynamically imports mermaid to avoid SSR issues
 let _mermaidIdCounter = 0;
@@ -694,16 +695,24 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
       const child = React.Children.toArray(children)[0];
       if (React.isValidElement(child)) {
         const el = child as React.ReactElement<{ className?: string; children?: React.ReactNode }>;
+        const rawContent = String(el.props.children ?? '').replace(/\n$/, '');
+
+        // Mermaid diagrams
         if (el.props.className === 'language-mermaid') {
-          const chart = String(el.props.children ?? '').replace(/\n$/, '');
           if (isStreaming) {
             return (
               <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflow: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0' }}>
-                <code>{chart}</code>
+                <code>{rawContent}</code>
               </pre>
             );
           }
-          return <MermaidDiagram chart={chart} />;
+          return <MermaidDiagram chart={rawContent} />;
+        }
+
+        // ASCII charts (bar chart, timeline) — skip during streaming to avoid flicker
+        if (!isStreaming && !el.props.className) {
+          const chart = tryRenderAsciiChart(rawContent);
+          if (chart) return chart;
         }
       }
       return (
@@ -746,7 +755,7 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
       <div className={`flex w-full flex-row-reverse gap-2 sm:gap-3 ${isGrouped ? 'mt-1' : 'mt-3 sm:mt-4'}`}>
         {/* Avatar */}
         {!isGrouped && (
-          <div className="shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-[#e5e7eb] text-[#374151]">
+          <div className="shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-border text-[#374151]">
             <User size={16} className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
         )}
