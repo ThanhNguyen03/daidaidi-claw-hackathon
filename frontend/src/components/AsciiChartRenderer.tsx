@@ -87,8 +87,8 @@ function isInfoBox(content: string): boolean {
   }).length;
 
   const nonEmptyLines = content.split('\n').filter(l => l.trim());
-  // Long diagrams are never simple info boxes (threshold 20 to catch multi-row tables)
-  if (nonEmptyLines.length >= 20) return false;
+  // Raise threshold — large info boxes with multiple sections can have 30+ lines
+  if (nonEmptyLines.length >= 60) return false;
   // Multi-column flow diagrams have multiple ┌ on one line (e.g. 3-box side-by-side)
   if (nonEmptyLines.some(l => (l.match(/┌/g) || []).length > 1)) return false;
   // Multi-column tables use │ as internal column separators — content lines have 3+ │ chars

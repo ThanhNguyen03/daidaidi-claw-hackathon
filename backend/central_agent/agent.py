@@ -591,10 +591,16 @@ TIMELINES: ```mermaid gantt AS-IS. If none, Markdown table."""
 
         client = get_llm_client("central_agent")
         loop = asyncio.get_running_loop()
-        queue: asyncio.Queue = asyncio.Queue(maxsize=512)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=8192)
         _DONE = object()
 
         def _stream_worker() -> None:
+            def _safe_put(item: Any) -> None:
+                try:
+                    queue.put_nowait(item)
+                except Exception as qe:
+                    print(f"[CentralAgent] Synthesis queue overflow: {qe}")
+
             try:
                 stream = client.create_completion(
                     messages=[
@@ -606,11 +612,11 @@ TIMELINES: ```mermaid gantt AS-IS. If none, Markdown table."""
                     stream=True,
                 )
                 for chunk in stream:
-                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+                    loop.call_soon_threadsafe(_safe_put, chunk)
             except Exception as exc:
-                loop.call_soon_threadsafe(queue.put_nowait, exc)
+                loop.call_soon_threadsafe(_safe_put, exc)
             finally:
-                loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+                loop.call_soon_threadsafe(_safe_put, _DONE)
 
         producer = loop.run_in_executor(None, _stream_worker)
 
