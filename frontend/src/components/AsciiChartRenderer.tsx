@@ -75,10 +75,15 @@ function isInfoBox(content: string): boolean {
   }).length;
 
   const nonEmptyLines = content.split('\n').filter(l => l.trim());
-  // Complex flow diagrams / user journeys are long — simple info boxes are short
-  if (nonEmptyLines.length > 25) return false;
-  // Multi-column layouts have multiple ┌ on the same line (e.g. 3-box row in a flow)
+  // Long diagrams are never simple info boxes (threshold 20 to catch multi-row tables)
+  if (nonEmptyLines.length >= 20) return false;
+  // Multi-column flow diagrams have multiple ┌ on one line (e.g. 3-box side-by-side)
   if (nonEmptyLines.some(l => (l.match(/┌/g) || []).length > 1)) return false;
+  // Multi-column tables use │ as internal column separators — content lines have 3+ │ chars
+  const hasMultiColRow = nonEmptyLines
+    .filter(l => l.trim().startsWith('│') && !/^[┌┐└┘├┤┬┴┼─═\s│]+$/.test(l.trim()))
+    .some(l => (l.match(/│/g) || []).length >= 3);
+  if (hasMultiColRow) return false;
 
   return hasBox && hasSep && chartPctLines < 2;
 }
