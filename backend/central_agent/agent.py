@@ -226,14 +226,21 @@ class CentralAgent:
                 if not skill:
                     print(f"[CentralAgent] Skill not found: {skill_name}, skipping")
                     continue
+                # Merge prior session outputs with current-run group outputs.
+                # Skills re-running on follow-up questions can see what was analyzed before.
+                merged_previous = {
+                    k: {"content": v.content, "summary": v.summary, "payload": v.payload}
+                    for k, v in state.outputs.items()
+                }
+                merged_previous.update({
+                    k: {"content": v.content, "summary": v.summary, "payload": v.payload}
+                    for k, v in all_outputs.items()
+                })
                 ctx = SkillContext(
                     task=task_desc,
                     brief=state.brief,
                     messages=state.messages[-8:],
-                    previous_outputs={
-                        k: {"content": v.content, "summary": v.summary, "payload": v.payload}
-                        for k, v in all_outputs.items()
-                    },
+                    previous_outputs=merged_previous,
                     constraints=state.constraints,
                     session_id=state.session_id,
                 )
@@ -475,7 +482,19 @@ Your job: respond ONLY to what they asked about in the Current Request.
 - Preserve any Mermaid diagram blocks (```mermaid ... ```) exactly as-is.
 - Do NOT mention "skill", "agent", "module", or internal pipeline names."""
 
+            # Include recent conversation history so the synthesizer knows what was already covered.
+            history_lines = []
+            for m in state.messages[-6:]:
+                role = m.get("role", "")
+                content = (m.get("content") or "")[:800]
+                if role == "user":
+                    history_lines.append(f"User: {content}")
+                elif role == "assistant":
+                    history_lines.append(f"Assistant: {content}")
+            history_block = "\n\n".join(history_lines)
+
             user_msg = (
+                f"## Conversation So Far\n{history_block}\n\n"
                 f"## Current Request\n{original_message}\n\n"
                 f"## New Analysis (respond based on this)\n{outputs_block}\n\n"
                 "Respond directly to the Current Request. Be thorough on the specific topics asked. "
@@ -508,7 +527,7 @@ Your job: respond ONLY to what they asked about in the Current Request.
 
         tf = _ThinkFilter()
         accumulated = ""
-        _TOKEN_TIMEOUT = 60.0
+        _TOKEN_TIMEOUT = 180.0
 
         try:
             while True:
