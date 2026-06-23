@@ -90,6 +90,38 @@ class BaseSkill(ABC):
     def model_path(self) -> str:
         return os.getenv(self.model_key, "minimax/minimax-m2.5")
 
+    # Appended to every skill's system prompt so the UI renders output correctly.
+    _OUTPUT_FORMAT_GUIDE = """
+
+---
+## OUTPUT FORMAT GUIDE (MUST FOLLOW — UI rendering depends on this)
+
+TABLES (comparisons, pricing, specs):
+  Use standard Markdown pipe syntax — NEVER ASCII box-drawing tables:
+  | Column A | Column B | Column C |
+  |----------|----------|----------|
+  | value    | value    | value    |
+
+BAR CHARTS (budget breakdown, allocation, share by %):
+  Use ONLY this exact format — percentage first, one item per line, inside a ┌─╠═─┘ box:
+  ┌─────────────────────────────────────────┐
+  │  BUDGET BREAKDOWN                       │
+  ╠═════════════════════════════════════════╣
+  │  35%  MiniApp Development               │
+  │  25%  Voucher System                    │
+  │  15%  ZNS / Ads                         │
+  └─────────────────────────────────────────┘
+  NEVER use █ block characters. NEVER put the percentage at the end.
+
+DIAGRAMS / USER FLOWS:
+  Use Mermaid flowchart syntax inside ```mermaid fences.
+  NEVER write a code block containing only a label (e.g. ```\\nMermaid User Journey\\n```).
+
+TIMELINES:
+  Use Mermaid gantt syntax inside ```mermaid fences.
+  If a Mermaid gantt is not feasible, use a Markdown pipe table with columns: Phase | Duration | Deliverable.
+"""
+
     def _build_system_prompt(self, constraints: list[FeedbackRule]) -> str:
         prompt = self._skill_content
         if constraints:
@@ -97,6 +129,7 @@ class BaseSkill(ABC):
             if scoped:
                 rules = "\n".join(f"- {c.rule}" for c in scoped)
                 prompt = f"## Active Rules (MUST FOLLOW)\n{rules}\n\n---\n\n" + prompt
+        prompt += self._OUTPUT_FORMAT_GUIDE
         return prompt
 
     def _build_context_block(self, context: SkillContext) -> str:

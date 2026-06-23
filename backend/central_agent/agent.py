@@ -471,11 +471,42 @@ Output structure (use ALL sections that have relevant content):
 6. **Bước tiếp theo** — 3–5 concrete next steps
 
 Format rules:
-- Mix narrative paragraphs WITH bullet points WITH tables
-- Preserve any Mermaid diagram blocks (```mermaid ... ```) exactly as-is
 - Use ## for section headers, ### for sub-sections
 - Be specific to this brief/brand — no generic filler
-- Do NOT mention "skill", "agent", "module", or internal pipeline names"""
+- Do NOT mention "skill", "agent", "module", or internal pipeline names
+
+OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
+
+TABLES (comparison data, pricing, feature lists):
+  Use standard Markdown pipe tables:
+  | Column A | Column B | Column C |
+  |----------|----------|----------|
+  | value    | value    | value    |
+  NEVER use ASCII box-drawing characters (┌─┐│└┘├┤) for tables.
+
+BAR CHARTS (budget breakdown, allocation, percentages):
+  Use ONLY this format — one item per line, percentage first:
+  35%  MiniApp Development
+  25%  Voucher System
+  15%  ZNS/Ads
+  Wrap in a box like:
+  ┌─────────────────────────────────────────┐
+  │  BUDGET BREAKDOWN                       │
+  ╠═════════════════════════════════════════╣
+  │  35%  MiniApp Development               │
+  │  25%  Voucher System                    │
+  │  15%  ZNS/Ads                           │
+  └─────────────────────────────────────────┘
+  NEVER use █ block characters for bars.
+
+DIAGRAMS (user flows, architecture):
+  Use Mermaid in a ```mermaid block. Copy AS-IS from specialist outputs.
+  NEVER write placeholder code blocks containing only a label like "Mermaid Gantt" or "Mermaid User Journey".
+  If no Mermaid code is available, describe the flow as a numbered list instead.
+
+TIMELINES / GANTT:
+  Use Mermaid gantt syntax in a ```mermaid block. Copy AS-IS from specialist outputs.
+  If no gantt code is available, use a Markdown table with Phase | Duration | Description columns."""
 
             user_msg = (
                 f"## Original Request\n{original_message}\n\n"
@@ -494,8 +525,14 @@ Your job: respond ONLY to what they asked about in the Current Request.
 - If they asked about 2 topics, cover both thoroughly.
 - Start directly with the content — no "As I mentioned before..." preamble.
 - Language: match the user's language (Vietnamese if they wrote in Vietnamese).
-- Preserve any Mermaid diagram blocks (```mermaid ... ```) exactly as-is.
-- Do NOT mention "skill", "agent", "module", or internal pipeline names."""
+- Do NOT mention "skill", "agent", "module", or internal pipeline names.
+
+OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
+
+TABLES: Use Markdown pipe tables (| col | col |) — NEVER ASCII box-drawing tables.
+BAR CHARTS: Use "NN%  Label" format one per line inside a ┌─╠═─┘ box — NEVER █ block chars.
+DIAGRAMS: Copy ```mermaid blocks AS-IS from the analysis. If none available, use a numbered list.
+TIMELINES: Copy ```mermaid gantt blocks AS-IS. If none, use a Markdown table (Phase | Duration | Description)."""
 
             # Include recent conversation history so the synthesizer knows what was already covered.
             history_lines = []

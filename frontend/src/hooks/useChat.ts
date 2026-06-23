@@ -81,7 +81,18 @@ interface UseChatReturn {
 export function useChat(options: UseChatOptions): UseChatReturn {
   const { salespersonId, displayName, mode = 'chat' } = options;
 
-  // State — restore sessionId from sessionStorage so context survives page refresh
+  // Keep a ref to the current salespersonId so SSE callbacks always use the
+  // latest value — the useState lazy init captures the salespersonId at mount
+  // time ('demo_user' because the name hasn't been entered yet), causing the
+  // session to be stored under the wrong key when the user later types their name.
+  const salespersonIdRef = useRef(salespersonId);
+  useEffect(() => { salespersonIdRef.current = salespersonId; }, [salespersonId]);
+
+  // State — restore sessionId from sessionStorage so context survives accidental page refresh.
+  // NOTE: the key read here uses salespersonId at mount time ('demo_user'); the
+  // real session is stored under the user's actual name once they identify.
+  // handleNewChat clears all chat_session_* keys before reloading, so this
+  // returns null on a deliberate "New Chat" reload.
   const [sessionId, setSessionId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     return sessionStorage.getItem(`chat_session_${salespersonId}`) || null;
@@ -142,7 +153,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   // Expose a resetSession helper so UI can start a fresh conversation
   const resetSession = useCallback(() => {
     if (typeof window !== 'undefined') {
-      sessionStorage.removeItem(`chat_session_${salespersonId}`);
+      sessionStorage.removeItem(`chat_session_${salespersonIdRef.current}`);
     }
     setSessionId(null);
     setMessages([]);
@@ -260,7 +271,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
             const sid = data.session_id as string;
             setSessionId(sid);
             if (typeof window !== 'undefined') {
-              sessionStorage.setItem(`chat_session_${salespersonId}`, sid);
+              sessionStorage.setItem(`chat_session_${salespersonIdRef.current}`, sid);
             }
           }
           // Sync brief from BE (provides latest accumulated brief on session resume)
@@ -340,7 +351,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
             const sid = data.session_id as string;
             setSessionId(sid);
             if (typeof window !== 'undefined') {
-              sessionStorage.setItem(`chat_session_${salespersonId}`, sid);
+              sessionStorage.setItem(`chat_session_${salespersonIdRef.current}`, sid);
             }
           }
           // Only update brief if BE returned a non-empty brief object

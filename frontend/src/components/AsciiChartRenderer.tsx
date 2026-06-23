@@ -27,9 +27,11 @@ const PALETTE = [
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface BarItem {
-  pct: number;
+  pct: number;       // 0–100 for bar width
   label: string;
   detail: string;
+  displayValue?: string; // shown instead of "pct%" — empty string suppresses label
+  isSection?: boolean;   // renders as a bold subsection heading (no bar)
 }
 
 interface TimelineColumn {
@@ -48,14 +50,24 @@ interface InfoLine {
 
 /** Return true if the content looks like a budget/bar chart. */
 function isBarChart(content: string): boolean {
+  const hasBlockChars = content.includes('█');
+  // Classic "NN%  Label" format requires a box (┌ or ╠) to avoid false positives on prose.
+  // Block-char formats (████) only appear in that format so no extra guard needed.
+  const hasBox = content.includes('┌') || content.includes('╠');
+  if (!hasBlockChars && !hasBox) return false;
   const lines = content.split('\n');
-  // Only count lines where NN% LEADS the content (after stripping box borders) — not inline prose like "giảm giá 20-50%"
-  const leadingPctLines = lines.filter(l => {
-    const inner = l.replace(/^[│┌└├─═\s]+/, '').trim();
-    return /^\d{1,3}%\s+\S/.test(inner);
+  const barLines = lines.filter(l => {
+    const inner = l.replace(/^[│┌└├─═\s]+/, '').trim().replace(/[│┤┐┘\s]+$/, '').trim();
+    if (!inner) return false;
+    // Classic: "35%  Label" inside a box — guard against table cells (| after pct)
+    if (/^\d{1,3}%\s+[^|]/.test(inner)) return true;
+    // Bar-first: "████ Label (35%)" or "████ Label (40-45%)"
+    if (hasBlockChars && /^█+\s+\S/.test(inner) && /\(\d{1,3}/.test(inner)) return true;
+    // Label-first: "Label ████" or "Label (Value) ████"
+    if (hasBlockChars && /^[^█]+\s+█+\s*$/.test(inner)) return true;
+    return false;
   }).length;
-  const boxLines = lines.filter(l => l.includes('│') || l.includes('┌') || l.includes('└')).length;
-  return leadingPctLines >= 2 && (content.includes('█') || boxLines >= 3);
+  return barLines >= 2;
 }
 
 /** Return true if the content looks like a timeline/Gantt. */
@@ -137,12 +149,12 @@ function parseInfoBox(content: string): { title: string; lines: InfoLine[] } | n
 function parseBarChart(content: string): { title: string; items: BarItem[] } | null {
   const lines = content.split('\n');
 
-  // Title: first │-enclosed line that has letters but no ═, █, ░, ─, ┌, └
+  // Title: first │-enclosed line with letters but no bar/border chars
   let title = '';
   for (const line of lines) {
-    if (line.includes('│') && !/[═█░─┌└]/.test(line)) {
-      const inner = line.replace(/[│┌└─]/g, '').trim();
-      if (inner.length > 4 && /[A-Za-zÀ-ỹ]/.test(inner)) {
+    if (line.includes('│') && !/[═█░┌└]/.test(line)) {
+      const inner = line.replace(/[│┌└─┤┐┘]/g, '').trim();
+      if (inner.length > 4 && /[A-Za-zÀ-ỹ]/.test(inner) && !inner.endsWith(':')) {
         title = inner;
         break;
       }
@@ -150,22 +162,70 @@ function parseBarChart(content: string): { title: string; items: BarItem[] } | n
   }
 
   const items: BarItem[] = [];
+  // Format 3 (label-first) bars collected separately to compute relative pct
+  const labelFirstBars: Array<{ blockCount: number; label: string }> = [];
+  let lastSectionLabel = '';
+
   for (let i = 0; i < lines.length; i++) {
-    // Strip │ borders and trim
-    const inner = lines[i].replace(/[│┌└─]/g, '').trim();
-    const m = inner.match(/^(\d{1,3})%\s+(.+)$/);
-    if (m) {
-      const pct = Math.min(100, parseInt(m[1], 10));
-      const label = m[2].trim();
-      // Look for (detail) in the next 1-3 lines
+    const inner = lines[i]
+      .replace(/^[│┌└├─═\s]+/, '').trim()
+      .replace(/[│┤┐┘\s]+$/, '').trim();
+    if (!inner) continue;
+
+    // Format 1: "35% Label"
+    const m1 = inner.match(/^(\d{1,3})%\s+(.+)$/);
+    if (m1) {
+      const pct = Math.min(100, parseInt(m1[1], 10));
+      const label = m1[2].trim();
       let detail = '';
-      for (let j = i + 1; j <= i + 3; j++) {
+      for (let j = i + 1; j <= i + 2; j++) {
         const next = (lines[j] || '').replace(/[│┌└─]/g, '').trim();
         const dm = next.match(/^\((.+)\)$/);
         if (dm) { detail = dm[1].trim(); break; }
       }
       items.push({ pct, label, detail });
+      continue;
     }
+
+    // Format 2: "████ Label (35%)" or "████ Label (40-45%)"
+    const m2 = inner.match(/^(█+)\s+(.+?)\s*\((\d{1,3})(?:[–\-]\d{1,3})?%\)\s*$/);
+    if (m2) {
+      const pct = Math.min(100, parseInt(m2[3], 10));
+      const label = m2[2].trim();
+      // Flush pending label-first group first (different section type)
+      if (labelFirstBars.length > 0) {
+        const maxB = Math.max(...labelFirstBars.map(b => b.blockCount));
+        if (lastSectionLabel) items.push({ pct: 0, label: lastSectionLabel, detail: '', isSection: true });
+        labelFirstBars.forEach(b => items.push({ pct: Math.round((b.blockCount / maxB) * 100), label: b.label, detail: '', displayValue: '' }));
+        labelFirstBars.splice(0);
+        lastSectionLabel = '';
+      }
+      items.push({ pct, label, detail: '' });
+      continue;
+    }
+
+    // Format 3: "Label ████" or "Label (Value) ████"
+    const m3 = inner.match(/^(.+?)\s+(█+)\s*$/);
+    if (m3 && /[A-Za-zÀ-ỹ]/.test(m3[1])) {
+      labelFirstBars.push({ blockCount: m3[2].length, label: m3[1].trim() });
+      continue;
+    }
+
+    // Section heading (e.g. "Our Proposal:" / "Industry Average:")
+    if (!inner.includes('█') && /[A-Za-zÀ-ỹ]/.test(inner) && inner.endsWith(':')) {
+      if (items.length > 0 || labelFirstBars.length === 0) {
+        items.push({ pct: 0, label: inner, detail: '', isSection: true });
+      } else {
+        lastSectionLabel = inner;
+      }
+    }
+  }
+
+  // Flush remaining label-first bars
+  if (labelFirstBars.length > 0) {
+    const maxB = Math.max(...labelFirstBars.map(b => b.blockCount));
+    if (lastSectionLabel) items.push({ pct: 0, label: lastSectionLabel, detail: '', isSection: true });
+    labelFirstBars.forEach(b => items.push({ pct: Math.round((b.blockCount / maxB) * 100), label: b.label, detail: '', displayValue: '' }));
   }
 
   return items.length > 0 ? { title, items } : null;
@@ -242,14 +302,30 @@ function BarChartCard({ title, items }: { title: string; items: BarItem[] }) {
       )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
         {items.map((item, i) => {
-          const color = PALETTE[i % PALETTE.length];
+          if (item.isSection) {
+            return (
+              <div key={i} style={{
+                fontSize: '0.8rem', fontWeight: 700, color: '#374151',
+                marginTop: i > 0 ? '0.5rem' : 0,
+                paddingTop: i > 0 ? '0.5rem' : 0,
+                borderTop: i > 0 ? '1px solid #e0e7ff' : 'none',
+              }}>
+                {item.label}
+              </div>
+            );
+          }
+          const barIdx = items.slice(0, i).filter(x => !x.isSection).length;
+          const color = PALETTE[barIdx % PALETTE.length];
+          const valueLabel = item.displayValue !== undefined ? item.displayValue : `${item.pct}%`;
           return (
             <div key={i}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.3rem' }}>
                 <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#1f2937' }}>{item.label}</span>
-                <span style={{ fontSize: '0.875rem', fontWeight: 700, color: color.text, marginLeft: '0.75rem', flexShrink: 0 }}>
-                  {item.pct}%
-                </span>
+                {valueLabel && (
+                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: color.text, marginLeft: '0.75rem', flexShrink: 0 }}>
+                    {valueLabel}
+                  </span>
+                )}
               </div>
               <div style={{ background: '#e5e7eb', borderRadius: '100px', height: '10px', overflow: 'hidden' }}>
                 <div style={{

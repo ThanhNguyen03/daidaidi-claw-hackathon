@@ -58,13 +58,13 @@ const MODES: { id: ChatMode; label: string; icon: React.ReactNode; description: 
 
 // Map agent names to display names
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
-  sales_orchestrator: 'Sales Orchestrator',
-  requirement_elicitation: 'Requirement Elicitation',
+  central_agent: 'Sales AI',
   market_strategy: 'Market Strategy',
   product_solution: 'Product Solution',
   design: 'Design',
   compliance: 'Compliance',
   client_simulator: 'Client Simulator',
+  proposal_assembler: 'Proposal Assembler',
 };
 
 // Status color classes
@@ -144,13 +144,12 @@ export function Sidebar({
 
   // Use fetched agents, fallback to defaults if empty
   const displayAgents = agentsList.length > 0 ? agentsList : [
-    { name: 'sales_orchestrator', display_name: 'Sales Orchestrator' },
-    { name: 'requirement_elicitation', display_name: 'Requirement Elicitation' },
     { name: 'market_strategy', display_name: 'Market Strategy' },
     { name: 'product_solution', display_name: 'Product Solution' },
     { name: 'design', display_name: 'Design' },
     { name: 'compliance', display_name: 'Compliance' },
     { name: 'client_simulator', display_name: 'Client Simulator' },
+    { name: 'proposal_assembler', display_name: 'Proposal Assembler' },
   ];
 
   // Create a map of agent statuses

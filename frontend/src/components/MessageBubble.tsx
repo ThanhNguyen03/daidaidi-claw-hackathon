@@ -86,6 +86,8 @@ function MermaidDiagram({ chart }: { chart: string }) {
           startOnLoad: false,
           theme: isDarkMode ? 'dark' : 'default',
           securityLevel: 'loose',
+          fontSize: 14,
+          flowchart: { useMaxWidth: true, diagramPadding: 8 },
           gantt: { fontSize: 13, barHeight: 28, barGap: 8, topPadding: 50, leftPadding: 140 },
         });
 
@@ -98,10 +100,21 @@ function MermaidDiagram({ chart }: { chart: string }) {
           const svgEl = containerRef.current.querySelector('svg');
           if (svgEl) {
             svgEl.style.background = 'transparent';
-            // Fill the container width so gantt/large diagrams are readable.
-            svgEl.style.width = '100%';
-            svgEl.style.height = 'auto';
-            svgEl.style.maxWidth = 'none';
+            const isGantt = cleaned.trim().toLowerCase().startsWith('gantt');
+            if (isGantt) {
+              // Gantt charts need full width to be readable
+              svgEl.style.width = '100%';
+              svgEl.style.height = 'auto';
+              svgEl.style.maxWidth = 'none';
+            } else {
+              // Flowcharts/sequence diagrams: natural size, never stretch beyond container
+              svgEl.removeAttribute('width');
+              svgEl.removeAttribute('height');
+              svgEl.style.maxWidth = '100%';
+              svgEl.style.height = 'auto';
+              svgEl.style.display = 'block';
+              svgEl.style.margin = '0 auto';
+            }
           }
         }
       } catch (error) {
@@ -651,26 +664,24 @@ interface MessageBubbleProps {
 }
 
 const AGENT_COLORS: Record<string, string> = {
-  sales_orchestrator: '#6366f1',
-  scoping: '#64748b',
-  requirement_elicitation: '#0f766e',
+  central_agent: '#6366f1',
   market_strategy: '#ec4899',
   compliance: '#f97316',
   product_solution: '#10b981',
   design: '#3b82f6',
   client_simulator: '#06b6d4',
+  proposal_assembler: '#8b5cf6',
   system: '#6b7280',
 };
 
 const AGENT_NAMES: Record<string, string> = {
-  sales_orchestrator: 'Sales Orchestrator',
-  scoping: 'Scoping',
-  requirement_elicitation: 'Requirement Elicitation',
+  central_agent: 'Sales AI',
   market_strategy: 'Strategy',
   compliance: 'Compliance',
   product_solution: 'Product Solution',
   design: 'Slide Designer',
   client_simulator: 'Client Simulator',
+  proposal_assembler: 'Proposal Assembler',
   system: 'System',
 };
 
@@ -906,7 +917,7 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
             color: '#ffffff',
           }}
         >
-          {message.agent === 'sales_orchestrator' ? (
+          {message.agent === 'central_agent' ? (
             <Sparkles size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           ) : (
             <Bot size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />

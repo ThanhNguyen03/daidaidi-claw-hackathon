@@ -134,8 +134,14 @@ export default function Home() {
     }
   };
 
-  // Handle new chat
+  // Handle new chat — clear all session data so the reload starts completely fresh
   const handleNewChat = () => {
+    if (typeof window !== 'undefined') {
+      Object.keys(sessionStorage)
+        .filter((k) => k.startsWith('chat_session_'))
+        .forEach((k) => sessionStorage.removeItem(k));
+      sessionStorage.removeItem('artifacts');
+    }
     window.location.reload();
   };
 
