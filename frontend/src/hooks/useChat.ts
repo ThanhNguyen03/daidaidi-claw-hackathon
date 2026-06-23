@@ -88,15 +88,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   const salespersonIdRef = useRef(salespersonId);
   useEffect(() => { salespersonIdRef.current = salespersonId; }, [salespersonId]);
 
-  // State — restore sessionId from sessionStorage so context survives accidental page refresh.
-  // NOTE: the key read here uses salespersonId at mount time ('demo_user'); the
-  // real session is stored under the user's actual name once they identify.
-  // handleNewChat clears all chat_session_* keys before reloading, so this
-  // returns null on a deliberate "New Chat" reload.
-  const [sessionId, setSessionId] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return sessionStorage.getItem(`chat_session_${salespersonId}`) || null;
-  });
+  // Always start with null — messages are not persisted so restoring only the
+  // session_id creates an inconsistent state (empty UI + old backend context).
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
