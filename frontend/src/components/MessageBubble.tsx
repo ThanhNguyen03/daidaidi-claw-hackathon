@@ -32,6 +32,31 @@ function sanitizeMermaid(raw: string): string {
   return s;
 }
 
+/** Strip emoji from box-drawing ASCII art so column alignment is preserved.
+ * Terminal emoji = 2 columns wide; browsers render them narrower → replace with 2 spaces. */
+function sanitizeBoxArt(content: string): string {
+  if (!/[┌┐└┘│─├┤┬┴┼═╔╗╚╝║]/.test(content)) return content;
+  // Surrogate pairs = supplementary plane chars (emoji U+1F000+); BMP misc symbols U+2600-U+27BF
+  return content
+    .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '  ')
+    .replace(/[☀-➿]/g, '  ');
+}
+
+/** Parse inline markdown (`**bold**`, `*italic*`, `` `code` ``) inside a plain string. */
+function renderInlineMarkdown(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|`[^`\n]+`)/);
+  if (parts.length === 1) return text;
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**'))
+      return <strong key={i} style={{ fontWeight: 700 }}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith('*') && part.endsWith('*'))
+      return <em key={i}>{part.slice(1, -1)}</em>;
+    if (part.startsWith('`') && part.endsWith('`'))
+      return <code key={i} style={{ backgroundColor: 'var(--color-surface-2)', padding: '0.1rem 0.3rem', borderRadius: '3px', fontSize: '0.9em' }}>{part.slice(1, -1)}</code>;
+    return part;
+  });
+}
+
 function useDarkMode(): boolean {
   const [isDark, setIsDark] = useState(
     () => typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
@@ -61,6 +86,7 @@ function MermaidDiagram({ chart }: { chart: string }) {
           startOnLoad: false,
           theme: isDarkMode ? 'dark' : 'default',
           securityLevel: 'loose',
+          gantt: { fontSize: 13, barHeight: 28, barGap: 8, topPadding: 50, leftPadding: 140 },
         });
 
         // Parse first so we can distinguish syntax problems from render/runtime problems.
@@ -69,9 +95,14 @@ function MermaidDiagram({ chart }: { chart: string }) {
         const { svg } = await mermaid.render(idRef.current, cleaned);
         if (!cancelled && containerRef.current) {
           containerRef.current.innerHTML = svg;
-          // Force SVG background transparent so the container theme controls it.
           const svgEl = containerRef.current.querySelector('svg');
-          if (svgEl) svgEl.style.background = 'transparent';
+          if (svgEl) {
+            svgEl.style.background = 'transparent';
+            // Fill the container width so gantt/large diagrams are readable.
+            svgEl.style.width = '100%';
+            svgEl.style.height = 'auto';
+            svgEl.style.maxWidth = 'none';
+          }
         }
       } catch (error) {
         console.error('[MermaidDiagram] render failed', { error, cleaned });
@@ -486,7 +517,7 @@ function TableBlock({
                   wordWrap: 'break-word',
                 }}
               >
-                {header}
+                {renderInlineMarkdown(header)}
               </th>
             ))}
           </tr>
@@ -507,7 +538,7 @@ function TableBlock({
                     maxWidth: '500px',
                   }}
                 >
-                  {cell}
+                  {renderInlineMarkdown(cell)}
                 </td>
               ))}
             </tr>
@@ -759,7 +790,7 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
         if (el.props.className === 'language-mermaid') {
           if (isStreaming) {
             return (
-              <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflow: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0' }}>
+              <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflow: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0', whiteSpace: 'pre', overflowX: 'auto' }}>
                 <code>{rawContent}</code>
               </pre>
             );
@@ -774,9 +805,21 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
           const table = tryRenderPipeTable(rawContent);
           if (table) return table;
         }
+
+        // Box-drawing ASCII art: strip emoji to fix column alignment.
+        if (!el.props.className) {
+          const sanitized = sanitizeBoxArt(rawContent);
+          if (sanitized !== rawContent) {
+            return (
+              <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflowX: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0', whiteSpace: 'pre' }}>
+                <code>{sanitized}</code>
+              </pre>
+            );
+          }
+        }
       }
       return (
-        <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflow: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0' }}>
+        <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflowX: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0', whiteSpace: 'pre' }}>
           {children}
         </pre>
       );
