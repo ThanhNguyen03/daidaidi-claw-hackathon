@@ -152,20 +152,31 @@ DIAGRAMS / USER FLOWS:
      flowchart LR
          A[Start] --> B[Step]
      ```
-     WRONG: write "mermaid" then the code without backtick fences.
+     WRONG: writing "mermaid" alone then diagram code without backtick fences.
 
-  2. Edge labels MUST use pipe syntax: A -->|Yes|B[Next]
-     NEVER use spaces as labels: A -->    Yes    B[Next]  ← INVALID, will break rendering
+  2. Edge labels: PIPE SYNTAX ONLY → A -->|Yes|B[Next]
+     NEVER spaces: A -->    Yes    B[Next]  ← WILL BREAK RENDERING
 
-  3. Node labels: plain text only. NO HTML tags (<br/>, <b>, etc.).
-     Use a short phrase. If multi-word, write it directly: A[User Registration]
+  3. Node labels: SHORT plain text ONLY (max 5 words).
+     - NO HTML tags: <br/> <b> <span> — use a space or newline instead
+     - NO pipe character | inside labels — it breaks edge-label parsing
+     - NO curly braces { } or hash # unless required by syntax
+     - WRONG: A[User nhận link/QR<br/>qua Zalo]
+     - CORRECT: A[User nhận link qua Zalo]
 
-  4. Keep diagrams simple — avoid style directives and classDef unless essential.
+  4. Quotes: use straight " not curly " " inside labels.
+
+  5. Keep diagrams simple — avoid style/classDef unless essential.
      If used: style A fill:#e1f5fe,color:#000 (one line per node, no complex CSS).
 
+  6. Maximum ~12 nodes per diagram. Split into multiple diagrams if flow is longer.
+
 TIMELINES:
-  Use Mermaid gantt syntax inside ```mermaid fences. Same strict rules as above.
-  If a Mermaid gantt is not feasible, use a Markdown pipe table with columns: Phase | Duration | Deliverable.
+  Use Mermaid gantt syntax inside ```mermaid fences. Same strict rules as flowchart above, plus:
+  - dateFormat must be YYYY-MM-DD
+  - Every task line needs: TaskName :id, YYYY-MM-DD, Nd  (e.g. "Phase 1 :a1, 2024-01-01, 14d")
+  - NEVER leave out the date or duration — partial task lines break the renderer
+  - If gantt would be complex, use a Markdown pipe table instead: Phase | Duration | Deliverable
 """
 
     def _build_system_prompt(self, constraints: list[FeedbackRule]) -> str:

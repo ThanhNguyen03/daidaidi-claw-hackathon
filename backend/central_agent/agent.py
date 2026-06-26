@@ -173,7 +173,9 @@ def _build_contextual_skill_plan(state, message: str) -> list[list[dict[str, str
     """
     from skills.registry import get_skill_registry
     task_short = message[:400]
-    _SEQUENTIAL = {"proposal_assembler"}
+    # wireframe_designer must NEVER appear in a planned skill group — it is always
+    # auto-triggered after proposal_assembler completes via _AUTO_AFTER.
+    _SEQUENTIAL = {"proposal_assembler", "wireframe_designer"}
 
     registry = get_skill_registry()
     all_skill_names = registry.all_names()
@@ -356,6 +358,16 @@ class CentralAgent:
 
         # Step 3B: Brief clear → execute skills
         skill_plan: list[list[dict]] = assessment.get("skill_plan") or []
+
+        # Safety guard: wireframe_designer must NEVER appear in any planned group.
+        # It is exclusively triggered by _AUTO_AFTER after proposal_assembler completes.
+        # Remove it here so both LLM-generated and fallback plans are safe.
+        skill_plan = [
+            [s for s in group if s.get("skill") != "wireframe_designer"]
+            for group in skill_plan
+        ]
+        skill_plan = [g for g in skill_plan if g]
+
         if not skill_plan:
             skill_plan = _build_contextual_skill_plan(state, message)
 
@@ -485,6 +497,58 @@ class CentralAgent:
                     except Exception as e:
                         print(f"[CentralAgent] Auto-skill {auto_skill} error: {e}")
                         yield {"type": "agent_status", "agent": auto_skill, "status": "failed"}
+
+        # Step 3D: Deck-only shortcut — user explicitly requests deck but proposal_assembler
+        # was not re-run this turn. If prior assembled content exists, generate deck from it.
+        _DECK_REQUEST_KWS = frozenset({
+            "deck", "slide", "slides", "pptx", "html deck",
+            "làm deck", "tạo deck", "xuất deck", "update deck",
+            "làm lại deck", "tạo lại deck", "regenerate deck",
+        })
+        _msg_lower = message.lower()
+        _is_deck_request = any(kw in _msg_lower for kw in _DECK_REQUEST_KWS)
+        if _is_deck_request and "wireframe_designer" not in all_outputs:
+            prior_pa = state.outputs.get("proposal_assembler")
+            if (prior_pa and _safe_field(prior_pa, "status", "") == "COMPLETE"
+                    and _safe_field(prior_pa, "content", "")):
+                _deck_skill = skill_registry.get("wireframe_designer")
+                if _deck_skill:
+                    merged_deck = {
+                        k: {"content": _safe_field(v, "content", ""),
+                            "summary": _safe_field(v, "summary", ""),
+                            "payload": _safe_field(v, "payload", {})}
+                        for k, v in state.outputs.items()
+                    }
+                    merged_deck.update({
+                        k: {"content": v.content, "summary": v.summary, "payload": v.payload}
+                        for k, v in all_outputs.items()
+                    })
+                    deck_ctx = SkillContext(
+                        task="Generate proposal deck assets (HTML deck + PPTX)",
+                        brief=state.brief,
+                        messages=state.messages[-_RECENT_HISTORY_WINDOW:],
+                        previous_outputs=merged_deck,
+                        constraints=state.constraints,
+                        session_id=state.session_id,
+                    )
+                    yield {"type": "agent_status", "agent": "wireframe_designer", "status": "thinking"}
+                    try:
+                        deck_out = await asyncio.wait_for(
+                            _deck_skill.execute(deck_ctx), timeout=_SKILL_TIMEOUT_S
+                        )
+                        all_outputs["wireframe_designer"] = deck_out
+                        state.outputs["wireframe_designer"] = AgentOutput(
+                            agent="wireframe_designer",
+                            status="COMPLETE" if deck_out.status == "COMPLETE" else "FAILED",
+                            payload=deck_out.payload,
+                            summary=deck_out.summary,
+                            content=deck_out.content,
+                            confidence=deck_out.confidence,
+                        )
+                        yield {"type": "agent_status", "agent": "wireframe_designer", "status": "completed"}
+                    except Exception as e:
+                        print(f"[CentralAgent] Deck-only wireframe_designer error: {e}")
+                        yield {"type": "agent_status", "agent": "wireframe_designer", "status": "failed"}
 
         # Step 4: Synthesize final response
         if all_outputs:
@@ -752,13 +816,16 @@ INFO BOXES (game concepts, form wireframes, feature lists, structured text):
   Rules: ONE level of box only — NEVER nest a box inside another box. Use ├──┤ separator (not ╠═╣) for info boxes.
 
 DIAGRAMS (user flows, architecture):
-  Use Mermaid in a ```mermaid block. Copy AS-IS from specialist outputs.
-  NEVER write placeholder code blocks containing only a label like "Mermaid Gantt" or "Mermaid User Journey".
+  Use Mermaid in a ```mermaid block. Copy AS-IS from specialist outputs when available.
+  If writing new Mermaid: node labels must be SHORT plain text (max 5 words, no <br/> or HTML, no | { } in labels).
+  Edge labels: A -->|Label|B pipe syntax only — NEVER spaces.
+  NEVER write placeholder blocks with only a label like "Mermaid User Journey".
   If no Mermaid code is available, describe the flow as a numbered list instead.
 
 TIMELINES / GANTT:
   Use Mermaid gantt syntax in a ```mermaid block. Copy AS-IS from specialist outputs.
-  If no gantt code is available, use a Markdown table with Phase | Duration | Description columns."""
+  If writing new gantt: every task needs full date (YYYY-MM-DD) and duration (Nd). No partial lines.
+  dateFormat YYYY-MM-DD must be declared. If gantt would be complex, use a Markdown table instead."""
 
             user_msg = (
                 f"## Original Request\n{original_message}\n\n"
@@ -783,8 +850,10 @@ OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
 TABLES: Markdown pipe tables — NEVER ASCII box-drawing for tables.
 BAR CHARTS: ``` plain block, ┌─╠═─┘ box, "NN%  Label" per line — NEVER █ block chars.
 INFO BOXES: ``` plain block, ┌─├─┘ box (├──┤ separator), bullet/checkbox lines — NEVER nested boxes.
-DIAGRAMS: ```mermaid AS-IS. If none, numbered list.
-TIMELINES: ```mermaid gantt AS-IS. If none, Markdown table."""
+DIAGRAMS: ```mermaid block. Node labels: short plain text only — NO <br/> NO HTML NO | { } in labels.
+  Edge labels: -->|Label| pipe syntax only. Max ~12 nodes. If none available, use numbered list.
+TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format required.
+  If gantt would be complex or dates uncertain, use a Markdown table instead."""
 
             # Include recent conversation history so the synthesizer knows what was already covered.
             history_lines = []

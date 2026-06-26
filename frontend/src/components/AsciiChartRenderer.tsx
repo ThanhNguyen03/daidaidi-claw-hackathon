@@ -506,6 +506,7 @@ export function wrapAsciiBoxes(text: string): string {
   const lines = text.split('\n');
   const out: string[] = [];
   let inFence = false;
+  let openFenceLine = '```'; // preserved opening fence line (may include language tag like ```mermaid)
   let inBox = false;
   let fenceLines: string[] = [];
   let fenceHasBox = false;
@@ -514,8 +515,9 @@ export function wrapAsciiBoxes(text: string): string {
     // Track existing code fences (``` or ~~~)
     if (/^(`{3,}|~{3,})/.test(line)) {
       if (!inFence) {
-        // Opening fence
+        // Opening fence — preserve the full line (e.g. ```mermaid) so language tags survive
         inFence = true;
+        openFenceLine = line;
         fenceLines = [];
         fenceHasBox = false;
       } else {
@@ -528,12 +530,14 @@ export function wrapAsciiBoxes(text: string): string {
           if (boxStarts > 1) {
             out.push(splitMultiBoxFence(fenceLines.join('\n')));
           } else {
-            out.push('```');
+            // Preserve the original opening fence line so ```mermaid stays ```mermaid
+            out.push(openFenceLine);
             out.push(...fenceLines);
             out.push('```');
           }
         } else {
-          out.push('```');
+          // Non-box fence (mermaid, code, etc.) — always preserve language tag
+          out.push(openFenceLine);
           out.push(...fenceLines);
           out.push('```');
         }
@@ -563,9 +567,9 @@ export function wrapAsciiBoxes(text: string): string {
     }
   }
 
-  // Flush unclosed fence
+  // Flush unclosed fence — preserve language tag
   if (inFence && fenceLines.length > 0) {
-    out.push('```');
+    out.push(openFenceLine);
     out.push(...fenceLines);
     out.push('```');
   }

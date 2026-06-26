@@ -85,9 +85,10 @@ class AdtimaBoxPPTXGenerator:
         prs.slide_height = Inches(SLIDE_H)
 
         dispatch = {
-            "value": self._render_value,
-            "flow":  self._render_flow,
-            "tier":  self._render_tier,
+            "value":     self._render_value,
+            "flow":      self._render_flow,
+            "tier":      self._render_tier,
+            "highlight": self._render_highlight,
         }
         blank = prs.slide_layouts[6]
         for sd in slides:
@@ -419,25 +420,83 @@ class AdtimaBoxPPTXGenerator:
 
         self._stat_bar(slide, sd.get("stats") or [], no_line=bool(footer))
 
+    def _render_highlight(self, slide, sd: dict):
+        """Exec-summary slide: headline + summary text + horizontal metric cards."""
+        from pptx.util import Inches, Pt
+        self._bg(slide)
+        hl = sd.get("headline", {})
+        self._topbar(slide, sd.get("eyebrow", ""))
+
+        # Headline — 24pt; 1.00" tall holds 2 lines
+        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W, 1.00,
+                         hl.get("plain", ""), hl.get("bold", ""), 24)
+
+        # Summary sentence below headline
+        summary = sd.get("summary", "")
+        if summary:
+            self._text(slide, PAD_X, BODY_TOP + 1.04, CONTENT_W * 0.80, 0.44,
+                       summary, 10, "gray")
+
+        # Metric cards — horizontal row
+        metrics = (sd.get("metrics") or [])[:4]
+        n = max(len(metrics), 1)
+        card_y = BODY_TOP + 1.58
+        card_h = BODY_H - 1.58 - 0.05
+        gap = 0.10
+        card_w = (CONTENT_W - gap * (n - 1)) / n
+
+        from pptx.util import Pt as _Pt
+        for i, m in enumerate(metrics):
+            cx = PAD_X + i * (card_w + gap)
+
+            # Card background
+            crd = slide.shapes.add_shape(1, Inches(cx), Inches(card_y),
+                                         Inches(card_w), Inches(card_h))
+            crd.fill.solid()
+            crd.fill.fore_color.rgb = self._rgb("white")
+            crd.line.color.rgb = self._rgb("line")
+            crd.line.width = _Pt(0.5)
+
+            # Colored accent bar at top of card
+            color_str = (m.get("color") or "").lstrip("#")
+            bar_color = self._hex_rgb(color_str) if len(color_str) == 6 else self._rgb("orange")
+            bar = slide.shapes.add_shape(1, Inches(cx), Inches(card_y),
+                                         Inches(card_w), Inches(0.06))
+            bar.fill.solid()
+            bar.fill.fore_color.rgb = bar_color
+            bar.line.fill.background()
+
+            # Value (big number) — centered in upper portion
+            val_h = min(card_h * 0.55, 0.70)
+            self._text(slide, cx + 0.08, card_y + 0.20, card_w - 0.16, val_h,
+                       m.get("value", ""), 26, "ink", bold=True, align="CENTER")
+
+            # Label — below value
+            self._text(slide, cx + 0.08, card_y + 0.20 + val_h + 0.06, card_w - 0.16, 0.34,
+                       m.get("label", ""), 8.5, "gray", align="CENTER")
+
+        self._stat_bar(slide, sd.get("stats") or [])
+
     def _render_tier(self, slide, sd: dict):
         from pptx.util import Inches, Pt
         self._bg(slide)
         hl = sd.get("headline", {})
         self._topbar(slide, sd.get("eyebrow", ""))
 
-        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W, 0.85,
-                         hl.get("plain", ""), hl.get("bold", ""), 22)
+        # Headline — 20pt keeps 2-line headlines within 0.82" so lede stays below
+        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W, 0.82,
+                         hl.get("plain", ""), hl.get("bold", ""), 20)
 
         lede = sd.get("lede", "")
         if lede:
-            # Lede fits inside headline block (0.62" to 0.84" from BODY_TOP)
-            self._text(slide, PAD_X, BODY_TOP + 0.62, CONTENT_W - 1.0, 0.22, lede, 10, "gray")
+            # Lede is safely below the headline block (headline ends at ~0.82")
+            self._text(slide, PAD_X, BODY_TOP + 0.86, CONTENT_W - 1.0, 0.24, lede, 9.5, "gray")
 
         tiers = (sd.get("tiers") or [])[:4]
         n = max(len(tiers), 1)
         gap = 0.10  # gap between tier cards
         tier_w = (CONTENT_W - gap * (n - 1)) / n
-        tier_top = BODY_TOP + 0.92  # constant — lede sits inside headline block above
+        tier_top = BODY_TOP + (1.16 if lede else 0.86)
         tier_h = SLIDE_H - tier_top - STAT_BAR_H - 0.12
 
         for i, t in enumerate(tiers):
