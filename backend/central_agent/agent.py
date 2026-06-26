@@ -127,10 +127,14 @@ For each skill above, ask: "Does the user's brief or current request genuinely n
 Select a skill only if YES. Do not select a skill just because it's common or safe.
 
 Read the FULL context — Conversation History + Accumulated Brief + Current Message.
-The current message is the primary signal for which skills to select:
+The current message is the primary signal for which skills to select, but ALSO scan
+Conversation History for signals the user expressed in prior turns:
   → Specific ask ("nói về pháp lý", "userflow chi tiết hơn") → pick only matching skills
   → Broad brief covering multiple areas → pick all skills that match those areas
-  → "proposal", "tổng hợp lại" → proposal_assembler (alone, last group, explicit request only)
+  → proposal_assembler (alone, last group) ONLY when explicitly requested:
+      • Current message contains "proposal", "tổng hợp", "làm deck", "xuất proposal", "báo giá chi tiết"
+      • OR any prior message in Conversation History contains those keywords — user may have requested in an earlier turn and the current message is just providing supplementary info (budget, scale, timeline)
+      Do NOT trigger proposal_assembler based on brief completeness alone.
 
 Write a SPECIFIC task for every selected skill — reference the brand, objective, TA, and
 exactly what aspect of the brief that skill should address. Vague tasks produce vague output.
@@ -330,9 +334,11 @@ class CentralAgent:
                         yield {"type": "agent_status", "agent": skill_name, "status": "failed",
                                "message": str(e)}
 
-        # Step 3C: Auto-trigger wireframe_designer after proposal_assembler
+        # Step 3C: Auto-trigger wireframe_designer after proposal_assembler (only if COMPLETE)
         for trigger_skill, auto_skill in _AUTO_AFTER.items():
-            if trigger_skill in all_outputs and auto_skill not in all_outputs:
+            trigger_out = all_outputs.get(trigger_skill)
+            if (trigger_out and trigger_out.status == "COMPLETE"
+                    and trigger_out.content and auto_skill not in all_outputs):
                 auto = skill_registry.get(auto_skill)
                 if auto:
                     merged_auto = {
@@ -543,6 +549,19 @@ class CentralAgent:
         """Stream a synthesized final response from all skill outputs."""
         from llm.greennode import get_llm_client
         from main import _ThinkFilter
+
+        # If proposal_assembler ran as the primary/sole skill, stream its content directly —
+        # it has already synthesized everything from prior skill runs; re-synthesizing
+        # would produce near-duplicate output.
+        proposal_out = skill_outputs.get("proposal_assembler")
+        if proposal_out and proposal_out.content and len(skill_outputs) == 1:
+            content = proposal_out.content
+            yield {"type": "content", "content": content}
+            state.messages.append({
+                "role": "assistant", "content": content,
+                "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+            })
+            return
 
         outputs_block = "\n\n".join(
             f"### {name}\n{out.content}"

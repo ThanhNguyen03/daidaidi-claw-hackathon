@@ -15,11 +15,14 @@ Payload keys:
 from __future__ import annotations
 
 import os
+import tempfile
 import uuid
 
 from skills.base import BaseSkill, SkillContext, SkillOutput
 
-_ARTIFACTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "artifacts")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SKILL_MD = os.path.join(_HERE, "SKILL.md")
+_ARTIFACTS_DIR = os.path.join(_HERE, "..", "..", "data", "artifacts")
 
 
 class WireframeDesignerSkill(BaseSkill):
@@ -32,6 +35,7 @@ class WireframeDesignerSkill(BaseSkill):
                 "Auto-triggered after proposal_assembler — do NOT select manually."
             ),
             model_key="MODEL_WIREFRAME_DESIGNER",
+            skill_md_path=_SKILL_MD,
         )
 
     async def execute(self, context: SkillContext) -> SkillOutput:
@@ -64,29 +68,42 @@ class WireframeDesignerSkill(BaseSkill):
             except Exception:
                 pass
 
-        os.makedirs(_ARTIFACTS_DIR, exist_ok=True)
+        try:
+            os.makedirs(_ARTIFACTS_DIR, exist_ok=True)
+        except Exception:
+            pass  # non-fatal; PPTX temp will fall back to system tmpdir
+
         sid = context.session_id or uuid.uuid4().hex[:10]
+
+        # Pass SKILL.md content to deck generators so LLM extraction uses the spec
+        skill_spec = self._skill_content or ""
 
         # 1. HTML deck
         html_content = ""
         try:
             html_gen = create_html_deck_generator()
-            html_content = await html_gen.generate(proposal_content, brief_dict)
+            html_content = await html_gen.generate(proposal_content, brief_dict, skill_spec)
         except Exception as e:
             print(f"[WireframeDesigner] HTML generation error: {e}")
 
-        # 2. PPTX — generate to temp file, read bytes, delete immediately
+        # 2. PPTX — write to system tempfile, read bytes, delete immediately
         pptx_bytes: bytes | None = None
         try:
             pptx_gen = create_adtimabox_pptx_generator()
-            tmp_path = os.path.join(_ARTIFACTS_DIR, f"proposal_{sid}.pptx")
-            result = await pptx_gen.generate(proposal_content, brief_dict, tmp_path)
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pptx")
+            os.close(tmp_fd)
+            result = await pptx_gen.generate(proposal_content, brief_dict, tmp_path, skill_spec)
             if result.get("status") == "success" and os.path.exists(tmp_path):
                 with open(tmp_path, "rb") as f:
                     pptx_bytes = f.read()
-                os.unlink(tmp_path)
         except Exception as e:
             print(f"[WireframeDesigner] PPTX generation error: {e}")
+        finally:
+            try:
+                if 'tmp_path' in dir() and os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except Exception:
+                pass
 
         return SkillOutput(
             skill=self.name,

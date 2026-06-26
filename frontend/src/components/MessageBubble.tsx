@@ -135,10 +135,10 @@ function MermaidDiagram({ chart }: { chart: string }) {
           startOnLoad: false,
           theme: isDarkMode ? 'dark' : 'default',
           securityLevel: 'loose',
-          fontSize: 14,
+          fontSize: 12,
           flowchart: { useMaxWidth: true, diagramPadding: 8 },
           sequence: { useMaxWidth: true },
-          gantt: { fontSize: 14, barHeight: 28, barGap: 6, topPadding: 40, leftPadding: 140 },
+          gantt: { fontSize: 12, barHeight: 28, barGap: 6, topPadding: 40, leftPadding: 140 },
           ...(isDarkMode ? {
             themeVariables: {
               primaryTextColor: '#ffffff',

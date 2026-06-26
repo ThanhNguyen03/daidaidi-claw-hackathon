@@ -52,6 +52,7 @@ AGENT_SOURCE_PRIORITY = {
     "design": ["design"],
     "compliance": ["compliance_policy_agent"],
     "client_simulator": ["client_simulator_agent"],
+    "wireframe_designer": ["wireframe_designer_agent"],
 }
 
 

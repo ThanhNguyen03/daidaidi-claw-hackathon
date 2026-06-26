@@ -62,6 +62,14 @@ agents:
     kind: reviewer
     critical: false
 
+  wireframe_designer:
+    name: "Wireframe Designer"
+    model: MODEL_WIREFRAME_DESIGNER
+    role: "Generates AdtimaBox-branded HTML deck and PPTX from proposal — auto-triggered after proposal_assembler"
+    enabled: true
+    kind: generator
+    critical: false
+
   # Day 2 B.6: Compliance as the first reviewer agent
   compliance:
     name: "Compliance"
