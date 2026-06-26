@@ -48,7 +48,7 @@ ENV NODE_ENV production
 EXPOSE 8080
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=180s --timeout=10s --start-period=5s --retries=3 \
     CMD wget -q --spider http://localhost:8080/health || exit 1
 
 # Change ownership

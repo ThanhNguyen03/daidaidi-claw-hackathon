@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AdtimaBox Proposal Deck</title>
+<style>
+:root{
+  --ink:#1D1D1F;--gray:#6B6B70;--gray-light:#9A9AA0;
+  --orange:#F65009;--orange-2:#E84A1A;
+  --line:#ECE6E1;--card:#FBF8F5;
+  --teal:#0F9B8E;--purple:#5B4FC4;--gold:#C8932B;--white:#FFFFFF;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{
+  font-family:system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;
+  background:#0d0d16;
+  display:flex;flex-direction:column;align-items:center;gap:40px;padding:40px;
+}
+
+/* ── Slide shell (adtimabox-deck §3) ───────────────────────────────────── */
+.slide{
+  width:1280px;max-width:100%;height:720px;
+  position:relative;overflow:hidden;flex-shrink:0;
+  box-shadow:0 30px 80px rgba(0,0,0,.5);
+  background:
+    radial-gradient(circle at 8% 0%,rgba(246,80,9,.10),transparent 40%),
+    linear-gradient(135deg,#FFF8F5 0%,#FFFFFF 45%,#FFFFFF 100%);
+  padding:44px 64px 40px;
+  display:flex;flex-direction:column;
+}
+
+/* ── Topbar (adtimabox-deck-html §3 TOPBAR) ─────────────────────────── */
+.topbar{display:flex;justify-content:space-between;align-items:center;}
+.eyebrow{
+  display:flex;align-items:center;gap:10px;
+  font-size:12px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;color:var(--ink);
+}
+.eyebrow .bar{width:4px;height:16px;background:var(--orange);border-radius:2px;flex-shrink:0;}
+.eyebrow .tier-tag{font-size:11px;font-weight:700;color:var(--orange);margin-left:2px;}
+.logo .mark{font-size:13px;font-weight:800;color:var(--ink);}
+.logo .mark span{color:var(--orange);}
+.logo .by{font-size:11px;color:var(--gray-light);font-weight:400;margin-left:6px;}
+
+/* ── Stat-bar (margin-top:auto → bám đáy) ─────────────────────────────── */
+.stat-bar{margin-top:auto;display:flex;gap:40px;padding-top:16px;border-top:1px solid var(--line);}
+.stat-bar .sv{font-size:28px;font-weight:700;color:var(--ink);line-height:1;}
+.stat-bar .sl{font-size:12px;color:var(--gray-light);margin-top:4px;font-weight:400;}
+
+/* ── VALUE layout ──────────────────────────────────────────────────────── */
+.body-row{flex:1;display:flex;gap:56px;margin-top:20px;align-items:flex-start;}
+.left-col{flex:1;display:flex;flex-direction:column;}
+.left-col h2{font-size:38px;font-weight:400;color:var(--ink);line-height:1.18;letter-spacing:-.02em;margin-bottom:10px;}
+.left-col h2 b{color:var(--orange);font-weight:700;}
+.lede{font-size:14px;color:var(--gray);line-height:1.6;margin-bottom:20px;}
+.feat-list{display:flex;flex-direction:column;gap:10px;}
+.feat-item{
+  display:flex;gap:14px;align-items:flex-start;
+  background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 18px;
+}
+.feat-item .ic{
+  width:32px;height:32px;border-radius:8px;background:var(--card);
+  display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;
+}
+.feat-item h4{font-size:14px;font-weight:600;color:var(--ink);line-height:1.3;margin-bottom:3px;}
+.feat-item p{font-size:13px;color:var(--gray);line-height:1.5;}
+.tag-core{
+  font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--teal);background:rgba(15,155,142,.10);padding:2px 8px;border-radius:4px;
+  display:inline-block;margin-top:6px;
+}
+.tag-custom{
+  font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--orange-2);background:rgba(246,80,9,.08);padding:2px 8px;border-radius:4px;
+  display:inline-block;margin-top:6px;
+}
+
+/* ── FLOW layout ───────────────────────────────────────────────────────── */
+.flow-body{flex:1;display:flex;flex-direction:column;margin-top:16px;}
+.flow-heading h2{font-size:34px;font-weight:400;color:var(--ink);line-height:1.22;letter-spacing:-.02em;margin-bottom:8px;}
+.flow-heading h2 b{color:var(--orange);font-weight:700;}
+.legend{display:flex;align-items:center;gap:16px;margin:6px 0 20px;}
+.legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray);}
+.legend-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.legend-dot.core{background:var(--teal);}
+.legend-dot.custom{background:var(--orange);}
+.flow-row{display:flex;align-items:flex-start;}
+.step{display:flex;flex-direction:column;align-items:center;text-align:center;flex:1;}
+.step-pill{
+  display:inline-flex;align-items:center;gap:5px;
+  font-size:9.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;
+}
+.step-pill .pd{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+.step-pill.admin{color:var(--purple);}   .step-pill.admin .pd{background:var(--purple);}
+.step-pill.customer{color:var(--teal);} .step-pill.customer .pd{background:var(--teal);}
+.step-pill.staff{color:var(--orange-2);}  .step-pill.staff .pd{background:var(--orange-2);}
+.step-pill.system{color:var(--gray-light);} .step-pill.system .pd{background:var(--gray-light);}
+.step-icon-wrap{position:relative;margin-bottom:10px;}
+.step-icon{
+  width:68px;height:68px;border-radius:16px;background:#fff;
+  border:1px solid var(--line);font-size:26px;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 4px 12px rgba(0,0,0,.06);
+}
+.core-dot{position:absolute;top:-4px;right:-4px;width:12px;height:12px;border-radius:50%;border:2px solid #fff;}
+.core-dot.core{background:var(--teal);}
+.core-dot.custom{background:var(--orange);}
+.step-label{font-size:12.5px;font-weight:600;color:var(--ink);line-height:1.3;margin-bottom:4px;}
+.step-desc{font-size:11px;color:var(--gray);line-height:1.45;max-width:116px;margin:0 auto;}
+.step-sep{display:flex;align-items:center;padding-top:34px;flex-shrink:0;min-width:32px;flex:0.3;justify-content:center;}
+.step-sep svg{width:100%;height:12px;}
+.flow-footer{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);}
+.flow-footer p{font-size:12px;color:var(--gray);line-height:1.6;}
+.flow-footer b{font-weight:600;color:var(--ink);}
+
+/* ── TIER pricing ──────────────────────────────────────────────────────── */
+.pricing-body{flex:1;display:flex;flex-direction:column;margin-top:20px;}
+.pricing-body h2{font-size:38px;font-weight:400;color:var(--ink);line-height:1.18;letter-spacing:-.02em;margin-bottom:8px;}
+.pricing-body h2 b{color:var(--orange);font-weight:700;}
+.lede-sm{font-size:14px;color:var(--gray);line-height:1.6;margin-bottom:18px;}
+.tier-grid{display:grid;gap:14px;flex:1;}
+.tier-grid.cols-2{grid-template-columns:1fr 1fr;}
+.tier-grid.cols-3{grid-template-columns:1fr 1fr 1fr;}
+.tier-grid.cols-4{grid-template-columns:1fr 1fr 1fr 1fr;}
+.tier-card{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;display:flex;flex-direction:column;}
+.tier-bar{height:6px;width:100%;}
+.tier-inner{padding:16px 18px;display:flex;flex-direction:column;flex:1;}
+.tier-name{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:3px;}
+.tier-module{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-light);margin-bottom:10px;}
+.tier-price{display:flex;align-items:baseline;gap:5px;margin-bottom:3px;}
+.tier-price .amount{font-size:40px;font-weight:800;color:var(--ink);line-height:1;}
+.tier-price .unit{font-size:13px;font-weight:500;color:var(--gray);}
+.tier-period{font-size:11px;color:var(--gray-light);margin-bottom:12px;}
+.tier-checks{display:flex;flex-direction:column;gap:7px;flex:1;}
+.check-row{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--ink);line-height:1.4;}
+.check-icon{color:var(--teal);font-size:11px;flex-shrink:0;margin-top:2px;}
+.tier-deploy{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:12px;color:var(--gray);}
+.tier-deploy b{font-weight:700;color:var(--ink);}
+</style>
+</head>
+<body>
+<div class="slide">
+  <div class="topbar">
+  <div class="eyebrow"><div class="bar"></div>Giải pháp Zalo</div>
+  <div class="logo"><span class="mark">adtima<span>box</span></span><span class="by">by Adtima</span></div>
+</div>
+  <div class="body-row">
+    <div class="left-col">
+      <h2>Tăng tương tác &amp; thu data trên <b>Zalo ecosystem</b></h2>
+      <p class="lede">Kết hợp OA, ZNS, Mini App để thu lead, tái tiếp cận và tăng loyalty.</p>
+      <div class="feat-list"><div class="feat-item">
+  <div class="ic">📲</div>
+  <div><h4>Zalo OA — kênh giao tiếp chính thức</h4><p>Reach 40M+ người dùng không cần app riêng</p></div>
+</div><div class="feat-item">
+  <div class="ic">🔔</div>
+  <div><h4>ZNS — thông báo push cá nhân hoá</h4><p>Tỉ lệ mở cao, không bị spam filter</p></div>
+</div><div class="feat-item">
+  <div class="ic">🎮</div>
+  <div><h4>Mini App — gamification &amp; loyalty</h4><p>Voucher, điểm thưởng, đổi quà tại chỗ</p></div>
+</div><div class="feat-item">
+  <div class="ic">📊</div>
+  <div><h4>Data &amp; reactivation</h4><p>Thu lead offline, tái tiếp cận qua Zalo</p></div>
+</div></div>
+    </div>
+  </div>
+  <div class="stat-bar"><div><div class="sv">40M+</div><div class="sl">người dùng Zalo</div></div><div><div class="sv">10k</div><div class="sl">user mới — Energy Drink / FMCG</div></div><div><div class="sv">1-2</div><div class="sl">tháng campaign</div></div></div>
+</div>
+
+</body>
+</html>

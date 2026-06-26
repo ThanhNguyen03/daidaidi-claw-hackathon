@@ -81,9 +81,11 @@ ALWAYS EXECUTE when clarification rounds ≥ 2 — never ask more questions afte
 
 Otherwise, decide based on task type and missing info:
 
-QUOTE / PRICING request ("báo giá", "bảng giá", "estimate", "quotation"):
-  → CLARIFY if missing ANY of: (1) primary use-case/objective, (2) short campaign or long-term loyalty, (3) rough user base / database size
-  → Questions to ask: objective, campaign type, expected scale, existing CRM integration, budget range
+QUOTE / PRICING request ("báo giá", "bảng giá", "estimate", "quotation", "báo giá chi tiết"):
+  → CLARIFY if missing ANY of: (1) campaign type (short-term campaign vs long-term loyalty platform), (2) rough user base / expected scale
+  → This rule takes priority over STRATEGY rule when brief contains both strategy + pricing asks
+  → Questions to ask: campaign type & duration, expected number of users/participants, budget range (optional)
+  → EXECUTE directly only if scale AND campaign type are both known
 
 STRATEGY / MARKET ANALYSIS request (first response — 0 prior assistant turns):
   → CLARIFY if missing industry OR missing primary goal/objective
@@ -123,18 +125,22 @@ STEP 2 — MATCH BRIEF TO SKILLS
 Available skills (name: description):
 {skill_catalog}
 
-For each skill above, ask: "Does the user's brief or current request genuinely need this?"
-Select a skill only if YES. Do not select a skill just because it's common or safe.
+BASELINE RULE: For any sales brief (brand + objective present), ALWAYS include both:
+  • market_strategy — strategic positioning, case studies, why-Zalo, audience insights, competitive edge
+  • product_solution — product fit, architecture, pricing, userflow
 
-Read the FULL context — Conversation History + Accumulated Brief + Current Message.
-The current message is the primary signal for which skills to select, but ALSO scan
-Conversation History for signals the user expressed in prior turns:
-  → Specific ask ("nói về pháp lý", "userflow chi tiết hơn") → pick only matching skills
-  → Broad brief covering multiple areas → pick all skills that match those areas
-  → proposal_assembler (alone, last group) ONLY when explicitly requested:
+Additional skills to add when relevant:
+  • design — add when brief asks for idea, userflow, wireframe, game mechanic, screen design
+  • compliance — add when brief involves personal data collection, ZNS, advertising claims, or regulatory concerns
+  • client_simulator — add when brief has signs of a competitive pitch or objection-handling is useful
+  • proposal_assembler (alone, last group) ONLY when explicitly requested:
       • Current message contains "proposal", "tổng hợp", "làm deck", "xuất proposal", "báo giá chi tiết"
       • OR any prior message in Conversation History contains those keywords — user may have requested in an earlier turn and the current message is just providing supplementary info (budget, scale, timeline)
       Do NOT trigger proposal_assembler based on brief completeness alone.
+
+Read the FULL context — Conversation History + Accumulated Brief + Current Message.
+The current message is the primary signal for which skills to select, but ALSO scan
+Conversation History for signals the user expressed in prior turns.
 
 Write a SPECIFIC task for every selected skill — reference the brand, objective, TA, and
 exactly what aspect of the brief that skill should address. Vague tasks produce vague output.

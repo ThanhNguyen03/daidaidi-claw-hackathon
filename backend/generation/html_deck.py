@@ -173,6 +173,24 @@ Rules:
 - Return ONLY the JSON array, nothing else"""
 
 
+def _extract_schema_section(skill_spec: str) -> str:
+    """Pull only the slide-schema + extraction-rules sections from SKILL.md.
+    Strips CSS/layout detail that confuses the extraction LLM."""
+    import re
+    if not skill_spec:
+        return ""
+    # Keep from "### Slide Types" (or "## Slide Types") through "## Extraction Rules" (inclusive)
+    match = re.search(
+        r'(#{1,3}\s+Slide Types.+?)(?=##\s+Output Format|##\s+Topbar|$)',
+        skill_spec,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if match:
+        return match.group(1).strip()
+    # Fallback: return first 1500 chars (won't be the full file)
+    return skill_spec[:1500]
+
+
 def _esc(s: str) -> str:
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
@@ -196,16 +214,10 @@ class HTMLDeckGenerator:
         brand_hint = (brief or {}).get("industry", "")
         trimmed = proposal_text[:8000]
 
-        # Augment system prompt with SKILL.md spec when available
-        system = _EXTRACT_SYSTEM
-        if skill_spec:
-            system = (
-                "# AdtimaBox Deck Design Specification\n\n"
-                + skill_spec
-                + "\n\n---\n\n"
-                + _EXTRACT_SYSTEM
-            )
-
+        # Prepend only the schema+rules section from SKILL.md (not CSS/layout details)
+        schema_hint = _extract_schema_section(skill_spec)
+        system = (_EXTRACT_SYSTEM + "\n\n# Additional spec from SKILL.md:\n" + schema_hint
+                  if schema_hint else _EXTRACT_SYSTEM)
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
             None,
@@ -222,8 +234,13 @@ class HTMLDeckGenerator:
         )
         raw = strip_think_blocks(resp.choices[0].message.content or "[]")
         raw = extract_json_block(raw)
+        print(f"[HTMLDeck] extraction raw ({len(raw)} chars): {raw[:300]}")
         data = json.loads(raw)
-        return data if isinstance(data, list) and data else self._fallback_slides(brief)
+        if not isinstance(data, list) or not data:
+            print("[HTMLDeck] extraction returned empty/invalid list, using fallback")
+            return self._fallback_slides(brief)
+        print(f"[HTMLDeck] extracted {len(data)} slides: {[s.get('type') for s in data]}")
+        return data
 
     def _fallback_slides(self, brief: dict) -> list[dict]:
         b = brief or {}

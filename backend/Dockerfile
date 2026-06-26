@@ -39,7 +39,7 @@ ENV PORT=8080
 EXPOSE 8080
 
 # Health check (uses python's stdlib so we don't need curl in the slim image)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
+HEALTHCHECK --interval=180s --timeout=10s --start-period=120s --retries=5 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health').status==200 else 1)" || exit 1
 
 # Run the application (binds to $PORT = 8080). GREENNODE_* creds are auto-injected

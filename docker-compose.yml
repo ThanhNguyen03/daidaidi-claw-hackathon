@@ -52,10 +52,10 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
+      interval: 180s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
 
   # Frontend service
   frontend:
@@ -75,10 +75,10 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
-      interval: 30s
+      interval: 180s
       timeout: 10s
       retries: 3
-      start_period: 15s
+      start_period: 30s
 
 # Development override for hot reload
 profiles:
