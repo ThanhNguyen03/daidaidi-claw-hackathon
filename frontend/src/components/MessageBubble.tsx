@@ -24,8 +24,15 @@ function sanitizeMermaid(raw: string): string {
   s = s.replace(/[""„‟]/g, '"');
   // Replace literal \n escape sequences inside labels with a space.
   s = s.replace(/\\n/g, ' ');
+  // Replace HTML line breaks with a space (invalid inside mermaid labels)
+  s = s.replace(/<br\s*\/?>/gi, ' ');
   // Strip markdown bold/italic inside labels
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '$1');
+  // Fix LLM-generated edge labels with spaces instead of pipe syntax:
+  // "A -->    Yes    B[..." → "A -->|Yes|B[..."
+  // Matches: arrow, 2+ spaces, label text, 2+ spaces, node identifier+bracket
+  s = s.replace(/(-->|->|==>|==)\s{2,}([^|\n<>{}\[\]]+?)\s{2,}([A-Za-z_][A-Za-z0-9_]*[\[(])/g,
+    (_, arrow, label, nodeStart) => `${arrow}|${label.trim()}|${nodeStart}`);
   // Fix double-quotes inside square-bracket node labels.
   s = s.replace(/\[([^\[\]\n]*)\]/g, (_m, inner) => {
     if (inner.startsWith('"') && inner.endsWith('"') && inner.length >= 2) {
@@ -79,6 +86,52 @@ function sanitizeMermaid(raw: string): string {
   }
 
   return s;
+}
+
+/** Detect bare mermaid blocks that LLMs emit without backtick fences.
+ * Pattern: a line containing only "mermaid" immediately followed by diagram code
+ * (flowchart, graph, sequenceDiagram, etc.) — wraps the block in ```mermaid fences. */
+function fixBareMermaidBlocks(content: string): string {
+  const MERMAID_TYPES = /^(flowchart|graph|sequenceDiagram|gantt|classDiagram|stateDiagram(-v2)?|erDiagram|journey|gitgraph|pie|mindmap|timeline)\b/i;
+  const lines = content.split('\n');
+  const result: string[] = [];
+  let i = 0;
+  let inCodeBlock = false;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      result.push(line);
+      i++;
+      continue;
+    }
+
+    if (inCodeBlock) {
+      result.push(line);
+      i++;
+      continue;
+    }
+
+    // Bare "mermaid" keyword on its own line, followed by a valid diagram type
+    if (trimmed === 'mermaid' && i + 1 < lines.length && MERMAID_TYPES.test(lines[i + 1].trim())) {
+      result.push('```mermaid');
+      i++; // skip the bare "mermaid" line, start from diagram type
+      while (i < lines.length && lines[i].trim() !== '') {
+        result.push(lines[i]);
+        i++;
+      }
+      result.push('```');
+      continue; // the empty line (if any) will be processed next iteration
+    }
+
+    result.push(line);
+    i++;
+  }
+
+  return result.join('\n');
 }
 
 /** Strip emoji from box-drawing ASCII art so column alignment is preserved.
@@ -765,7 +818,7 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
 
   const showHeader = !isGrouped && !isUser && !isSystem && agentName;
   const isAI = !isUser && !isSystem;
-  const processedContent = wrapAsciiBoxes(fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(message.content))));
+  const processedContent = wrapAsciiBoxes(fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(fixBareMermaidBlocks(message.content)))));
   const contentBlocks = useMemo(() => splitContentIntoBlocks(processedContent), [processedContent]);
   const markdownComponents: any = {
     p: ({ children }: { children: React.ReactNode }) => <p style={{ margin: '0.5rem 0', lineHeight: 1.7 }}>{children}</p>,

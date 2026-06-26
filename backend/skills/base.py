@@ -135,11 +135,27 @@ INFO BOXES (game mechanics, form wireframes, step-by-step flows, feature descrip
   Use ├──┤ separator (dashes, not ╠═╣ double-lines). ONE level of box only — NEVER nested boxes.
 
 DIAGRAMS / USER FLOWS:
-  Use Mermaid flowchart syntax inside ```mermaid fences.
-  NEVER write a code block containing only a label (e.g. ```\\nMermaid User Journey\\n```).
+  Use Mermaid flowchart syntax. STRICT rules — the renderer will REJECT invalid syntax:
+
+  1. ALWAYS wrap in ```mermaid fences. NEVER write the word "mermaid" alone on a line.
+     CORRECT:
+     ```mermaid
+     flowchart LR
+         A[Start] --> B[Step]
+     ```
+     WRONG: write "mermaid" then the code without backtick fences.
+
+  2. Edge labels MUST use pipe syntax: A -->|Yes|B[Next]
+     NEVER use spaces as labels: A -->    Yes    B[Next]  ← INVALID, will break rendering
+
+  3. Node labels: plain text only. NO HTML tags (<br/>, <b>, etc.).
+     Use a short phrase. If multi-word, write it directly: A[User Registration]
+
+  4. Keep diagrams simple — avoid style directives and classDef unless essential.
+     If used: style A fill:#e1f5fe,color:#000 (one line per node, no complex CSS).
 
 TIMELINES:
-  Use Mermaid gantt syntax inside ```mermaid fences.
+  Use Mermaid gantt syntax inside ```mermaid fences. Same strict rules as above.
   If a Mermaid gantt is not feasible, use a Markdown pipe table with columns: Phase | Duration | Deliverable.
 """
 

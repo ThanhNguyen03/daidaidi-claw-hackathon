@@ -346,7 +346,7 @@ class AdtimaBoxPPTXGenerator:
             # Role pill (centered on cx)
             pill_w, pill_h = min(step_w - 0.12, 0.90), 0.16
             px = cx - pill_w / 2
-            pill = slide.shapes.add_shape(5, Inches(px), Inches(icon_y - 0.26),
+            pill = slide.shapes.add_shape(1, Inches(px), Inches(icon_y - 0.26),
                                            Inches(pill_w), Inches(pill_h))
             pill.fill.solid(); pill.fill.fore_color.rgb = self._rgb(rc)
             pill.line.fill.background()

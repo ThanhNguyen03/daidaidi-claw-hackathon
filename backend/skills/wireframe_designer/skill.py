@@ -102,7 +102,9 @@ class WireframeDesignerSkill(BaseSkill):
             with open(tmp_path, "rb") as f:
                 pptx_bytes = f.read()
         except Exception as e:
+            import traceback
             print(f"[WireframeDesigner] PPTX build error: {e}")
+            traceback.print_exc()
         finally:
             try:
                 if tmp_path and os.path.exists(tmp_path):
