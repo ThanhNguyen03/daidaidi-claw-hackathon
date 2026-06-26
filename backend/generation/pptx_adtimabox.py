@@ -159,9 +159,9 @@ class AdtimaBoxPPTXGenerator:
         run.font.bold = True
         run.font.color.rgb = self._rgb("ink")
 
-        # Logo — right aligned
-        logo_tb = slide.shapes.add_textbox(Inches(SLIDE_W - PAD_X - 1.5), Inches(PAD_T),
-                                           Inches(1.5), Inches(TOPBAR_H))
+        # Logo — right aligned: "adtimabox  by Adtima"
+        logo_tb = slide.shapes.add_textbox(Inches(SLIDE_W - PAD_X - 1.8), Inches(PAD_T),
+                                           Inches(1.8), Inches(TOPBAR_H))
         lf = logo_tb.text_frame
         lf.word_wrap = False
         lp = lf.paragraphs[0]
@@ -173,18 +173,25 @@ class AdtimaBoxPPTXGenerator:
         lr.font.size = Pt(9)
         lr.font.bold = True
         lr.font.color.rgb = self._rgb("ink")
+        lr2 = lp.add_run()
+        lr2.text = "  by Adtima"
+        lr2.font.name = FONT
+        lr2.font.size = Pt(8)
+        lr2.font.bold = False
+        lr2.font.color.rgb = self._rgb("gray_lt")
 
-    def _stat_bar(self, slide, stats: list):
+    def _stat_bar(self, slide, stats: list, no_line: bool = False):
         from pptx.util import Inches, Pt
         if not stats:
             return
-        # Divider line
-        div = slide.shapes.add_shape(1, Inches(PAD_X),
-                                     Inches(SLIDE_H - STAT_BAR_H - 0.02),
-                                     Inches(CONTENT_W), Inches(0.01))
-        div.fill.solid()
-        div.fill.fore_color.rgb = self._rgb("line")
-        div.line.fill.background()
+        # Divider line (omit when caller has own footer divider)
+        if not no_line:
+            div = slide.shapes.add_shape(1, Inches(PAD_X),
+                                         Inches(SLIDE_H - STAT_BAR_H - 0.02),
+                                         Inches(CONTENT_W), Inches(0.01))
+            div.fill.solid()
+            div.fill.fore_color.rgb = self._rgb("line")
+            div.line.fill.background()
 
         stat_x = PAD_X
         stat_y = SLIDE_H - STAT_BAR_H + 0.06
@@ -245,18 +252,18 @@ class AdtimaBoxPPTXGenerator:
         self._topbar(slide, sd.get("eyebrow", ""), sd.get("tier", ""))
 
         # Headline
-        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W * 0.6, 0.80,
-                         hl.get("plain", ""), hl.get("bold", ""), 26)
+        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W * 0.6, 1.00,
+                         hl.get("plain", ""), hl.get("bold", ""), 24)
 
         # Lede
         lede = sd.get("lede", "")
         if lede:
-            self._text(slide, PAD_X, BODY_TOP + 0.85, CONTENT_W * 0.55, 0.40, lede, 10, "gray")
+            self._text(slide, PAD_X, BODY_TOP + 1.05, CONTENT_W * 0.55, 0.40, lede, 10, "gray")
 
         # Feature cards
         cards = sd.get("cards") or []
-        card_y = BODY_TOP + 1.30
-        card_h = (BODY_H - 1.30) / max(len(cards), 1) - 0.05
+        card_y = BODY_TOP + 1.52
+        card_h = (BODY_H - 1.52) / max(len(cards), 1) - 0.05
         for c in cards[:4]:
             # Card bg
             crd = slide.shapes.add_shape(1, Inches(PAD_X), Inches(card_y),
@@ -290,14 +297,40 @@ class AdtimaBoxPPTXGenerator:
         hl = sd.get("headline", {})
         self._topbar(slide, sd.get("eyebrow", ""))
 
-        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W, 0.75,
-                         hl.get("plain", ""), hl.get("bold", ""), 24)
+        # Headline (full width)
+        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W, 0.80,
+                         hl.get("plain", ""), hl.get("bold", ""), 22)
 
+        # ── Legend row ──
+        lg_y = BODY_TOP + 0.80
+        # Teal dot: Core
+        d1 = slide.shapes.add_shape(1, Inches(PAD_X), Inches(lg_y + 0.04), Inches(0.10), Inches(0.10))
+        d1.fill.solid(); d1.fill.fore_color.rgb = self._rgb("teal"); d1.line.fill.background()
+        self._text(slide, PAD_X + 0.14, lg_y, 1.3, 0.18, "Core (có sẵn)", 8.5, "gray")
+        # Orange dot: Custom
+        d2 = slide.shapes.add_shape(1, Inches(PAD_X + 1.6), Inches(lg_y + 0.04), Inches(0.10), Inches(0.10))
+        d2.fill.solid(); d2.fill.fore_color.rgb = self._rgb("orange"); d2.line.fill.background()
+        self._text(slide, PAD_X + 1.74, lg_y, 1.5, 0.18, "Custom (mở rộng)", 8.5, "gray")
+        # Role color explanation (right side)
+        self._text(slide, PAD_X + 3.6, lg_y, 5.5, 0.18,
+                   "Tím = Admin · CMS    Xanh = Customer · Mini App", 8.5, "gray")
+
+        # ── Footer layout ──
+        footer = sd.get("footer", "")
+        stat_div_y = SLIDE_H - STAT_BAR_H - 0.02
+        footer_h = 0.22
+        footer_y = stat_div_y - footer_h - 0.08 if footer else stat_div_y
+
+        # ── Steps ──
         steps = (sd.get("steps") or [])[:6]
         n = max(len(steps), 1)
         step_w = CONTENT_W / n
-        step_top = BODY_TOP + 0.88
-        step_h = SLIDE_H - step_top - STAT_BAR_H - 0.15
+        flow_top = lg_y + 0.24
+        icon_size = 0.60
+        # Center icon row vertically between flow_top and footer_y
+        label_h = 0.26 + 0.42  # label + desc below icon
+        avail_v = footer_y - flow_top - 0.26 - icon_size - label_h
+        icon_y = flow_top + 0.26 + max(avail_v / 2, 0)
 
         role_colors = {
             "customer": "teal", "admin": "purple",
@@ -305,54 +338,74 @@ class AdtimaBoxPPTXGenerator:
         }
 
         for i, st in enumerate(steps):
-            x = PAD_X + i * step_w
+            cx = PAD_X + i * step_w + step_w / 2
             role = st.get("role", "customer")
             dot = st.get("dot", "core")
-            role_color = role_colors.get(role, "gray_lt")
+            rc = role_colors.get(role, "gray_lt")
 
-            # Role pill strip at top
-            pill = slide.shapes.add_shape(1, Inches(x + 0.05), Inches(step_top),
-                                          Inches(step_w - 0.12), Inches(0.18))
-            pill.fill.solid()
-            pill.fill.fore_color.rgb = self._rgb(role_color)
+            # Role pill (centered on cx)
+            pill_w, pill_h = min(step_w - 0.12, 0.90), 0.16
+            px = cx - pill_w / 2
+            pill = slide.shapes.add_shape(5, Inches(px), Inches(icon_y - 0.26),
+                                           Inches(pill_w), Inches(pill_h))
+            pill.fill.solid(); pill.fill.fore_color.rgb = self._rgb(rc)
             pill.line.fill.background()
-            self._text(slide, x + 0.08, step_top + 0.01, step_w - 0.18, 0.16,
-                       role.upper(), 6.5, "white", bold=True)
+            self._text(slide, px + 0.02, icon_y - 0.26, pill_w - 0.04, pill_h,
+                       role.upper(), 6.5, "white", bold=True, align="CENTER")
 
-            # Icon box
-            icon_y = step_top + 0.22
-            icon_box = slide.shapes.add_shape(1, Inches(x + step_w / 2 - 0.28), Inches(icon_y),
-                                              Inches(0.56), Inches(0.56))
-            icon_box.fill.solid()
-            icon_box.fill.fore_color.rgb = self._rgb("white")
-            icon_box.line.color.rgb = self._rgb("line")
-            icon_box.line.width = Pt(0.5)
-            self._text(slide, x + step_w / 2 - 0.27, icon_y + 0.04, 0.54, 0.46,
+            # Icon box (centered on cx)
+            ix = cx - icon_size / 2
+            icon_box = slide.shapes.add_shape(1, Inches(ix), Inches(icon_y),
+                                               Inches(icon_size), Inches(icon_size))
+            icon_box.fill.solid(); icon_box.fill.fore_color.rgb = self._rgb("white")
+            icon_box.line.color.rgb = self._rgb("line"); icon_box.line.width = Pt(0.5)
+            self._text(slide, ix + 0.02, icon_y + 0.05, icon_size - 0.04, icon_size - 0.10,
                        st.get("icon", ""), 18, "ink", align="CENTER")
 
-            # Core/custom dot
+            # Core/custom dot (top-right of icon)
             dot_color = "teal" if dot == "core" else "orange"
-            dd = slide.shapes.add_shape(1, Inches(x + step_w / 2 + 0.14), Inches(icon_y - 0.04),
-                                        Inches(0.12), Inches(0.12))
-            dd.fill.solid()
-            dd.fill.fore_color.rgb = self._rgb(dot_color)
+            dd = slide.shapes.add_shape(1, Inches(cx + icon_size / 2 - 0.10), Inches(icon_y - 0.04),
+                                         Inches(0.11), Inches(0.11))
+            dd.fill.solid(); dd.fill.fore_color.rgb = self._rgb(dot_color)
             dd.line.fill.background()
 
-            # Label + desc
-            self._text(slide, x + 0.06, icon_y + 0.62, step_w - 0.14, 0.30,
-                       st.get("label", ""), 9.5, "ink", bold=True, align="CENTER")
-            self._text(slide, x + 0.06, icon_y + 0.94, step_w - 0.14, 0.55,
-                       st.get("desc", ""), 8, "gray", align="CENTER")
+            # Label + desc centered below icon
+            lbl_w = min(step_w - 0.10, 1.20)
+            lx = cx - lbl_w / 2
+            self._text(slide, lx, icon_y + icon_size + 0.10, lbl_w, 0.26,
+                       st.get("label", ""), 9, "ink", bold=True, align="CENTER")
+            self._text(slide, lx, icon_y + icon_size + 0.38, lbl_w, 0.42,
+                       st.get("desc", ""), 7.5, "gray", align="CENTER")
 
             # Arrow between steps
             if i < n - 1:
-                arr = slide.shapes.add_shape(1, Inches(x + step_w - 0.12), Inches(step_top + step_h / 2),
-                                             Inches(0.14), Inches(0.10))
-                arr.fill.solid()
-                arr.fill.fore_color.rgb = self._rgb("line")
+                arr_x = cx + icon_size / 2 + 0.04
+                arr_w = max(step_w - icon_size - 0.14, 0.05)
+                arr = slide.shapes.add_shape(1, Inches(arr_x), Inches(icon_y + icon_size / 2 - 0.005),
+                                              Inches(arr_w), Inches(0.01))
+                arr.fill.solid(); arr.fill.fore_color.rgb = self._rgb("gray_lt")
                 arr.line.fill.background()
 
-        self._stat_bar(slide, sd.get("stats") or [])
+        # ── Footer (if present) ──
+        if footer:
+            fdiv = slide.shapes.add_shape(1, Inches(PAD_X), Inches(footer_y),
+                                           Inches(CONTENT_W), Inches(0.008))
+            fdiv.fill.solid(); fdiv.fill.fore_color.rgb = self._rgb("line")
+            fdiv.line.fill.background()
+            tb = slide.shapes.add_textbox(Inches(PAD_X), Inches(footer_y + 0.04),
+                                           Inches(CONTENT_W), Inches(footer_h))
+            tf = tb.text_frame; tf.word_wrap = True
+            p = tf.paragraphs[0]
+            r1 = p.add_run()
+            r1.text = "Custom thêm: "
+            r1.font.name = FONT; r1.font.size = Pt(8)
+            r1.font.bold = True; r1.font.color.rgb = self._rgb("ink")
+            r2 = p.add_run()
+            r2.text = footer
+            r2.font.name = FONT; r2.font.size = Pt(8)
+            r2.font.bold = False; r2.font.color.rgb = self._rgb("gray")
+
+        self._stat_bar(slide, sd.get("stats") or [], no_line=bool(footer))
 
     def _render_tier(self, slide, sd: dict):
         from pptx.util import Inches, Pt
@@ -360,25 +413,27 @@ class AdtimaBoxPPTXGenerator:
         hl = sd.get("headline", {})
         self._topbar(slide, sd.get("eyebrow", ""))
 
-        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W, 0.65,
-                         hl.get("plain", ""), hl.get("bold", ""), 24)
+        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W, 0.85,
+                         hl.get("plain", ""), hl.get("bold", ""), 22)
 
         lede = sd.get("lede", "")
         if lede:
-            self._text(slide, PAD_X, BODY_TOP + 0.68, CONTENT_W, 0.30, lede, 10, "gray")
+            # Lede fits inside headline block (0.62" to 0.84" from BODY_TOP)
+            self._text(slide, PAD_X, BODY_TOP + 0.62, CONTENT_W - 1.0, 0.22, lede, 10, "gray")
 
         tiers = (sd.get("tiers") or [])[:4]
         n = max(len(tiers), 1)
-        tier_w = CONTENT_W / n
-        tier_top = BODY_TOP + (1.05 if lede else 0.75)
+        gap = 0.10  # gap between tier cards
+        tier_w = (CONTENT_W - gap * (n - 1)) / n
+        tier_top = BODY_TOP + 0.92  # constant — lede sits inside headline block above
         tier_h = SLIDE_H - tier_top - STAT_BAR_H - 0.12
 
         for i, t in enumerate(tiers):
-            x = PAD_X + i * tier_w
+            x = PAD_X + i * (tier_w + gap)
 
             # Card bg
-            crd = slide.shapes.add_shape(1, Inches(x + 0.05), Inches(tier_top),
-                                         Inches(tier_w - 0.12), Inches(tier_h))
+            crd = slide.shapes.add_shape(1, Inches(x + 0.04), Inches(tier_top),
+                                         Inches(tier_w - 0.06), Inches(tier_h))
             crd.fill.solid()
             crd.fill.fore_color.rgb = self._rgb("white")
             crd.line.color.rgb = self._rgb("line")
@@ -386,8 +441,8 @@ class AdtimaBoxPPTXGenerator:
 
             # Top color bar (6px ≈ 0.06")
             bar_color = self._hex_rgb(t.get("barColor", "ECE6E1"))
-            top_bar = slide.shapes.add_shape(1, Inches(x + 0.05), Inches(tier_top),
-                                             Inches(tier_w - 0.12), Inches(0.06))
+            top_bar = slide.shapes.add_shape(1, Inches(x + 0.04), Inches(tier_top),
+                                             Inches(tier_w - 0.06), Inches(0.06))
             top_bar.fill.solid()
             top_bar.fill.fore_color.rgb = bar_color
             top_bar.line.fill.background()
@@ -397,7 +452,7 @@ class AdtimaBoxPPTXGenerator:
             name_tb = slide.shapes.add_textbox(Inches(x + 0.12), Inches(tier_top + 0.10),
                                                Inches(tier_w - 0.26), Inches(0.30))
             nf = name_tb.text_frame
-            nf.word_wrap = False
+            nf.word_wrap = True
             np_ = nf.paragraphs[0]
             nr = np_.add_run()
             nr.text = t.get("name", "")
@@ -410,31 +465,42 @@ class AdtimaBoxPPTXGenerator:
             self._text(slide, x + 0.12, tier_top + 0.38, tier_w - 0.26, 0.22,
                        t.get("module", ""), 7.5, "gray_lt", bold=True)
 
-            # Price
-            self._text(slide, x + 0.12, tier_top + 0.60, tier_w - 0.26, 0.45,
-                       t.get("price", ""), 17, "ink", bold=True)
+            # Price — split amount (large) + unit (small gray)
+            price_str = t.get("price", "")
+            p_parts = price_str.rsplit(" ", 1)
+            amount_str = p_parts[0]
+            unit_str = p_parts[1] if len(p_parts) > 1 else ""
+            self._text(slide, x + 0.12, tier_top + 0.60, tier_w - 0.26, 0.38,
+                       amount_str, 20, "ink", bold=True)
+            if unit_str:
+                self._text(slide, x + 0.12, tier_top + 0.96, tier_w - 0.26, 0.18,
+                           unit_str, 8, "gray")
 
             # Period
-            self._text(slide, x + 0.12, tier_top + 1.02, tier_w - 0.26, 0.22,
+            self._text(slide, x + 0.12, tier_top + 1.16, tier_w - 0.26, 0.22,
                        t.get("period", ""), 8, "gray_lt")
 
             # Divider
-            d = slide.shapes.add_shape(1, Inches(x + 0.12), Inches(tier_top + 1.24),
+            d = slide.shapes.add_shape(1, Inches(x + 0.12), Inches(tier_top + 1.38),
                                        Inches(tier_w - 0.26), Inches(0.01))
             d.fill.solid()
             d.fill.fore_color.rgb = self._rgb("line")
             d.line.fill.background()
 
-            # Checks
-            cy = tier_top + 1.32
-            for ck in (t.get("checks") or [])[:5]:
+            # Checks — dynamic cap to never overlap deploy text
+            deploy = t.get("deploy", "")
+            deploy_y = tier_top + tier_h - 0.34
+            checks_start = tier_top + 1.46
+            available_h = deploy_y - checks_start - 0.10
+            max_ck = max(0, min(4, int(available_h / 0.27)))
+            cy = checks_start
+            for ck in (t.get("checks") or [])[:max_ck]:
                 self._text(slide, x + 0.24, cy, tier_w - 0.38, 0.25, "✓  " + ck, 8.5, "ink")
-                cy += 0.28
+                cy += 0.27
 
             # Deploy
-            deploy = t.get("deploy", "")
             if deploy:
-                self._text(slide, x + 0.12, tier_top + tier_h - 0.34, tier_w - 0.26, 0.30,
+                self._text(slide, x + 0.12, deploy_y, tier_w - 0.26, 0.30,
                            f"Triển khai: {deploy}", 8, "gray")
 
         self._stat_bar(slide, sd.get("stats") or [])

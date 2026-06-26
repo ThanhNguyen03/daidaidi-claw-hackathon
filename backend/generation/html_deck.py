@@ -120,6 +120,8 @@ body{
 .flow-footer{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);}
 .flow-footer p{font-size:12px;color:var(--gray);line-height:1.6;}
 .flow-footer b{font-weight:600;color:var(--ink);}
+.legend-role{font-size:12px;color:var(--gray);margin-left:auto;}
+.has-footer .stat-bar{border-top:none;padding-top:10px;}
 
 /* ── TIER pricing ──────────────────────────────────────────────────────── */
 .pricing-body{flex:1;display:flex;flex-direction:column;margin-top:20px;}
@@ -127,6 +129,7 @@ body{
 .pricing-body h2 b{color:var(--orange);font-weight:700;}
 .lede-sm{font-size:14px;color:var(--gray);line-height:1.6;margin-bottom:18px;}
 .tier-grid{display:grid;gap:14px;flex:1;}
+.tier-grid.cols-1{grid-template-columns:1fr;max-width:420px;}
 .tier-grid.cols-2{grid-template-columns:1fr 1fr;}
 .tier-grid.cols-3{grid-template-columns:1fr 1fr 1fr;}
 .tier-grid.cols-4{grid-template-columns:1fr 1fr 1fr 1fr;}
@@ -148,12 +151,19 @@ body{
 
 # ─── EXTRACTION PROMPT (aligned with adtimabox-deck.skill schema) ─────────
 _EXTRACT_SYSTEM = """You are a slide-deck content extractor for AdtimaBox branded presentations.
-Given a sales proposal in Markdown, extract structured slide data.
+Given a sales proposal in Markdown, extract ALL content into structured slide data.
 
 IMPORTANT OUTPUT RULE: Your response must start with [ and end with ]. Output ONLY the raw JSON array.
 No preamble, no explanation, no markdown fences (no ```), no trailing text. Just the JSON array itself.
 
-Max 5 slides. Slide schemas — use EXACTLY these field names:
+SLIDE COUNT: Generate 3–5 slides. Do NOT generate fewer than 3 slides.
+
+MANDATORY slide order:
+1. VALUE slide(s) — one per major product/module section in the proposal (e.g. one for OA features, one for ZNS+Mini App features). If only one module, one slide suffices. Max 2 value slides.
+2. FLOW slide — REQUIRED if ANY user journey, userflow, or sequence of steps is described.
+3. TIER slide — REQUIRED if ANY pricing, packages, or tiers are mentioned.
+
+Slide schemas — use EXACTLY these field names:
 
 VALUE slide (solution features):
 {"type":"value","eyebrow":"<2-3 word context>","tier":"<optional tier label or empty string>","headline":{"plain":"<main phrase ending with space>","bold":"<1-3 key words>"},"lede":"<1 sentence summary, max 18 words>","cards":[{"icon":"<single emoji>","title":"<feature, max 6 words>","desc":"<benefit, max 12 words>","tag":null}],"stats":[{"v":"<metric with unit>","l":"<3-word label>"}]}
@@ -164,13 +174,14 @@ FLOW slide (user journey):
 TIER slide (pricing):
 {"type":"tier","eyebrow":"<section label>","headline":{"plain":"<phrase ending with space>","bold":"<key phrase>"},"lede":"<1 sentence, max 15 words>","tiers":[{"barColor":"<hex no #, pastel>","name":"<tier name>","nameColor":"<hex no #>","module":"<module name>","price":"<amount + unit, e.g. 20M VNĐ>","period":"<duration>","checks":["<feature, max 8 words>"],"deploy":"<X ngày làm việc>"}],"stats":[{"v":"<metric>","l":"<3-word label>"}]}
 
-Rules:
-- 1 value slide minimum; add flow if user journey is described; add tier if pricing exists
-- cards: max 4 per slide, always include icon emoji
-- steps: max 6 per flow slide, assign role (customer/admin/staff/system) and dot (core/custom)
-- tiers: max 4; use colors — purple tier: nameColor=5B4FC4 barColor=D4CEEF; teal tier: nameColor=0F9B8E barColor=B8E4DF; orange tier: nameColor=F65009 barColor=FFD9CC
-- stats: 3-4 real numbers from the proposal per slide
-- card tag field: null if no custom/add-on, otherwise {"type":"core|custom","text":"<label>"}
+Content rules:
+- cards: FILL ALL 4 cards per value slide — extract 4 distinct features from the proposal
+- steps: FILL ALL steps (up to 6) per flow slide — extract every step of the user journey
+- tiers: extract ALL tiers/packages mentioned (up to 4); use colors — purple: nameColor=5B4FC4 barColor=D4CEEF; teal: nameColor=0F9B8E barColor=B8E4DF; orange: nameColor=F65009 barColor=FFD9CC; gold: nameColor=C8932B barColor=F5E6C4
+- stats: 3-4 REAL numbers from the proposal per slide (price, timeline, capacity, etc.)
+- card tag: null if no custom/add-on; {"type":"core|custom","text":"CUSTOM +XM VNĐ"} if add-on exists
+- flow footer: if custom add-ons exist outside main flow, list them here as "Addon A (+XM) · Addon B (liên hệ)"
+- headline: plain + bold COMBINED max 8 words — short, punchy; long headlines break layout
 - CRITICAL: Vietnamese spelling — never duplicate vowel diacritics (write "Sách" not "Sáách")
 - START your response with [ — the very first character must be ["""
 
@@ -207,15 +218,23 @@ def _find_json_array(text: str) -> str:
 
 
 def _validate_slides(slides: list) -> list:
-    """Drop slides missing required fields; keeps only value/flow/tier types."""
+    """Drop slides missing required fields or with empty content."""
     valid = []
     required = {"value": ["headline", "cards"], "flow": ["headline", "steps"], "tier": ["headline", "tiers"]}
     for s in slides:
         t = s.get("type")
         if t not in required:
             continue
-        if all(s.get(f) for f in required[t]):
-            valid.append(s)
+        if not all(s.get(f) for f in required[t]):
+            continue
+        # Ensure at least one item has meaningful content
+        if t == "value" and not any(c.get("title") for c in (s.get("cards") or [])):
+            continue
+        if t == "flow" and not any(st.get("label") for st in (s.get("steps") or [])):
+            continue
+        if t == "tier" and not any(ti.get("name") for ti in (s.get("tiers") or [])):
+            continue
+        valid.append(s)
     return valid
 
 
@@ -249,8 +268,8 @@ class HTMLDeckGenerator:
         # Use design model (minimax) — better at strict JSON-only output, no thinking mode issues
         client = get_llm_client("design")
         brand_hint = (brief or {}).get("industry", "")
-        # Second attempt: shorter input to reduce LLM confusion
-        trimmed = proposal_text[:4000] if attempt > 0 else proposal_text[:8000]
+        # Second attempt: slightly shorter input to reduce LLM confusion
+        trimmed = proposal_text[:6000] if attempt > 0 else proposal_text[:10000]
 
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
@@ -262,7 +281,7 @@ class HTMLDeckGenerator:
                     {"role": "user", "content": f"Brand context: {brand_hint}\n\nProposal:\n{trimmed}"},
                 ],
                 temperature=0.0,
-                max_tokens=3000,
+                max_tokens=4500,
                 stream=False,
             ),
         )
@@ -424,7 +443,8 @@ class HTMLDeckGenerator:
         if footer:
             footer_html = f'<div class="flow-footer"><p><b>Custom thêm:</b> {_esc(footer)}</p></div>'
 
-        return f"""<div class="slide">
+        slide_cls = "slide has-footer" if footer else "slide"
+        return f"""<div class="{slide_cls}">
   {self._topbar(sd.get("eyebrow",""))}
   <div class="flow-body">
     <div class="flow-heading">
@@ -433,6 +453,7 @@ class HTMLDeckGenerator:
     <div class="legend">
       <div class="legend-item"><div class="legend-dot core"></div>Core (có sẵn)</div>
       <div class="legend-item"><div class="legend-dot custom"></div>Custom (mở rộng)</div>
+      <div class="legend-role">Tím = Admin · CMS &nbsp;&nbsp; Xanh = Customer · Mini App</div>
     </div>
     <div class="flow-row">{steps_html}</div>
     {footer_html}
@@ -450,17 +471,23 @@ class HTMLDeckGenerator:
         stats = sd.get("stats") or []
 
         n = min(len(tiers), 4)
-        grid_cls = f"cols-{n}" if n >= 2 else "cols-2"
+        grid_cls = f"cols-{n}" if n >= 2 else "cols-1"
         cards_html = ""
         for t in tiers[:4]:
             bar_color = _esc(t.get("barColor", "ECE6E1"))
             name_color = _esc(t.get("nameColor", "1D1D1F"))
             name = _esc(t.get("name", ""))
             module = _esc(t.get("module", ""))
-            price = _esc(t.get("price", ""))
+            price_str = t.get("price", "")
             period = _esc(t.get("period", ""))
             checks = t.get("checks") or []
             deploy = _esc(t.get("deploy", ""))
+
+            # Split price into amount + unit (e.g. "20M" + "VNĐ")
+            p_parts = price_str.rsplit(" ", 1)
+            amount = _esc(p_parts[0])
+            unit = _esc(p_parts[1]) if len(p_parts) > 1 else ""
+            unit_span = f'<span class="unit">{unit}</span>' if unit else ""
 
             checks_html = "".join(
                 f'<div class="check-row"><span class="check-icon">✓</span>{_esc(c)}</div>'
@@ -471,7 +498,7 @@ class HTMLDeckGenerator:
   <div class="tier-inner">
     <div class="tier-name" style="color:#{name_color}">{name}</div>
     <div class="tier-module">{module}</div>
-    <div class="tier-price"><span class="amount">{price}</span></div>
+    <div class="tier-price"><span class="amount">{amount}</span>{unit_span}</div>
     <div class="tier-period">{period}</div>
     <div class="tier-checks">{checks_html}</div>
     {f'<div class="tier-deploy"><b>Triển khai:</b> {deploy}</div>' if deploy else ""}

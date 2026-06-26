@@ -39,9 +39,6 @@ class WireframeDesignerSkill(BaseSkill):
         )
 
     async def execute(self, context: SkillContext) -> SkillOutput:
-        from generation.html_deck import create_html_deck_generator
-        from generation.pptx_adtimabox import create_adtimabox_pptx_generator
-
         # Get proposal content — prefer proposal_assembler output, fall back to last assistant msg
         proposal_content = (
             context.previous_outputs.get("proposal_assembler", {}).get("content", "")
@@ -75,32 +72,40 @@ class WireframeDesignerSkill(BaseSkill):
 
         sid = context.session_id or uuid.uuid4().hex[:10]
 
-        # Pass SKILL.md content to deck generators so LLM extraction uses the spec
-        skill_spec = self._skill_content or ""
+        from generation.html_deck import HTMLDeckGenerator
+        from generation.pptx_adtimabox import AdtimaBoxPPTXGenerator
 
-        # 1. HTML deck
+        # Extract slides ONCE — share result between HTML + PPTX to ensure consistency
+        extractor = HTMLDeckGenerator()
+        try:
+            slides_data = await extractor._extract_slides_with_retry(proposal_content, brief_dict)
+        except Exception as e:
+            print(f"[WireframeDesigner] Slide extraction error: {e}")
+            slides_data = extractor._fallback_slides(brief_dict)
+
+        # 1. HTML deck — render only (no extra LLM call)
         html_content = ""
         try:
-            html_gen = create_html_deck_generator()
-            html_content = await html_gen.generate(proposal_content, brief_dict, skill_spec)
+            html_content = extractor._render_html(slides_data)
         except Exception as e:
-            print(f"[WireframeDesigner] HTML generation error: {e}")
+            print(f"[WireframeDesigner] HTML render error: {e}")
 
-        # 2. PPTX — write to system tempfile, read bytes, delete immediately
+        # 2. PPTX — build only (no extra LLM call)
         pptx_bytes: bytes | None = None
+        tmp_path = None
         try:
-            pptx_gen = create_adtimabox_pptx_generator()
+            pptx_gen = AdtimaBoxPPTXGenerator()
             tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pptx")
             os.close(tmp_fd)
-            result = await pptx_gen.generate(proposal_content, brief_dict, tmp_path, skill_spec)
-            if result.get("status") == "success" and os.path.exists(tmp_path):
-                with open(tmp_path, "rb") as f:
-                    pptx_bytes = f.read()
+            prs = pptx_gen._build_pptx(slides_data)
+            prs.save(tmp_path)
+            with open(tmp_path, "rb") as f:
+                pptx_bytes = f.read()
         except Exception as e:
-            print(f"[WireframeDesigner] PPTX generation error: {e}")
+            print(f"[WireframeDesigner] PPTX build error: {e}")
         finally:
             try:
-                if 'tmp_path' in dir() and os.path.exists(tmp_path):
+                if tmp_path and os.path.exists(tmp_path):
                     os.unlink(tmp_path)
             except Exception:
                 pass

@@ -199,6 +199,105 @@ def _build_contextual_skill_plan(state, message: str) -> list[list[dict[str, str
     ]]
 
 
+_GANTT_DATE_RE = re.compile(r'\d{4}-\d{2}-\d{2}')
+_GANTT_YEAR_RE = re.compile(r'\b(\d{4})\b')
+
+
+def _fix_gantt(content: str) -> str:
+    """Repair gantt task lines with incomplete dates/durations so Mermaid renders correctly.
+    Never removes task lines — only fixes their format.
+
+    Common fixes:
+    - Year-only date "2024"  → padded to "2024-01-01" (or inferred from prior task end)
+    - Missing duration       → appended default "7d"
+    """
+    from datetime import datetime, timedelta
+
+    def _advance_date(date_str: str, days: int) -> str:
+        try:
+            return (datetime.strptime(date_str, "%Y-%m-%d") + timedelta(days=days)).strftime("%Y-%m-%d")
+        except ValueError:
+            return date_str
+
+    def _fix_block(m: re.Match) -> str:
+        lines = m.group(0).split('\n')
+        out = []
+        last_date = None   # last known valid YYYY-MM-DD
+        last_dur = 7       # last known duration in days
+
+        for line in lines:
+            stripped = line.strip()
+            indent = line[: len(line) - len(line.lstrip())]
+
+            # Non-task lines (fences, directives, sections) — keep as-is
+            if (not stripped or stripped.startswith('```') or
+                    re.match(r'^(title|dateFormat|axisFormat|excludes|section|gantt)', stripped, re.I)):
+                out.append(line)
+                continue
+
+            # Lines without ':' are not task lines
+            if ':' not in stripped:
+                out.append(line)
+                continue
+
+            # Already has a valid date → keep, update context
+            if _GANTT_DATE_RE.search(stripped):
+                dm = _GANTT_DATE_RE.search(stripped)
+                last_date = dm.group(0)
+                dur_m = re.search(r'(\d+)d\b', stripped)
+                if dur_m:
+                    last_dur = int(dur_m.group(1))
+                out.append(line)
+                continue
+
+            # --- Task line with invalid/incomplete date → repair ---
+            # Split on ':' to separate task name from id/date/duration
+            colon_idx = stripped.index(':')
+            task_name = stripped[:colon_idx]
+            params_raw = stripped[colon_idx + 1:]
+            params = [p.strip() for p in params_raw.split(',')]
+
+            # Fix year-only date like "2024"
+            fixed_date = None
+            for i, p in enumerate(params):
+                if _GANTT_DATE_RE.match(p):
+                    fixed_date = p
+                    break
+                if _GANTT_YEAR_RE.fullmatch(p):
+                    # Infer date: day after last task ended (or Jan 1 if no context)
+                    inferred = _advance_date(last_date, last_dur) if last_date else f"{p}-01-01"
+                    params[i] = inferred
+                    fixed_date = inferred
+                    break
+
+            # If still no date found, infer entirely
+            if not fixed_date:
+                inferred = _advance_date(last_date, last_dur) if last_date else "2024-01-01"
+                # Insert date after the first param (which is usually the id like 'a2')
+                if params:
+                    params.insert(1, inferred)
+                else:
+                    params.append(inferred)
+                fixed_date = inferred
+
+            # Ensure duration is present (last param should match \d+d)
+            if not re.search(r'\d+d\b', params[-1]):
+                params.append(f"{last_dur}d")
+
+            fixed_line = f"{indent}{task_name}:{', '.join(params)}"
+            out.append(fixed_line)
+
+            # Update context
+            last_date = fixed_date
+            dur_m = re.search(r'(\d+)d\b', params[-1])
+            if dur_m:
+                last_dur = int(dur_m.group(1))
+
+        return '\n'.join(out)
+
+    return re.sub(r'```(?:mermaid\s*)?\ngantt[\s\S]*?```', _fix_block, content)
+
+
 class CentralAgent:
     """Central agent: assess brief completeness, clarify if needed, then dispatch skills."""
 
@@ -566,7 +665,7 @@ class CentralAgent:
             if prior_skill_names and "proposal_assembler" in prior_skill_names:
                 return
             # First time proposal generated → stream full content.
-            content = proposal_out.content
+            content = _fix_gantt(proposal_out.content)
             yield {"type": "content", "content": content}
             state.messages.append({
                 "role": "assistant", "content": content,
