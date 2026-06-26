@@ -272,8 +272,8 @@ function parseTimeline(content: string): TimelineColumn[] | null {
 function BarChartCard({ title, items }: { title: string; items: BarItem[] }) {
   return (
     <div style={{
-      background: 'linear-gradient(135deg, #f8f7ff 0%, #f0f0ff 100%)',
-      border: '1px solid #e0e7ff',
+      background: 'var(--color-surface)',
+      border: '1px solid var(--color-border)',
       borderRadius: '12px',
       padding: '1.25rem 1.5rem',
       margin: '1rem 0',
@@ -282,10 +282,10 @@ function BarChartCard({ title, items }: { title: string; items: BarItem[] }) {
         <div style={{
           fontSize: '0.875rem',
           fontWeight: 700,
-          color: '#1e1b4b',
+          color: 'var(--color-text)',
           marginBottom: '1.25rem',
           paddingBottom: '0.75rem',
-          borderBottom: '2px solid #e0e7ff',
+          borderBottom: '2px solid var(--color-border)',
           letterSpacing: '0.01em',
         }}>
           {title}
@@ -296,10 +296,10 @@ function BarChartCard({ title, items }: { title: string; items: BarItem[] }) {
           if (item.isSection) {
             return (
               <div key={i} style={{
-                fontSize: '0.8rem', fontWeight: 700, color: '#374151',
+                fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-text-muted)',
                 marginTop: i > 0 ? '0.5rem' : 0,
                 paddingTop: i > 0 ? '0.5rem' : 0,
-                borderTop: i > 0 ? '1px solid #e0e7ff' : 'none',
+                borderTop: i > 0 ? '1px solid var(--color-border)' : 'none',
               }}>
                 {item.label}
               </div>
@@ -311,14 +311,14 @@ function BarChartCard({ title, items }: { title: string; items: BarItem[] }) {
           return (
             <div key={i}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.3rem' }}>
-                <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#1f2937' }}>{item.label}</span>
+                <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--color-text)' }}>{item.label}</span>
                 {valueLabel && (
-                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: color.text, marginLeft: '0.75rem', flexShrink: 0 }}>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: color.solid, marginLeft: '0.75rem', flexShrink: 0 }}>
                     {valueLabel}
                   </span>
                 )}
               </div>
-              <div style={{ background: '#e5e7eb', borderRadius: '100px', height: '10px', overflow: 'hidden' }}>
+              <div style={{ background: 'var(--color-surface-2)', borderRadius: '100px', height: '10px', overflow: 'hidden' }}>
                 <div style={{
                   width: `${item.pct}%`,
                   height: '100%',
@@ -327,7 +327,7 @@ function BarChartCard({ title, items }: { title: string; items: BarItem[] }) {
                 }} />
               </div>
               {item.detail && (
-                <div style={{ fontSize: '0.775rem', color: '#6b7280', marginTop: '0.3rem' }}>
+                <div style={{ fontSize: '0.775rem', color: 'var(--color-text-muted)', marginTop: '0.3rem' }}>
                   {item.detail}
                 </div>
               )}
@@ -342,8 +342,8 @@ function BarChartCard({ title, items }: { title: string; items: BarItem[] }) {
 function TimelineCard({ columns }: { columns: TimelineColumn[] }) {
   return (
     <div style={{
-      background: '#f8f7ff',
-      border: '1px solid #e0e7ff',
+      background: 'var(--color-surface)',
+      border: '1px solid var(--color-border)',
       borderRadius: '12px',
       padding: '1.25rem',
       margin: '1rem 0',
@@ -358,10 +358,10 @@ function TimelineCard({ columns }: { columns: TimelineColumn[] }) {
           <div key={i} style={{
             background: col.active
               ? 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)'
-              : '#e5e7eb',
+              : 'var(--color-surface-2)',
             borderRadius: '10px',
             padding: '0.875rem 1rem',
-            color: col.active ? '#fff' : '#6b7280',
+            color: col.active ? '#fff' : 'var(--color-text-muted)',
           }}>
             <div style={{
               fontSize: '0.7rem',
@@ -396,8 +396,8 @@ function TimelineCard({ columns }: { columns: TimelineColumn[] }) {
 function InfoBoxCard({ title, lines }: { title: string; lines: InfoLine[] }) {
   return (
     <div style={{
-      background: 'linear-gradient(135deg, #f0f4ff 0%, #f8f0ff 100%)',
-      border: '1px solid #c7d2fe',
+      background: 'var(--color-surface)',
+      border: '1px solid var(--color-border)',
       borderRadius: '12px',
       padding: '1.25rem 1.5rem',
       margin: '1rem 0',
@@ -406,10 +406,10 @@ function InfoBoxCard({ title, lines }: { title: string; lines: InfoLine[] }) {
         <div style={{
           fontSize: '0.875rem',
           fontWeight: 700,
-          color: '#1e1b4b',
+          color: 'var(--color-text)',
           marginBottom: '1rem',
           paddingBottom: '0.6rem',
-          borderBottom: '2px solid #c7d2fe',
+          borderBottom: '2px solid var(--color-border)',
           letterSpacing: '0.02em',
         }}>
           {title}
@@ -422,7 +422,7 @@ function InfoBoxCard({ title, lines }: { title: string; lines: InfoLine[] }) {
             <div key={i} style={{
               fontSize: '0.85rem',
               fontWeight: 700,
-              color: '#4338ca',
+              color: 'var(--color-accent)',
               marginTop: '0.6rem',
               marginBottom: '0.2rem',
             }}>
@@ -430,22 +430,22 @@ function InfoBoxCard({ title, lines }: { title: string; lines: InfoLine[] }) {
             </div>
           );
           if (line.type === 'bullet') return (
-            <div key={i} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.825rem', color: '#374151', paddingLeft: '0.5rem' }}>
-              <span style={{ color: '#6366f1', flexShrink: 0 }}>•</span>
+            <div key={i} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.825rem', color: 'var(--color-text)', paddingLeft: '0.5rem' }}>
+              <span style={{ color: 'var(--color-accent)', flexShrink: 0 }}>•</span>
               <span>{line.text}</span>
             </div>
           );
           if (line.type === 'checkbox') return (
-            <div key={i} style={{ display: 'flex', gap: '0.6rem', fontSize: '0.825rem', color: '#374151', paddingLeft: '0.5rem', alignItems: 'flex-start' }}>
+            <div key={i} style={{ display: 'flex', gap: '0.6rem', fontSize: '0.825rem', color: 'var(--color-text)', paddingLeft: '0.5rem', alignItems: 'flex-start' }}>
               <span style={{
-                width: '14px', height: '14px', border: '2px solid #6366f1',
+                width: '14px', height: '14px', border: '2px solid var(--color-accent)',
                 borderRadius: '3px', flexShrink: 0, marginTop: '1px', display: 'inline-block',
               }} />
               <span>{line.text}</span>
             </div>
           );
           return (
-            <div key={i} style={{ fontSize: '0.825rem', color: '#4b5563', lineHeight: 1.6 }}>
+            <div key={i} style={{ fontSize: '0.825rem', color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
               {line.text}
             </div>
           );

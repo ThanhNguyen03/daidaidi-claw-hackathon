@@ -744,9 +744,9 @@ def _extract_agent_content(agent_name: str, output) -> str:
         total = payload.get("total_vnd", 0)
         lines.append(f"\n**Tổng cộng: {total:,.0f} VND**")
         if payload.get("valid_until"):
-            lines.append(f"Hiệu lực Ä'ến: {payload['valid_until']}")
+            lines.append(f"Hiệu lực đến: {payload['valid_until']}")
         if payload.get("payment_terms"):
-            lines.append(f"Ä iá» u khoản thanh toán: {payload['payment_terms']}")
+            lines.append(f"Điều khoản thanh toán: {payload['payment_terms']}")
         return "\n".join(lines)
 
     # fallback: use summary
@@ -1193,6 +1193,42 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 })
 
             # Checkpoint/approval flow disabled — diagrams are generated inline by skills
+
+            # Emit proposal assets (HTML deck + PPTX) if wireframe_designer ran
+            wireframe_out = state.outputs.get("wireframe_designer")
+            if wireframe_out and getattr(wireframe_out, "status", "") == "COMPLETE":
+                wp = wireframe_out.payload if isinstance(wireframe_out.payload, dict) else {}
+                assets: dict = {}
+
+                html_content = wp.get("html_content", "")
+                if html_content:
+                    deck_id = f"deck_{uuid.uuid4().hex[:10]}"
+                    _artifact_store[deck_id] = {
+                        "storage": "memory",
+                        "content": html_content.encode("utf-8"),
+                        "filename": "proposal_deck.html",
+                        "media_type": "text/html",
+                        "type": "deck",
+                        "title": "Proposal Deck (HTML)",
+                    }
+                    assets["deck_url"] = f"/artifact/{deck_id}"
+
+                pptx_bytes = wp.get("pptx_bytes")
+                if pptx_bytes:
+                    pptx_id = f"pptx_{uuid.uuid4().hex[:10]}"
+                    client_name = (state.brief.industry if state.brief and state.brief.industry else "Client")
+                    _artifact_store[pptx_id] = {
+                        "storage": "memory",
+                        "content": pptx_bytes if isinstance(pptx_bytes, bytes) else bytes(pptx_bytes),
+                        "filename": f"proposal_{client_name}.pptx",
+                        "media_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                        "type": "pptx",
+                        "title": f"Proposal Deck — {client_name}",
+                    }
+                    assets["pptx_url"] = f"/artifact/{pptx_id}"
+
+                if assets:
+                    yield _sse_data({"type": "proposal_assets", **assets})
 
             # Save final state to in-memory store
             update_session(state)

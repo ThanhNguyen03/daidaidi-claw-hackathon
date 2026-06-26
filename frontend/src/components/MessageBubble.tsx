@@ -93,9 +93,10 @@ function MermaidDiagram({ chart }: { chart: string }) {
           startOnLoad: false,
           theme: isDarkMode ? 'dark' : 'default',
           securityLevel: 'loose',
-          fontSize: 14,
-          flowchart: { useMaxWidth: true, diagramPadding: 8 },
-          gantt: { fontSize: 13, barHeight: 28, barGap: 8, topPadding: 50, leftPadding: 140 },
+          fontSize: 12,
+          flowchart: { useMaxWidth: true, diagramPadding: 6 },
+          sequence: { useMaxWidth: true },
+          gantt: { fontSize: 12, barHeight: 24, barGap: 6, topPadding: 40, leftPadding: 120 },
         });
 
         // Parse first so we can distinguish syntax problems from render/runtime problems.
@@ -114,10 +115,11 @@ function MermaidDiagram({ chart }: { chart: string }) {
               svgEl.style.height = 'auto';
               svgEl.style.maxWidth = 'none';
             } else {
-              // Flowcharts/sequence diagrams: natural size, never stretch beyond container
+              // Flowcharts/sequence diagrams: cap at 78% width so diagram doesn't
+              // dwarf the surrounding text
               svgEl.removeAttribute('width');
               svgEl.removeAttribute('height');
-              svgEl.style.maxWidth = '100%';
+              svgEl.style.maxWidth = '78%';
               svgEl.style.height = 'auto';
               svgEl.style.display = 'block';
               svgEl.style.margin = '0 auto';
@@ -818,12 +820,16 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
           return <MermaidDiagram chart={rawContent} />;
         }
 
-        // ASCII charts (bar chart, timeline) — skip during streaming to avoid flicker
-        if (!isStreaming && !el.props.className) {
+        // ASCII charts — try on any non-mermaid block regardless of language tag.
+        // LLMs sometimes emit ```text or ```ascii labels; className gate caused raw fallthrough.
+        if (!isStreaming) {
           const chart = tryRenderAsciiChart(rawContent);
           if (chart) return chart;
-          const table = tryRenderPipeTable(rawContent);
-          if (table) return table;
+          // Pipe tables only make sense in untagged blocks
+          if (!el.props.className) {
+            const table = tryRenderPipeTable(rawContent);
+            if (table) return table;
+          }
         }
 
         // Box-drawing ASCII art: strip emoji to fix column alignment.
@@ -956,6 +962,70 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
             );
           })}
         </div>
+
+        {/* Proposal deck assets — shown when wireframe_designer completed */}
+        {message.proposalAssets && (message.proposalAssets.deck_url || message.proposalAssets.pptx_url) && (
+          <div
+            style={{
+              marginTop: '16px',
+              padding: '14px 18px',
+              borderRadius: '10px',
+              border: '1.5px solid rgba(246,80,9,0.5)',
+              background: 'var(--color-surface)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text)', flexShrink: 0 }}>
+              📊 Proposal Deck
+            </span>
+            {message.proposalAssets.deck_url && (
+              <a
+                href={`${typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') : ''}${message.proposalAssets.deck_url}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '7px 16px',
+                  borderRadius: '6px',
+                  background: '#0F9B8E',
+                  color: '#fff',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  textDecoration: 'none',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                🖥️ View Deck
+              </a>
+            )}
+            {message.proposalAssets.pptx_url && (
+              <a
+                href={`${typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') : ''}${message.proposalAssets.pptx_url}`}
+                download
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '7px 16px',
+                  borderRadius: '6px',
+                  background: '#F65009',
+                  color: '#fff',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  textDecoration: 'none',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                ⬇️ Download PPTX
+              </a>
+            )}
+          </div>
+        )}
 
         {/* Timestamp */}
         {!isGrouped && (

@@ -179,6 +179,7 @@ export interface Message {
   content: string;
   agent?: string;
   timestamp: string;
+  proposalAssets?: { deck_url?: string; pptx_url?: string };
 }
 
 // =============================================================================

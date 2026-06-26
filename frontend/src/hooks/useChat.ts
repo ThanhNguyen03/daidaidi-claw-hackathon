@@ -47,6 +47,7 @@ interface UseChatReturn {
   profile: SalespersonProfile | null;  // Day 4: User profile
   brief: Brief | null;  // Day 4: Current brief
   artifacts: Artifact[];  // Day 6: Generated artifacts
+  proposalAssets: { deck_url?: string; pptx_url?: string } | null;
   brainState: {  // Day 7: Brainstorm state
     session_id: string;
     participants: Array<{ agent_name: string; is_active: boolean; rounds_spoken: number }>;
@@ -117,6 +118,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
   // Day 6: Artifacts state
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+
+  // Proposal deck assets — set when wireframe_designer completes after proposal_assembler
+  const [proposalAssets, setProposalAssets] = useState<{ deck_url?: string; pptx_url?: string } | null>(null);
 
   // Day 7: Brainstorm state
   const [brainState, setBrainState] = useState<{
@@ -519,6 +523,26 @@ export function useChat(options: UseChatOptions): UseChatReturn {
               ...prev,
               ask_lock_holder: null,
             } : null);
+          }
+          break;
+
+        case 'proposal_assets':
+          // PPTX + HTML deck generated after proposal_assembler
+          {
+            const assets: { deck_url?: string; pptx_url?: string } = {};
+            if (data.deck_url) assets.deck_url = data.deck_url as string;
+            if (data.pptx_url) assets.pptx_url = data.pptx_url as string;
+            if (Object.keys(assets).length > 0) {
+              setProposalAssets(assets);
+              // Attach to last assistant message for scoped rendering
+              setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                if (last && last.role === 'assistant') {
+                  return [...prev.slice(0, -1), { ...last, proposalAssets: assets }];
+                }
+                return prev;
+              });
+            }
           }
           break;
 
@@ -936,6 +960,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     profile,  // Day 4
     brief,  // Day 4
     artifacts,  // Day 6: Generated artifacts
+    proposalAssets,
     brainState,  // Day 7: Brainstorm state
     sendMessage,
     answerQuestion,

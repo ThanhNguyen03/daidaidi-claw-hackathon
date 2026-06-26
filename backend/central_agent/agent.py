@@ -54,7 +54,9 @@ _SKILL_TIMEOUT_S = 270  # per-skill wall-clock timeout; increased to give slow G
 _RECENT_HISTORY_WINDOW = 20
 _SYNTHESIS_HISTORY_WINDOW = 12
 # Skills that must always run alone in the final group (they synthesize from others)
-_ALWAYS_SEQUENTIAL: set[str] = {"proposal_assembler"}
+_ALWAYS_SEQUENTIAL: set[str] = {"proposal_assembler", "wireframe_designer"}
+# Skills that run automatically after another skill completes (not LLM-planned)
+_AUTO_AFTER: dict[str, str] = {"proposal_assembler": "wireframe_designer"}
 
 
 # ---------------------------------------------------------------------------
@@ -73,13 +75,46 @@ You receive:
 STEP 1 — CLARIFY or EXECUTE?
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-CLARIFY only when ALL three are true simultaneously:
-  1. No ASSISTANT turn appears in Conversation History (first-ever response)
-  2. No industry/sector mentioned anywhere (message or accumulated brief)
-  3. No goal/objective mentioned anywhere (message or accumulated brief)
+Count CLARIFICATION ROUNDS USED = number of ASSISTANT turns in Conversation History.
 
-EXECUTE in every other situation — ongoing conversation, partial brief, any business context.
-When in doubt → EXECUTE. Skills handle incomplete info with reasonable assumptions.
+ALWAYS EXECUTE when clarification rounds ≥ 2 — never ask more questions after 2 rounds.
+
+Otherwise, decide based on task type and missing info:
+
+QUOTE / PRICING request ("báo giá", "bảng giá", "estimate", "quotation"):
+  → CLARIFY if missing ANY of: (1) primary use-case/objective, (2) short campaign or long-term loyalty, (3) rough user base / database size
+  → Questions to ask: objective, campaign type, expected scale, existing CRM integration, budget range
+
+STRATEGY / MARKET ANALYSIS request (first response — 0 prior assistant turns):
+  → CLARIFY if missing industry OR missing primary goal/objective
+  → CLARIFY if industry + goal present but missing ALL of: scale/user-base, budget range, timeline
+  → EXECUTE only if industry + goal + at least one of (scale, budget, timeline) is known
+
+STRATEGY / MARKET ANALYSIS request (follow-up — ≥1 prior assistant turn):
+  → ALWAYS EXECUTE — user is refining based on prior response
+
+DESIGN / USERFLOW request:
+  → CLARIFY if missing core mechanics or user journey goal
+  → EXECUTE if rough use-case is known
+
+FOLLOW-UP / REFINEMENT (user already received a response):
+  → ALWAYS EXECUTE — user is refining, not starting fresh
+  → Signs: "nói kĩ hơn", "giải thích thêm", "chi tiết hơn", "về phần X", "tại sao", "so sánh"
+
+GENERAL QUESTION or VAGUE REQUEST:
+  → CLARIFY if completely missing context
+  → EXECUTE if any context exists
+
+When CLARIFYING:
+  • Ask exactly 2-3 focused questions about the MOST critical missing info
+  • Be warm and direct — frame as "để đưa ra đề xuất chính xác nhất, mình cần thêm..."
+  • Do NOT ask for info already in Conversation History or Accumulated Brief
+  • Match the user's language (Vietnamese if they wrote in Vietnamese)
+  • Do NOT list more than 3 questions
+
+When EXECUTING:
+  • Skills will flag "cần xác nhận thêm" for unknowns — that is fine
+  • Do not refuse to help because of incomplete info after 2 rounds of questions
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 2 — MATCH BRIEF TO SKILLS
@@ -108,7 +143,7 @@ Skills in the same array run in parallel. Arrays run sequentially.
 proposal_assembler must be alone in the last array if included.
 
 Case A — clarify:
-{{"brief_update": {{"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": true, "clarification_message": "<1-3 warm questions in user's language>"}}
+{{"brief_update": {{"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": true, "clarification_message": "<2-3 warm focused questions in user's language>"}}
 
 Case B — execute:
 {{"brief_update": {{"industry": "<or null>", "goal": "<or null>", "target_audience": "<or null>", "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": false, "skill_plan": [[{{"skill": "<name>", "task": "<specific task>"}}]]}}"""
@@ -295,6 +330,48 @@ class CentralAgent:
                         yield {"type": "agent_status", "agent": skill_name, "status": "failed",
                                "message": str(e)}
 
+        # Step 3C: Auto-trigger wireframe_designer after proposal_assembler
+        for trigger_skill, auto_skill in _AUTO_AFTER.items():
+            if trigger_skill in all_outputs and auto_skill not in all_outputs:
+                auto = skill_registry.get(auto_skill)
+                if auto:
+                    merged_auto = {
+                        k: {"content": _safe_field(v, "content", ""),
+                            "summary": _safe_field(v, "summary", ""),
+                            "payload": _safe_field(v, "payload", {})}
+                        for k, v in state.outputs.items()
+                    }
+                    merged_auto.update({
+                        k: {"content": v.content, "summary": v.summary, "payload": v.payload}
+                        for k, v in all_outputs.items()
+                    })
+                    auto_ctx = SkillContext(
+                        task="Generate proposal deck assets (HTML deck + PPTX)",
+                        brief=state.brief,
+                        messages=state.messages[-_RECENT_HISTORY_WINDOW:],
+                        previous_outputs=merged_auto,
+                        constraints=state.constraints,
+                        session_id=state.session_id,
+                    )
+                    yield {"type": "agent_status", "agent": auto_skill, "status": "thinking"}
+                    try:
+                        auto_out = await asyncio.wait_for(
+                            auto.execute(auto_ctx), timeout=_SKILL_TIMEOUT_S
+                        )
+                        all_outputs[auto_skill] = auto_out
+                        state.outputs[auto_skill] = AgentOutput(
+                            agent=auto_skill,
+                            status="COMPLETE" if auto_out.status == "COMPLETE" else "FAILED",
+                            payload=auto_out.payload,
+                            summary=auto_out.summary,
+                            content=auto_out.content,
+                            confidence=auto_out.confidence,
+                        )
+                        yield {"type": "agent_status", "agent": auto_skill, "status": "completed"}
+                    except Exception as e:
+                        print(f"[CentralAgent] Auto-skill {auto_skill} error: {e}")
+                        yield {"type": "agent_status", "agent": auto_skill, "status": "failed"}
+
         # Step 4: Synthesize final response
         if all_outputs:
             async for event in self._synthesize(state, message, all_outputs):
@@ -343,10 +420,13 @@ class CentralAgent:
         client = get_llm_client("central_agent")
 
         # Build a live skill catalog from the registry — no hardcoded skill names.
+        # Exclude auto-triggered skills from the LLM's planning catalog.
+        _EXCLUDE_FROM_PLAN = {"wireframe_designer"}
         registry = get_skill_registry()
         skill_catalog = "\n".join(
             f"  {name}: {desc}"
             for name, desc in registry.descriptions().items()
+            if name not in _EXCLUDE_FROM_PLAN
         )
         system_prompt = _PLANNING_SYSTEM_TEMPLATE.format(skill_catalog=skill_catalog)
 
@@ -384,9 +464,12 @@ class CentralAgent:
 
         result = json.loads(raw)
 
-        # Guard: if prior ASSISTANT turns exist, never re-clarify.
+        # Option B: allow up to 2 clarification rounds, then always execute.
+        # Round 0 (0 assistant turns): may clarify if info missing.
+        # Round 1 (1 assistant turn = first clarification): may clarify once more.
+        # Round 2+ (2+ assistant turns): execute regardless — don't over-ask.
         prior_assistant_turns = [m for m in state.messages if m.get("role") == "assistant"]
-        if prior_assistant_turns and result.get("needs_clarification"):
+        if len(prior_assistant_turns) >= 2 and result.get("needs_clarification"):
             result["needs_clarification"] = False
 
         # Safety net: if LLM returned execute but no skill_plan, build from session state.
@@ -466,18 +549,22 @@ class CentralAgent:
             for name, out in skill_outputs.items()
             if out.content
         )
-        if not outputs_block.strip():
-            msg = "Xin lỗi, mình chưa tổng hợp được kết quả phân tích. Bạn thử gửi lại câu hỏi không?"
-            yield {"type": "content", "content": msg}
-            state.messages.append({
-                "role": "assistant", "content": msg,
-                "agent": "central_agent", "timestamp": datetime.now().isoformat(),
-            })
-            return
-
         # Detect whether this is the first response or a targeted follow-up.
         # Prior assistant turns = this is a follow-up; the user already has the full picture.
         is_followup = any(m.get("role") == "assistant" for m in state.messages)
+
+        if not outputs_block.strip():
+            if not is_followup:
+                # First call with no skill output — show error
+                msg = "Xin lỗi, mình chưa tổng hợp được kết quả phân tích. Bạn thử gửi lại câu hỏi không?"
+                yield {"type": "content", "content": msg}
+                state.messages.append({
+                    "role": "assistant", "content": msg,
+                    "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+                })
+                return
+            # Follow-up with no new skill output — synthesizer can still answer from history
+            outputs_block = "(Không có phân tích mới từ chuyên gia — trả lời dựa trên ngữ cảnh hội thoại đã có.)"
 
         if not is_followup:
             system = """You are the AdtimaBox Sales AI — final proposal writer.
