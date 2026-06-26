@@ -38,11 +38,37 @@ class WireframeDesignerSkill(BaseSkill):
             skill_md_path=_SKILL_MD,
         )
 
+    def _build_rich_content(self, context: SkillContext) -> str:
+        """Aggregate all skill outputs into one rich content block for the deck extractor.
+        Includes brief + every available skill output so the LLM has maximum signal."""
+        parts: list[str] = []
+
+        if context.brief:
+            try:
+                brief_dict = context.brief.model_dump(mode="json", exclude_none=True)
+                brief_lines = "\n".join(f"- {k}: {v}" for k, v in brief_dict.items() if v)
+                if brief_lines:
+                    parts.append(f"## CLIENT BRIEF\n{brief_lines}")
+            except Exception:
+                pass
+
+        skill_order = ["market_strategy", "product_solution", "compliance", "design", "proposal_assembler"]
+        prev = context.previous_outputs or {}
+        for skill_name in skill_order:
+            content = prev.get(skill_name, {}).get("content", "")
+            if content and len(content) > 50:
+                # Cap each skill at 3000 chars to avoid overwhelming the extractor
+                parts.append(f"## {skill_name.upper()} OUTPUT\n{content[:3000]}")
+
+        return "\n\n---\n\n".join(parts)
+
     async def execute(self, context: SkillContext) -> SkillOutput:
-        # Get proposal content — prefer proposal_assembler output, fall back to last assistant msg
-        proposal_content = (
-            context.previous_outputs.get("proposal_assembler", {}).get("content", "")
-        )
+        # Build rich content from ALL skill outputs for maximum deck fidelity
+        proposal_content = self._build_rich_content(context)
+
+        # Fallback: try assembler alone, then last assistant message
+        if not proposal_content or len(proposal_content) < 100:
+            proposal_content = context.previous_outputs.get("proposal_assembler", {}).get("content", "")
         if not proposal_content or len(proposal_content) < 100:
             for m in reversed(context.messages):
                 if m.get("role") == "assistant" and len(m.get("content", "")) > 200:
@@ -59,11 +85,11 @@ class WireframeDesignerSkill(BaseSkill):
             )
 
         brief_dict: dict = {}
-        if context.brief:
-            try:
+        try:
+            if context.brief:
                 brief_dict = context.brief.model_dump(mode="json", exclude_none=True)
-            except Exception:
-                pass
+        except Exception:
+            pass
 
         try:
             os.makedirs(_ARTIFACTS_DIR, exist_ok=True)

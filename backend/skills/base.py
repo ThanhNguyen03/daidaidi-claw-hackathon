@@ -122,17 +122,26 @@ BAR CHARTS (budget breakdown, allocation, share by %):
   NEVER use █ block characters. NEVER put % at end of line. NEVER nest a box inside another box.
 
 INFO BOXES (game mechanics, form wireframes, step-by-step flows, feature descriptions):
-  Always wrap in a plain ``` code block. Use ONLY this exact format:
+  Each box = its OWN separate ``` code block. NEVER put 2+ boxes inside one fence.
+  CORRECT — two separate fences:
   ```
   ┌─────────────────────────────────────────┐
-  │  TITLE HERE                             │
-  ├─────────────────────────────────────────┤
+  │  SCREEN 1 TITLE                         │
+  ╠═════════════════════════════════════════╣
   │  🎮 Section heading:                    │
   │  • Bullet item                          │
-  │  □ Checkbox item                        │
   └─────────────────────────────────────────┘
   ```
-  Use ├──┤ separator (dashes, not ╠═╣ double-lines). ONE level of box only — NEVER nested boxes.
+
+  ```
+  ┌─────────────────────────────────────────┐
+  │  SCREEN 2 TITLE                         │
+  ╠═════════════════════════════════════════╣
+  │  □ Checkbox item                        │
+  │  • Another item                         │
+  └─────────────────────────────────────────┘
+  ```
+  Use ╠══╣ separator (double-lines). ONE level of box only — NEVER nested boxes.
 
 DIAGRAMS / USER FLOWS:
   Use Mermaid flowchart syntax. STRICT rules — the renderer will REJECT invalid syntax:

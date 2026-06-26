@@ -50,28 +50,29 @@ body{
 .logo .mark span{color:var(--orange);}
 .logo .by{font-size:11px;color:var(--gray-light);font-weight:400;margin-left:6px;}
 
-/* ── Stat-bar (margin-top:auto → bám đáy) ─────────────────────────────── */
-.stat-bar{margin-top:auto;display:flex;gap:40px;padding-top:16px;border-top:1px solid var(--line);}
-.stat-bar .sv{font-size:28px;font-weight:700;color:var(--ink);line-height:1;}
-.stat-bar .sl{font-size:12px;color:var(--gray-light);margin-top:4px;font-weight:400;}
+/* ── Stat-bar (flex-shrink:0 → never compressed; always visible at bottom) */
+.stat-bar{margin-top:auto;flex-shrink:0;display:flex;gap:40px;padding-top:14px;border-top:1px solid var(--line);}
+.stat-bar .sv{font-size:24px;font-weight:700;color:var(--ink);line-height:1;}
+.stat-bar .sl{font-size:11px;color:var(--gray-light);margin-top:3px;font-weight:400;}
 
 /* ── VALUE layout ──────────────────────────────────────────────────────── */
-.body-row{flex:1;display:flex;gap:56px;margin-top:20px;align-items:flex-start;}
-.left-col{flex:1;display:flex;flex-direction:column;}
-.left-col h2{font-size:38px;font-weight:400;color:var(--ink);line-height:1.18;letter-spacing:-.02em;margin-bottom:10px;}
+/* min-height:0 on flex children is required for overflow:hidden to work   */
+.body-row{flex:1;min-height:0;overflow:hidden;display:flex;gap:56px;margin-top:16px;align-items:flex-start;}
+.left-col{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;}
+.left-col h2{font-size:30px;font-weight:400;color:var(--ink);line-height:1.18;letter-spacing:-.02em;margin-bottom:8px;}
 .left-col h2 b{color:var(--orange);font-weight:700;}
-.lede{font-size:14px;color:var(--gray);line-height:1.6;margin-bottom:20px;}
-.feat-list{display:flex;flex-direction:column;gap:10px;}
+.lede{font-size:13px;color:var(--gray);line-height:1.55;margin-bottom:12px;}
+.feat-list{display:flex;flex-direction:column;gap:7px;min-height:0;overflow:hidden;}
 .feat-item{
-  display:flex;gap:14px;align-items:flex-start;
-  background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 18px;
+  display:flex;gap:12px;align-items:flex-start;
+  background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 14px;flex-shrink:0;
 }
 .feat-item .ic{
-  width:32px;height:32px;border-radius:8px;background:var(--card);
-  display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;
+  width:30px;height:30px;border-radius:7px;background:var(--card);
+  display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;
 }
-.feat-item h4{font-size:14px;font-weight:600;color:var(--ink);line-height:1.3;margin-bottom:3px;}
-.feat-item p{font-size:13px;color:var(--gray);line-height:1.5;}
+.feat-item h4{font-size:13px;font-weight:600;color:var(--ink);line-height:1.3;margin-bottom:2px;}
+.feat-item p{font-size:12px;color:var(--gray);line-height:1.45;}
 .tag-core{
   font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
   color:var(--teal);background:rgba(15,155,142,.10);padding:2px 8px;border-radius:4px;
@@ -84,8 +85,8 @@ body{
 }
 
 /* ── FLOW layout ───────────────────────────────────────────────────────── */
-.flow-body{flex:1;display:flex;flex-direction:column;margin-top:16px;}
-.flow-heading h2{font-size:34px;font-weight:400;color:var(--ink);line-height:1.22;letter-spacing:-.02em;margin-bottom:8px;}
+.flow-body{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;margin-top:14px;}
+.flow-heading h2{font-size:28px;font-weight:400;color:var(--ink);line-height:1.22;letter-spacing:-.02em;margin-bottom:6px;}
 .flow-heading h2 b{color:var(--orange);font-weight:700;}
 .legend{display:flex;align-items:center;gap:16px;margin:6px 0 20px;}
 .legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray);}
@@ -123,11 +124,24 @@ body{
 .legend-role{font-size:12px;color:var(--gray);margin-left:auto;}
 .has-footer .stat-bar{border-top:none;padding-top:10px;}
 
+/* ── HIGHLIGHT (exec summary) ────────────────────────────────────────── */
+.highlight-body{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;justify-content:center;margin-top:8px;}
+.highlight-body h2{font-size:36px;font-weight:400;color:var(--ink);line-height:1.15;letter-spacing:-.02em;margin-bottom:12px;}
+.highlight-body h2 b{color:var(--orange);font-weight:700;}
+.highlight-summary{font-size:14px;color:var(--gray);line-height:1.55;max-width:680px;margin-bottom:20px;}
+.metrics-row{display:flex;gap:20px;flex-wrap:wrap;}
+.metric-card{
+  display:flex;flex-direction:column;background:#fff;
+  border:1px solid var(--line);border-radius:14px;padding:16px 22px;min-width:140px;flex:1;max-width:200px;
+}
+.metric-val{font-size:32px;font-weight:800;line-height:1;margin-bottom:5px;}
+.metric-lbl{font-size:11px;color:var(--gray);font-weight:400;line-height:1.4;}
+
 /* ── TIER pricing ──────────────────────────────────────────────────────── */
-.pricing-body{flex:1;display:flex;flex-direction:column;margin-top:20px;}
-.pricing-body h2{font-size:38px;font-weight:400;color:var(--ink);line-height:1.18;letter-spacing:-.02em;margin-bottom:8px;}
+.pricing-body{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;margin-top:16px;}
+.pricing-body h2{font-size:30px;font-weight:400;color:var(--ink);line-height:1.18;letter-spacing:-.02em;margin-bottom:6px;}
 .pricing-body h2 b{color:var(--orange);font-weight:700;}
-.lede-sm{font-size:14px;color:var(--gray);line-height:1.6;margin-bottom:18px;}
+.lede-sm{font-size:13px;color:var(--gray);line-height:1.55;margin-bottom:14px;}
 .tier-grid{display:grid;gap:14px;flex:1;}
 .tier-grid.cols-1{grid-template-columns:1fr;max-width:420px;}
 .tier-grid.cols-2{grid-template-columns:1fr 1fr;}
@@ -151,22 +165,26 @@ body{
 
 # ─── EXTRACTION PROMPT (aligned with adtimabox-deck.skill schema) ─────────
 _EXTRACT_SYSTEM = """You are a slide-deck content extractor for AdtimaBox branded presentations.
-Given a sales proposal in Markdown, extract ALL content into structured slide data.
+Given a sales proposal (may include CLIENT BRIEF + multiple SKILL OUTPUT sections), extract ALL content into structured slide data.
 
 IMPORTANT OUTPUT RULE: Your response must start with [ and end with ]. Output ONLY the raw JSON array.
 No preamble, no explanation, no markdown fences (no ```), no trailing text. Just the JSON array itself.
 
-SLIDE COUNT: Generate 3–5 slides. Do NOT generate fewer than 3 slides.
+SLIDE COUNT: Generate 5–8 slides. Do NOT generate fewer than 5 slides. Extract every distinct product, feature set, and pricing tier as its own slide.
 
 MANDATORY slide order:
-1. VALUE slide(s) — one per major product/module section in the proposal (e.g. one for OA features, one for ZNS+Mini App features). If only one module, one slide suffices. Max 2 value slides.
-2. FLOW slide — REQUIRED if ANY user journey, userflow, or sequence of steps is described.
-3. TIER slide — REQUIRED if ANY pricing, packages, or tiers are mentioned.
+1. HIGHLIGHT slide — REQUIRED as the first slide: executive summary with 3–4 big impact metrics drawn from the proposal (reach, ROI, timeline, cost savings, etc.)
+2. VALUE slide(s) — one per major product/module section (e.g. slide for OA, slide for ZNS+Mini App, slide for overall Zalo ecosystem). Up to 3 value slides. Do NOT merge multiple products into one slide if distinct sections exist.
+3. FLOW slide — REQUIRED if ANY user journey, userflow, or sequence of steps is described. Extract ALL steps (up to 6).
+4. TIER slide — REQUIRED if ANY pricing, packages, or tiers are mentioned. Extract ALL tiers.
 
 Slide schemas — use EXACTLY these field names:
 
-VALUE slide (solution features):
-{"type":"value","eyebrow":"<2-3 word context>","tier":"<optional tier label or empty string>","headline":{"plain":"<main phrase ending with space>","bold":"<1-3 key words>"},"lede":"<1 sentence summary, max 18 words>","cards":[{"icon":"<single emoji>","title":"<feature, max 6 words>","desc":"<benefit, max 12 words>","tag":null}],"stats":[{"v":"<metric with unit>","l":"<3-word label>"}]}
+HIGHLIGHT slide (executive summary, always first):
+{"type":"highlight","eyebrow":"<section label e.g. Executive Summary>","headline":{"plain":"<impact phrase ending with space>","bold":"<1-3 key words>"},"summary":"<2–3 sentence executive overview for decision-maker, max 45 words, drawn from strategy/product outputs>","metrics":[{"value":"<big metric e.g. 40M+>","label":"<3-4 word description>","color":"orange|teal|purple|gold"}],"stats":[{"v":"<metric>","l":"<3-word label>"}]}
+
+VALUE slide (solution features — one per product/module):
+{"type":"value","eyebrow":"<product name e.g. Zalo OA>","tier":"<optional tier label or empty string>","headline":{"plain":"<main phrase ending with space>","bold":"<1-3 key words>"},"lede":"<1 sentence summary, max 18 words>","cards":[{"icon":"<single emoji>","title":"<feature, max 6 words>","desc":"<benefit, max 12 words>","tag":null}],"stats":[{"v":"<metric with unit>","l":"<3-word label>"}]}
 
 FLOW slide (user journey):
 {"type":"flow","eyebrow":"<2-3 word context>","headline":{"plain":"<phrase ending with space>","bold":"<key phrase>"},"steps":[{"icon":"<single emoji>","label":"<2-3 words>","desc":"<max 8 words>","role":"customer|admin|staff|system","dot":"core|custom"}],"footer":"<optional addon/custom note, or empty string>","stats":[{"v":"<metric>","l":"<3-word label>"}]}
@@ -175,12 +193,13 @@ TIER slide (pricing):
 {"type":"tier","eyebrow":"<section label>","headline":{"plain":"<phrase ending with space>","bold":"<key phrase>"},"lede":"<1 sentence, max 15 words>","tiers":[{"barColor":"<hex no #, pastel>","name":"<tier name>","nameColor":"<hex no #>","module":"<module name>","price":"<amount + unit, e.g. 20M VNĐ>","period":"<duration>","checks":["<feature, max 8 words>"],"deploy":"<X ngày làm việc>"}],"stats":[{"v":"<metric>","l":"<3-word label>"}]}
 
 Content rules:
-- cards: FILL ALL 4 cards per value slide — extract 4 distinct features from the proposal
-- steps: FILL ALL steps (up to 6) per flow slide — extract every step of the user journey
-- tiers: extract ALL tiers/packages mentioned (up to 4); use colors — purple: nameColor=5B4FC4 barColor=D4CEEF; teal: nameColor=0F9B8E barColor=B8E4DF; orange: nameColor=F65009 barColor=FFD9CC; gold: nameColor=C8932B barColor=F5E6C4
-- stats: 3-4 REAL numbers from the proposal per slide (price, timeline, capacity, etc.)
-- card tag: null if no custom/add-on; {"type":"core|custom","text":"CUSTOM +XM VNĐ"} if add-on exists
-- flow footer: if custom add-ons exist outside main flow, list them here as "Addon A (+XM) · Addon B (liên hệ)"
+- highlight metrics: extract 3–4 REAL big numbers (user reach, open rate, ROI %, timeline, price saved, etc.); assign colors: first=orange, second=teal, third=purple, fourth=gold
+- cards: FILL ALL 4 cards per value slide — extract 4 DISTINCT features from that product's section in the proposal
+- steps: FILL ALL steps (up to 6) per flow slide — map every step of the described user journey
+- tiers: extract ALL tiers/packages mentioned (up to 4); colors: purple nameColor=5B4FC4 barColor=D4CEEF; teal nameColor=0F9B8E barColor=B8E4DF; orange nameColor=F65009 barColor=FFD9CC; gold nameColor=C8932B barColor=F5E6C4
+- stats: 3–4 REAL numbers from the proposal per slide (price, timeline, capacity, user count, etc.)
+- card tag: null if no add-on; {"type":"core|custom","text":"CUSTOM +XM VNĐ"} if add-on explicitly priced
+- flow footer: list custom add-ons outside main flow as "Addon A (+XM) · Addon B (liên hệ)"
 - headline: plain + bold COMBINED max 8 words — short, punchy; long headlines break layout
 - CRITICAL: Vietnamese spelling — never duplicate vowel diacritics (write "Sách" not "Sáách")
 - START your response with [ — the very first character must be ["""
@@ -220,14 +239,18 @@ def _find_json_array(text: str) -> str:
 def _validate_slides(slides: list) -> list:
     """Drop slides missing required fields or with empty content."""
     valid = []
-    required = {"value": ["headline", "cards"], "flow": ["headline", "steps"], "tier": ["headline", "tiers"]}
+    required = {
+        "highlight": ["headline"],
+        "value": ["headline", "cards"],
+        "flow": ["headline", "steps"],
+        "tier": ["headline", "tiers"],
+    }
     for s in slides:
         t = s.get("type")
         if t not in required:
             continue
         if not all(s.get(f) for f in required[t]):
             continue
-        # Ensure at least one item has meaningful content
         if t == "value" and not any(c.get("title") for c in (s.get("cards") or [])):
             continue
         if t == "flow" and not any(st.get("label") for st in (s.get("steps") or [])):
@@ -251,15 +274,98 @@ class HTMLDeckGenerator:
 
     async def _extract_slides_with_retry(self, proposal_text: str, brief: dict) -> list[dict]:
         """Try extraction twice before falling back to hardcoded slides."""
+        slides: list[dict] = []
         for attempt in range(2):
             try:
                 slides = await self._extract_slides(proposal_text, brief, attempt)
                 if slides:
-                    return slides
+                    break
             except Exception as e:
                 print(f"[HTMLDeck] Extraction attempt {attempt+1} failed: {e}")
-        print("[HTMLDeck] Both attempts failed, using fallback")
-        return self._fallback_slides(brief)
+        if not slides:
+            print("[HTMLDeck] Both attempts failed, using fallback")
+            slides = self._fallback_slides(brief)
+        # Guarantee all required slide types are present
+        slides = self._ensure_required_slides(slides, brief)
+        return slides
+
+    def _ensure_required_slides(self, slides: list[dict], brief: dict) -> list[dict]:
+        """Add any missing required slide types so the deck always has highlight + value + flow + tier."""
+        b = brief or {}
+        brand = b.get("industry", "Brand")
+        types_present = {s.get("type") for s in slides}
+
+        if "highlight" not in types_present:
+            slides.insert(0, {
+                "type": "highlight",
+                "eyebrow": "Executive Summary",
+                "headline": {"plain": "Giải pháp Zalo toàn diện cho ", "bold": brand},
+                "summary": "Tận dụng hệ sinh thái Zalo — OA, ZNS, Mini App — để thu lead, tăng tương tác và giữ chân khách hàng với chi phí tối ưu.",
+                "metrics": [
+                    {"value": "40M+", "label": "người dùng Zalo hoạt động", "color": "orange"},
+                    {"value": "3x", "label": "tăng tỉ lệ tương tác", "color": "teal"},
+                    {"value": "66%", "label": "giảm thời gian onboard", "color": "purple"},
+                    {"value": "30 ngày", "label": "go-live cam kết", "color": "gold"},
+                ],
+                "stats": [{"v": "40M+", "l": "người dùng Zalo"}, {"v": "3x", "l": "tăng tương tác"}],
+            })
+
+        if "value" not in types_present:
+            slides.insert(0, {
+                "type": "value",
+                "eyebrow": "Giải pháp Zalo",
+                "tier": "",
+                "headline": {"plain": "Giải pháp toàn diện trên ", "bold": "Zalo ecosystem"},
+                "lede": "Kết hợp OA, ZNS, Mini App để thu lead và tăng loyalty.",
+                "cards": [
+                    {"icon": "📲", "title": "Zalo OA — kênh chính thức", "desc": "Reach 40M+ không cần app riêng", "tag": None},
+                    {"icon": "🔔", "title": "ZNS — push cá nhân hoá", "desc": "Tỉ lệ mở cao, tránh spam", "tag": None},
+                    {"icon": "🎮", "title": "Mini App — gamification", "desc": "Voucher, điểm thưởng, đổi quà", "tag": None},
+                    {"icon": "📊", "title": "Data & Retargeting", "desc": "Thu lead, tái tiếp cận hiệu quả", "tag": None},
+                ],
+                "stats": [{"v": "40M+", "l": "người dùng Zalo"}, {"v": "3x", "l": "tăng tương tác"}],
+            })
+
+        if "flow" not in types_present:
+            slides.append({
+                "type": "flow",
+                "eyebrow": "User Journey",
+                "headline": {"plain": "Hành trình khách hàng trên ", "bold": "Zalo"},
+                "steps": [
+                    {"icon": "👆", "label": "Khám phá", "desc": "Tiếp cận qua Zalo OA", "role": "customer", "dot": "core"},
+                    {"icon": "📋", "label": "Đăng ký", "desc": "Form nhanh qua Mini App", "role": "customer", "dot": "core"},
+                    {"icon": "🎁", "label": "Nhận ưu đãi", "desc": "Voucher ngay lập tức", "role": "customer", "dot": "custom"},
+                    {"icon": "🔔", "label": "Nhắc nhở", "desc": "ZNS cá nhân hoá", "role": "system", "dot": "core"},
+                    {"icon": "🏆", "label": "Loyalty", "desc": "Tích điểm, đổi quà", "role": "customer", "dot": "custom"},
+                ],
+                "footer": "",
+                "stats": [{"v": "5", "l": "bước hành trình"}, {"v": "< 2 min", "l": "thời gian onboard"}],
+            })
+
+        if "tier" not in types_present:
+            slides.append({
+                "type": "tier",
+                "eyebrow": "Pricing & Packages",
+                "headline": {"plain": "Gói triển khai ", "bold": "linh hoạt"},
+                "lede": "3 gói phù hợp với quy mô và ngân sách của từng doanh nghiệp.",
+                "tiers": [
+                    {"barColor": "D4CEEF", "name": "STARTER", "nameColor": "5B4FC4", "module": "Zalo OA + ZNS",
+                     "price": "Liên hệ VNĐ", "period": "Theo thoả thuận",
+                     "checks": ["Zalo OA Official Account", "ZNS template cơ bản", "Dashboard báo cáo", "Hỗ trợ setup"],
+                     "deploy": "15 ngày làm việc"},
+                    {"barColor": "B8E4DF", "name": "GROWTH", "nameColor": "0F9B8E", "module": "OA + ZNS + Mini App",
+                     "price": "Liên hệ VNĐ", "period": "Theo thoả thuận",
+                     "checks": ["Toàn bộ STARTER", "Mini App gamification", "Loyalty & voucher", "Campaign automation"],
+                     "deploy": "30 ngày làm việc"},
+                    {"barColor": "FFD9CC", "name": "ENTERPRISE", "nameColor": "F65009", "module": "Full Ecosystem",
+                     "price": "Liên hệ VNĐ", "period": "Theo thoả thuận",
+                     "checks": ["Toàn bộ GROWTH", "Data & retargeting", "Custom integration", "Dedicated support"],
+                     "deploy": "45 ngày làm việc"},
+                ],
+                "stats": [{"v": "3", "l": "gói triển khai"}, {"v": "15-45", "l": "ngày go-live"}],
+            })
+
+        return slides
 
     async def _extract_slides(self, proposal_text: str, brief: dict, attempt: int = 0) -> list[dict]:
         from llm.greennode import get_llm_client
@@ -269,7 +375,7 @@ class HTMLDeckGenerator:
         client = get_llm_client("design")
         brand_hint = (brief or {}).get("industry", "")
         # Second attempt: slightly shorter input to reduce LLM confusion
-        trimmed = proposal_text[:6000] if attempt > 0 else proposal_text[:10000]
+        trimmed = proposal_text[:10000] if attempt > 0 else proposal_text[:15000]
 
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
@@ -281,7 +387,7 @@ class HTMLDeckGenerator:
                     {"role": "user", "content": f"Brand context: {brand_hint}\n\nProposal:\n{trimmed}"},
                 ],
                 temperature=0.0,
-                max_tokens=4500,
+                max_tokens=8000,
                 stream=False,
             ),
         )
@@ -303,28 +409,8 @@ class HTMLDeckGenerator:
         return validated
 
     def _fallback_slides(self, brief: dict) -> list[dict]:
-        b = brief or {}
-        brand = b.get("industry", "Brand")
-        return [
-            {
-                "type": "value",
-                "eyebrow": "Giải pháp Zalo",
-                "tier": "",
-                "headline": {"plain": "Tăng tương tác & thu data trên ", "bold": "Zalo ecosystem"},
-                "lede": "Kết hợp OA, ZNS, Mini App để thu lead, tái tiếp cận và tăng loyalty.",
-                "cards": [
-                    {"icon": "📲", "title": "Zalo OA — kênh giao tiếp chính thức", "desc": "Reach 40M+ người dùng không cần app riêng", "tag": None},
-                    {"icon": "🔔", "title": "ZNS — thông báo push cá nhân hoá", "desc": "Tỉ lệ mở cao, không bị spam filter", "tag": None},
-                    {"icon": "🎮", "title": "Mini App — gamification & loyalty", "desc": "Voucher, điểm thưởng, đổi quà tại chỗ", "tag": None},
-                    {"icon": "📊", "title": "Data & reactivation", "desc": "Thu lead offline, tái tiếp cận qua Zalo", "tag": None},
-                ],
-                "stats": [
-                    {"v": "40M+", "l": "người dùng Zalo"},
-                    {"v": "10k", "l": f"user mới — {brand}"},
-                    {"v": "1-2", "l": "tháng campaign"},
-                ],
-            },
-        ]
+        # Return empty list — _ensure_required_slides will build all 3 required types
+        return []
 
     def _render_html(self, slides: list[dict]) -> str:
         slides_html = "".join(
@@ -345,6 +431,8 @@ class HTMLDeckGenerator:
 
     def _render_slide(self, sd: dict) -> str:
         t = sd.get("type", "value")
+        if t == "highlight":
+            return self._slide_highlight(sd)
         if t == "value":
             return self._slide_value(sd)
         if t == "flow":
@@ -369,6 +457,37 @@ class HTMLDeckGenerator:
             for s in stats[:4]
         )
         return f'<div class="stat-bar">{items}</div>'
+
+    # ── Highlight slide ────────────────────────────────────────────────────
+    def _slide_highlight(self, sd: dict) -> str:
+        hl = sd.get("headline", {})
+        plain = _esc(hl.get("plain", ""))
+        bold = _esc(hl.get("bold", ""))
+        summary = _esc(sd.get("summary", ""))
+        metrics = sd.get("metrics") or []
+        stats = sd.get("stats") or []
+
+        color_map = {
+            "orange": "var(--orange)", "teal": "var(--teal)",
+            "purple": "var(--purple)", "gold": "var(--gold)",
+        }
+        metrics_html = ""
+        for m in metrics[:4]:
+            color = color_map.get(m.get("color", "orange"), "var(--orange)")
+            metrics_html += f"""<div class="metric-card">
+  <div class="metric-val" style="color:{color}">{_esc(m.get("value",""))}</div>
+  <div class="metric-lbl">{_esc(m.get("label",""))}</div>
+</div>"""
+
+        return f"""<div class="slide">
+  {self._topbar(sd.get("eyebrow",""))}
+  <div class="highlight-body">
+    <h2>{plain}<b>{bold}</b></h2>
+    {f'<p class="highlight-summary">{summary}</p>' if summary else ""}
+    <div class="metrics-row">{metrics_html}</div>
+  </div>
+  {self._stat_bar(stats)}
+</div>\n"""
 
     # ── Value slide ────────────────────────────────────────────────────────
     def _slide_value(self, sd: dict) -> str:

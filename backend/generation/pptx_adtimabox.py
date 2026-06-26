@@ -71,25 +71,10 @@ class AdtimaBoxPPTXGenerator:
             return {"status": "error", "error": str(e)}
 
     def _fallback_slides(self, brief: dict) -> list[dict]:
-        b = brief or {}
-        return [
-            {
-                "type": "value",
-                "eyebrow": "Giải pháp Zalo",
-                "tier": "",
-                "headline": {"plain": "Tăng tương tác & thu data trên ", "bold": "Zalo ecosystem"},
-                "lede": "Kết hợp OA, ZNS, Mini App để thu lead, tái tiếp cận và tăng loyalty.",
-                "cards": [
-                    {"icon": "📲", "title": "Zalo OA — kênh chính thức", "desc": "Reach 40M+ không cần app riêng", "tag": None},
-                    {"icon": "🔔", "title": "ZNS — push cá nhân hoá", "desc": "Tỉ lệ mở cao, tránh spam", "tag": None},
-                    {"icon": "🎮", "title": "Mini App — gamification", "desc": "Voucher, điểm thưởng, đổi quà", "tag": None},
-                ],
-                "stats": [
-                    {"v": "40M+", "l": "người dùng Zalo"},
-                    {"v": "10k", "l": f"user — {b.get('industry','Brand')}"},
-                ],
-            }
-        ]
+        # Delegate to HTMLDeckGenerator so both generators stay in sync
+        from generation.html_deck import HTMLDeckGenerator
+        helper = HTMLDeckGenerator()
+        return helper._ensure_required_slides([], brief)
 
     def _build_pptx(self, slides: list[dict]):
         from pptx import Presentation
@@ -203,8 +188,29 @@ class AdtimaBoxPPTXGenerator:
                        s.get("l", ""), 8, "gray_lt")
             stat_x += col_w
 
+    @staticmethod
+    def _safe_text(text: str) -> str:
+        """Strip characters that break OOXML: lone surrogates, variation selectors, and C0/C1 controls."""
+        if not text:
+            return ""
+        result = []
+        for ch in str(text):
+            cp = ord(ch)
+            # Lone surrogates (U+D800–U+DFFF) are illegal in XML
+            if 0xD800 <= cp <= 0xDFFF:
+                continue
+            # Variation selectors (U+FE00–U+FE0F, U+E0100–U+E01EF) that arrive
+            # without their base emoji cause lxml to fail
+            if 0xFE00 <= cp <= 0xFE0F or 0xE0100 <= cp <= 0xE01EF:
+                continue
+            # C0 controls except tab/LF/CR
+            if cp < 0x20 and ch not in "\t\n\r":
+                continue
+            result.append(ch)
+        return "".join(result)
+
     def _text(self, slide, left, top, width, height, text, size, color_key,
-              bold=False, italic=False, align="LEFT"):
+              bold=False, italic=False, align="LEFT", emoji_font=False):
         from pptx.util import Inches, Pt
         from pptx.enum.text import PP_ALIGN
         aligns = {"LEFT": PP_ALIGN.LEFT, "CENTER": PP_ALIGN.CENTER, "RIGHT": PP_ALIGN.RIGHT}
@@ -214,8 +220,9 @@ class AdtimaBoxPPTXGenerator:
         p = tf.paragraphs[0]
         p.alignment = aligns.get(align, PP_ALIGN.LEFT)
         run = p.add_run()
-        run.text = text or ""
-        run.font.name = FONT
+        run.text = self._safe_text(text or "")
+        # Emoji icons need a font that has emoji glyphs (Segoe UI Emoji on Windows)
+        run.font.name = "Segoe UI Emoji" if emoji_font else FONT
         run.font.size = Pt(size)
         run.font.color.rgb = self._rgb(color_key)
         run.font.bold = bold
@@ -230,13 +237,13 @@ class AdtimaBoxPPTXGenerator:
         tf.word_wrap = True
         p = tf.paragraphs[0]
         r1 = p.add_run()
-        r1.text = plain or ""
+        r1.text = self._safe_text(plain or "")
         r1.font.name = FONT
         r1.font.size = Pt(size)
         r1.font.color.rgb = self._rgb("ink")
         if bold_text:
             r2 = p.add_run()
-            r2.text = bold_text
+            r2.text = self._safe_text(bold_text)
             r2.font.name = FONT
             r2.font.size = Pt(size)
             r2.font.color.rgb = self._rgb("orange")
@@ -251,43 +258,48 @@ class AdtimaBoxPPTXGenerator:
         hl = sd.get("headline", {})
         self._topbar(slide, sd.get("eyebrow", ""), sd.get("tier", ""))
 
-        # Headline
-        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W * 0.6, 1.00,
-                         hl.get("plain", ""), hl.get("bold", ""), 24)
+        # Headline — 20pt; max 2 lines fits in 1.10" without overflowing lede
+        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W * 0.62, 1.10,
+                         hl.get("plain", ""), hl.get("bold", ""), 20)
 
-        # Lede
+        # Lede — tighter gap after headline
         lede = sd.get("lede", "")
+        lede_h = 0.40
         if lede:
-            self._text(slide, PAD_X, BODY_TOP + 1.05, CONTENT_W * 0.55, 0.40, lede, 10, "gray")
+            self._text(slide, PAD_X, BODY_TOP + 1.14, CONTENT_W * 0.58, lede_h, lede, 9.5, "gray")
 
-        # Feature cards
+        # Feature cards — start is now closer (1.58" instead of 2.00") giving
+        # more vertical room per card, reducing desc text overflow risk
         cards = sd.get("cards") or []
-        card_y = BODY_TOP + 1.52
-        card_h = (BODY_H - 1.52) / max(len(cards), 1) - 0.05
+        card_y = BODY_TOP + (1.58 if lede else 1.14)
+        cards_available_h = BODY_H - (card_y - BODY_TOP)
+        card_h = max(cards_available_h / max(len(cards), 1) - 0.06, 0.52)
+        from pptx.util import Pt as _Pt
         for c in cards[:4]:
-            # Card bg
             crd = slide.shapes.add_shape(1, Inches(PAD_X), Inches(card_y),
-                                         Inches(CONTENT_W * 0.58), Inches(max(card_h, 0.42)))
+                                         Inches(CONTENT_W * 0.60), Inches(card_h))
             crd.fill.solid()
             crd.fill.fore_color.rgb = self._rgb("white")
             crd.line.color.rgb = self._rgb("line")
-            from pptx.util import Pt as _Pt
             crd.line.width = _Pt(0.5)
 
             # Icon box
-            icon_box = slide.shapes.add_shape(1, Inches(PAD_X + 0.08), Inches(card_y + 0.06),
-                                              Inches(0.30), Inches(0.30))
+            icon_box = slide.shapes.add_shape(1, Inches(PAD_X + 0.07), Inches(card_y + 0.06),
+                                              Inches(0.28), Inches(0.28))
             icon_box.fill.solid()
             icon_box.fill.fore_color.rgb = self._rgb("cream")
             icon_box.line.fill.background()
-            self._text(slide, PAD_X + 0.08, card_y + 0.04, 0.32, 0.30,
-                       c.get("icon", ""), 12, "ink", align="CENTER")
+            self._text(slide, PAD_X + 0.07, card_y + 0.05, 0.30, 0.28,
+                       c.get("icon", ""), 11, "ink", align="CENTER", emoji_font=True)
 
-            self._text(slide, PAD_X + 0.46, card_y + 0.04, CONTENT_W * 0.48, 0.22,
-                       c.get("title", ""), 10, "ink", bold=True)
-            self._text(slide, PAD_X + 0.46, card_y + 0.24, CONTENT_W * 0.48, 0.22,
-                       c.get("desc", ""), 9, "gray")
-            card_y += max(card_h, 0.42) + 0.06
+            # Title + desc with enough height to handle 1-2 lines without overflow
+            title_h = min((card_h - 0.06) * 0.40, 0.26)
+            desc_h = min((card_h - 0.06) * 0.55, 0.30)
+            self._text(slide, PAD_X + 0.43, card_y + 0.05, CONTENT_W * 0.50, title_h,
+                       c.get("title", ""), 9.5, "ink", bold=True)
+            self._text(slide, PAD_X + 0.43, card_y + 0.05 + title_h + 0.02, CONTENT_W * 0.50, desc_h,
+                       c.get("desc", ""), 8.5, "gray")
+            card_y += card_h + 0.05
 
         self._stat_bar(slide, sd.get("stats") or [])
 
@@ -360,7 +372,7 @@ class AdtimaBoxPPTXGenerator:
             icon_box.fill.solid(); icon_box.fill.fore_color.rgb = self._rgb("white")
             icon_box.line.color.rgb = self._rgb("line"); icon_box.line.width = Pt(0.5)
             self._text(slide, ix + 0.02, icon_y + 0.05, icon_size - 0.04, icon_size - 0.10,
-                       st.get("icon", ""), 18, "ink", align="CENTER")
+                       st.get("icon", ""), 18, "ink", align="CENTER", emoji_font=True)
 
             # Core/custom dot (top-right of icon)
             dot_color = "teal" if dot == "core" else "orange"

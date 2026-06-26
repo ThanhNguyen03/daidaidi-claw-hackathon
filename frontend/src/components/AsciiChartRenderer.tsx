@@ -87,8 +87,8 @@ function isInfoBox(content: string): boolean {
   }).length;
 
   const nonEmptyLines = content.split('\n').filter(l => l.trim());
-  // Raise threshold — large info boxes with multiple sections can have 30+ lines
-  if (nonEmptyLines.length >= 60) return false;
+  // Allow up to 200 lines — wireframe screens with many sections can be long
+  if (nonEmptyLines.length >= 200) return false;
   // Multi-column flow diagrams have multiple ┌ on one line (e.g. 3-box side-by-side)
   if (nonEmptyLines.some(l => (l.match(/┌/g) || []).length > 1)) return false;
   // Multi-column tables use │ as internal column separators — content lines have 3+ │ chars
@@ -482,22 +482,71 @@ export function tryRenderAsciiChart(content: string): React.ReactElement | null 
  * gets wrapped in triple backticks so ReactMarkdown delivers it to the `pre` handler
  * where tryRenderAsciiChart can act on it.
  */
+/** Split a fenced code block that contains multiple ┌...└ box pairs into individual fences. */
+function splitMultiBoxFence(fenceContent: string): string {
+  const lines = fenceContent.split('\n');
+  const segments: string[][] = [];
+  let current: string[] = [];
+
+  for (const line of lines) {
+    if (/^\s*┌/.test(line) && current.length > 0 && current.some(l => /^\s*└/.test(l))) {
+      // Previous box closed — start fresh segment
+      segments.push(current);
+      current = [];
+    }
+    current.push(line);
+  }
+  if (current.length > 0) segments.push(current);
+
+  if (segments.length <= 1) return '```\n' + fenceContent + '\n```';
+  return segments.map(seg => '```\n' + seg.join('\n').trim() + '\n```').join('\n\n');
+}
+
 export function wrapAsciiBoxes(text: string): string {
   const lines = text.split('\n');
   const out: string[] = [];
   let inFence = false;
   let inBox = false;
+  let fenceLines: string[] = [];
+  let fenceHasBox = false;
 
   for (const line of lines) {
     // Track existing code fences (``` or ~~~)
     if (/^(`{3,}|~{3,})/.test(line)) {
-      inFence = !inFence;
-      if (!inFence) inBox = false;
-      out.push(line);
+      if (!inFence) {
+        // Opening fence
+        inFence = true;
+        fenceLines = [];
+        fenceHasBox = false;
+      } else {
+        // Closing fence — check if content has multiple boxes
+        inFence = false;
+        inBox = false;
+        if (fenceHasBox) {
+          // Count how many complete ┌...└ pairs exist inside
+          const boxStarts = fenceLines.filter(l => /^\s*┌/.test(l)).length;
+          if (boxStarts > 1) {
+            out.push(splitMultiBoxFence(fenceLines.join('\n')));
+          } else {
+            out.push('```');
+            out.push(...fenceLines);
+            out.push('```');
+          }
+        } else {
+          out.push('```');
+          out.push(...fenceLines);
+          out.push('```');
+        }
+        fenceLines = [];
+      }
       continue;
     }
 
-    if (inFence) { out.push(line); continue; }
+    if (inFence) {
+      fenceLines.push(line);
+      if (/^\s*[┌└]/.test(line)) fenceHasBox = true;
+      continue;
+    }
 
     // Box start: line begins with ┌ (optionally preceded by spaces)
     if (!inBox && /^\s*┌/.test(line)) {
@@ -514,6 +563,12 @@ export function wrapAsciiBoxes(text: string): string {
     }
   }
 
+  // Flush unclosed fence
+  if (inFence && fenceLines.length > 0) {
+    out.push('```');
+    out.push(...fenceLines);
+    out.push('```');
+  }
   if (inBox) out.push('```'); // safety close
   return out.join('\n');
 }
