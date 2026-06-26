@@ -133,10 +133,21 @@ Additional skills to add when relevant:
   • design — add when brief asks for idea, userflow, wireframe, game mechanic, screen design
   • compliance — add when brief involves personal data collection, ZNS, advertising claims, or regulatory concerns
   • client_simulator — add when brief has signs of a competitive pitch or objection-handling is useful
-  • proposal_assembler (alone, last group) ONLY when explicitly requested:
-      • Current message contains "proposal", "tổng hợp", "làm deck", "xuất proposal", "báo giá chi tiết"
-      • OR any prior message in Conversation History contains those keywords — user may have requested in an earlier turn and the current message is just providing supplementary info (budget, scale, timeline)
-      Do NOT trigger proposal_assembler based on brief completeness alone.
+  • proposal_assembler (alone, last group):
+      ⚠ STICKY RULE — check ALL sources, not just the current message:
+      INCLUDE proposal_assembler whenever ANY of the following is true:
+        (a) Current message contains: "proposal", "tổng hợp", "làm deck", "xuất proposal",
+            "báo giá chi tiết", "báo giá", "bảng giá"
+        (b) ANY prior USER message in Conversation History contains those keywords
+            (user may be just providing budget/scale/timeline NOW but requested proposal earlier)
+        (c) Accumulated Brief's Context field contains "Proposal", "báo giá", or "deck"
+            (user's original message was parsed into the brief — intent still present)
+
+      The proposal request is SESSION-WIDE. Once a user asks for a proposal/deck/báo giá
+      anywhere in the conversation, ALWAYS include proposal_assembler in every execute response
+      for this session — even if the current message is only about budget, scale, or timeline.
+
+      Do NOT trigger proposal_assembler if no proposal keyword appears anywhere at all.
 
 Read the FULL context — Conversation History + Accumulated Brief + Current Message.
 The current message is the primary signal for which skills to select, but ALSO scan
@@ -146,17 +157,34 @@ Write a SPECIFIC task for every selected skill — reference the brand, objectiv
 exactly what aspect of the brief that skill should address. Vague tasks produce vague output.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 3 — OUTPUT (valid JSON only, no markdown fences)
+STEP 3 — DESIRED OUTPUTS (semantic intent extraction)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Before outputting JSON, extract what output artifacts the user wants. This field is STICKY
+across turns — once set it stays set for the whole session (the server accumulates it).
+
+Set desired_outputs to ["proposal"] if ANY message in the conversation (current or history)
+shows intent to receive a formal proposal document, presentation deck, pricing document, or
+executive summary. This includes ALL of these phrasings:
+  • "proposal", "báo giá", "báo giá chi tiết", "bảng giá", "tổng hợp", "xuất proposal"
+  • "làm deck", "tạo deck", "slides", "bản trình bày", "tài liệu đề xuất", "bản đề xuất"
+  • "pitch deck", "presentation", "bản báo cáo", "xuất tài liệu"
+  • Any intent to receive a formal written document or slideshow output
+
+Leave as [] if the user is asking a question, refining analysis, or requesting strategy only.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 4 — OUTPUT (valid JSON only, no markdown fences)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Skills in the same array run in parallel. Arrays run sequentially.
 proposal_assembler must be alone in the last array if included.
 
 Case A — clarify:
-{{"brief_update": {{"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": true, "clarification_message": "<2-3 warm focused questions in user's language>"}}
+{{"brief_update": {{"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": true, "clarification_message": "<2-3 warm focused questions in user's language>", "desired_outputs": []}}
 
 Case B — execute:
-{{"brief_update": {{"industry": "<or null>", "goal": "<or null>", "target_audience": "<or null>", "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": false, "skill_plan": [[{{"skill": "<name>", "task": "<specific task>"}}]]}}"""
+{{"brief_update": {{"industry": "<or null>", "goal": "<or null>", "target_audience": "<or null>", "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": false, "skill_plan": [[{{"skill": "<name>", "task": "<specific task>"}}]], "desired_outputs": ["proposal"]}}"""
 
 
 # ---------------------------------------------------------------------------
@@ -183,13 +211,15 @@ def _build_contextual_skill_plan(state, message: str) -> list[list[dict[str, str
 
     prior_skill_names = [n for n in state.outputs.keys() if n not in _SEQUENTIAL] if state.outputs else []
 
+    _proposal_desired = "proposal" in (getattr(state, "desired_outputs", None) or [])
+
     if prior_skill_names:
         first_group = [
             {"skill": s, "task": f"Continue and deepen analysis for: {task_short}"}
             for s in prior_skill_names
         ]
         plan: list[list[dict[str, str]]] = [first_group]
-        if "proposal_assembler" in (state.outputs or {}):
+        if "proposal_assembler" in (state.outputs or {}) or _proposal_desired:
             plan.append([{"skill": "proposal_assembler",
                            "task": f"Reassemble proposal incorporating: {task_short}"}])
         return plan
@@ -649,6 +679,29 @@ class CentralAgent:
         prior_assistant_turns = [m for m in state.messages if m.get("role") == "assistant"]
         if len(prior_assistant_turns) >= 2 and result.get("needs_clarification"):
             result["needs_clarification"] = False
+
+        # Accumulate desired_outputs into state — this makes proposal intent sticky across turns.
+        # The LLM semantically detects intent ("bản trình bày", "slides", "báo giá", etc.)
+        # regardless of exact phrasing; keyword matching would miss paraphrases.
+        for _desired in (result.get("desired_outputs") or []):
+            if _desired and _desired not in state.desired_outputs:
+                state.desired_outputs.append(_desired)
+
+        # Enforce proposal_assembler based on semantic state, not brittle keyword matching.
+        # Once "proposal" is in desired_outputs (now or any prior turn), always include it.
+        if ("proposal" in state.desired_outputs
+                and not result.get("needs_clarification")
+                and result.get("skill_plan")):
+            _planned_skills = {s.get("skill") for g in result["skill_plan"] for s in g}
+            if "proposal_assembler" not in _planned_skills:
+                result["skill_plan"].append([{
+                    "skill": "proposal_assembler",
+                    "task": (
+                        "Tổng hợp toàn bộ phân tích thành proposal hoàn chỉnh: "
+                        "giới thiệu giải pháp Zalo, idea game, userflow, "
+                        "data reactivation strategy và báo giá chi tiết."
+                    ),
+                }])
 
         # Safety net: if LLM returned execute but no skill_plan, build from session state.
         if not result.get("needs_clarification") and not result.get("skill_plan"):
