@@ -61,10 +61,11 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
   central_agent: 'Sales AI',
   market_strategy: 'Market Strategy',
   product_solution: 'Product Solution',
-  design: 'Design',
+  design: 'UX Design',
   compliance: 'Compliance',
   client_simulator: 'Client Simulator',
   proposal_assembler: 'Proposal Assembler',
+  wireframe_designer: 'Deck Generator',
 };
 
 // Status color classes
@@ -126,10 +127,10 @@ export function Sidebar({
         );
         if (res.ok) {
           const data = await res.json();
-          const agents = data.agents?.map((a: { name: string; display_name?: string }) => ({
+          const agents = (data.skills ?? data.agents ?? []).map((a: { name: string; display_name?: string; description?: string }) => ({
             name: a.name,
             display_name: a.display_name || AGENT_DISPLAY_NAMES[a.name] || a.name,
-          })) || [];
+          }));
           setAgentsList(agents);
         }
       } catch (err) {
@@ -145,11 +146,12 @@ export function Sidebar({
   // Use fetched agents, fallback to defaults if empty
   const displayAgents = agentsList.length > 0 ? agentsList : [
     { name: 'market_strategy', display_name: 'Market Strategy' },
-    { name: 'product_solution', display_name: 'Product Solution' },
-    { name: 'design', display_name: 'Design' },
     { name: 'compliance', display_name: 'Compliance' },
+    { name: 'product_solution', display_name: 'Product Solution' },
+    { name: 'design', display_name: 'UX Design' },
     { name: 'client_simulator', display_name: 'Client Simulator' },
     { name: 'proposal_assembler', display_name: 'Proposal Assembler' },
+    { name: 'wireframe_designer', display_name: 'Deck Generator' },
   ];
 
   // Create a map of agent statuses

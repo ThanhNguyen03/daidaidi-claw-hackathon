@@ -27,15 +27,57 @@ function sanitizeMermaid(raw: string): string {
   // Strip markdown bold/italic inside labels
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '$1');
   // Fix double-quotes inside square-bracket node labels.
-  // Case 1: A["Label with special chars → ✓"] — outer quotes are VALID Mermaid v10+ syntax;
-  //         preserve them so special characters (→ % : etc.) render correctly.
-  // Case 2: A[say "hello"] — stray inner quotes confuse the parser; strip them.
   s = s.replace(/\[([^\[\]\n]*)\]/g, (_m, inner) => {
     if (inner.startsWith('"') && inner.endsWith('"') && inner.length >= 2) {
-      return `[${inner}]`; // properly quoted label — keep as-is
+      return `[${inner}]`;
     }
-    return '[' + inner.replace(/"/g, '') + ']'; // strip stray quotes
+    return '[' + inner.replace(/"/g, '') + ']';
   });
+
+  // Fix LLM-generated gantt diagrams:
+  // LLMs often emit "Phase X: Label\n:active, date, dur" instead of
+  // "section Phase X: Label\nTask :active, date, dur"
+  if (/^\s*gantt\b/i.test(s)) {
+    const ganttKeyword = /^(gantt|title\s|dateFormat\s|axisFormat\s|tickInterval\s|section\s|%%|excludes\s|todayMarker)/i;
+    const lines = s.split('\n');
+    const fixed: string[] = [];
+    let lastSectionShort = 'Task';
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+      const indent = line.match(/^(\s*)/)?.[1] ?? '    ';
+
+      if (!trimmed) { fixed.push(line); continue; }
+
+      // Track existing section names for task labelling
+      if (/^section\s/i.test(trimmed)) {
+        lastSectionShort = trimmed.replace(/^section\s+/i, '').split(':')[0].trim() || 'Task';
+        fixed.push(line);
+        continue;
+      }
+
+      // Bare task spec starting with ":" — needs a task name prepended
+      if (trimmed.startsWith(':')) {
+        fixed.push(`${indent}${lastSectionShort} ${trimmed}`);
+        continue;
+      }
+
+      // Non-keyword content line followed by a bare task spec → orphan section label
+      if (!ganttKeyword.test(trimmed)) {
+        const nextContent = lines.slice(i + 1).find(l => l.trim());
+        if (nextContent && nextContent.trim().startsWith(':')) {
+          lastSectionShort = trimmed.split(':')[0].trim() || 'Task';
+          fixed.push(`${indent}section ${trimmed}`);
+          continue;
+        }
+      }
+
+      fixed.push(line);
+    }
+    s = fixed.join('\n');
+  }
+
   return s;
 }
 
@@ -93,10 +135,27 @@ function MermaidDiagram({ chart }: { chart: string }) {
           startOnLoad: false,
           theme: isDarkMode ? 'dark' : 'default',
           securityLevel: 'loose',
-          fontSize: 12,
-          flowchart: { useMaxWidth: true, diagramPadding: 6 },
+          fontSize: 14,
+          flowchart: { useMaxWidth: true, diagramPadding: 8 },
           sequence: { useMaxWidth: true },
-          gantt: { fontSize: 12, barHeight: 24, barGap: 6, topPadding: 40, leftPadding: 120 },
+          gantt: { fontSize: 14, barHeight: 28, barGap: 6, topPadding: 40, leftPadding: 140 },
+          ...(isDarkMode ? {
+            themeVariables: {
+              primaryTextColor: '#ffffff',
+              secondaryTextColor: '#ffffff',
+              tertiaryTextColor: '#ffffff',
+              lineColor: '#aaaaaa',
+              textColor: '#ffffff',
+              labelTextColor: '#ffffff',
+              taskTextColor: '#ffffff',
+              taskTextLightColor: '#ffffff',
+              taskTextDarkColor: '#ffffff',
+              taskTextOutsideColor: '#ffffff',
+              activeTaskTextColor: '#ffffff',
+              sectionFill: '#3a3a3a',
+              edgeLabelBackground: '#2a2a2a',
+            }
+          } : {}),
         });
 
         // Parse first so we can distinguish syntax problems from render/runtime problems.
@@ -682,17 +741,19 @@ const AGENT_COLORS: Record<string, string> = {
   design: '#3b82f6',
   client_simulator: '#06b6d4',
   proposal_assembler: '#8b5cf6',
+  wireframe_designer: '#f59e0b',
   system: '#6b7280',
 };
 
 const AGENT_NAMES: Record<string, string> = {
   central_agent: 'Sales AI',
-  market_strategy: 'Strategy',
+  market_strategy: 'Market Strategy',
   compliance: 'Compliance',
   product_solution: 'Product Solution',
-  design: 'Slide Designer',
+  design: 'UX Design',
   client_simulator: 'Client Simulator',
   proposal_assembler: 'Proposal Assembler',
+  wireframe_designer: 'Deck Generator',
   system: 'System',
 };
 

@@ -98,14 +98,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   const [pendingQuestions, setPendingQuestions] = useState<Question[]>([]);
   const [activeCheckpoint, setActiveCheckpoint] = useState<Checkpoint | null>(null);
   const [activeAgents, setActiveAgents] = useState<AgentStatus[]>([
-    { name: 'scoping', status: 'idle' },
-    { name: 'sales_orchestrator', status: 'idle' },
-    { name: 'requirement_elicitation', status: 'idle' },
     { name: 'market_strategy', status: 'idle' },
     { name: 'compliance', status: 'idle' },
     { name: 'product_solution', status: 'idle' },
     { name: 'design', status: 'idle' },
     { name: 'client_simulator', status: 'idle' },
+    { name: 'proposal_assembler', status: 'idle' },
+    { name: 'wireframe_designer', status: 'idle' },
   ]);
 
   // Day 4: Constraints and profile state

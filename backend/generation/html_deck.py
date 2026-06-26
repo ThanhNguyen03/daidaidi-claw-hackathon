@@ -218,8 +218,8 @@ class HTMLDeckGenerator:
         from llm.greennode import get_llm_client
         from skills.base import strip_think_blocks, extract_json_block
 
-        client = get_llm_client("central_agent")
-        trimmed = proposal_text[:4000]
+        client = get_llm_client("product_solution")  # qwen: better JSON compliance
+        trimmed = proposal_text[:8000]
         brand_hint = (brief or {}).get("industry", "")
 
         loop = asyncio.get_running_loop()
@@ -232,7 +232,7 @@ class HTMLDeckGenerator:
                     {"role": "user", "content": f"Brand: {brand_hint}\n\n---\n{trimmed}"},
                 ],
                 temperature=0.1,
-                max_tokens=1200,
+                max_tokens=3000,
                 stream=False,
             ),
         )
