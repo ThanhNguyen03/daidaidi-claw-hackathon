@@ -149,9 +149,11 @@ body{
 # ─── EXTRACTION PROMPT (aligned with adtimabox-deck.skill schema) ─────────
 _EXTRACT_SYSTEM = """You are a slide-deck content extractor for AdtimaBox branded presentations.
 Given a sales proposal in Markdown, extract structured slide data.
-Return ONLY a valid JSON array (no markdown fences, no explanation). Max 5 slides.
 
-Slide schemas — use EXACTLY these field names:
+IMPORTANT OUTPUT RULE: Your response must start with [ and end with ]. Output ONLY the raw JSON array.
+No preamble, no explanation, no markdown fences (no ```), no trailing text. Just the JSON array itself.
+
+Max 5 slides. Slide schemas — use EXACTLY these field names:
 
 VALUE slide (solution features):
 {"type":"value","eyebrow":"<2-3 word context>","tier":"<optional tier label or empty string>","headline":{"plain":"<main phrase ending with space>","bold":"<1-3 key words>"},"lede":"<1 sentence summary, max 18 words>","cards":[{"icon":"<single emoji>","title":"<feature, max 6 words>","desc":"<benefit, max 12 words>","tag":null}],"stats":[{"v":"<metric with unit>","l":"<3-word label>"}]}
@@ -166,29 +168,55 @@ Rules:
 - 1 value slide minimum; add flow if user journey is described; add tier if pricing exists
 - cards: max 4 per slide, always include icon emoji
 - steps: max 6 per flow slide, assign role (customer/admin/staff/system) and dot (core/custom)
-- tiers: max 3; use colors — purple tier: nameColor=5B4FC4 barColor=D4CEEF; teal tier: nameColor=0F9B8E barColor=B8E4DF; orange tier: nameColor=F65009 barColor=FFD9CC
+- tiers: max 4; use colors — purple tier: nameColor=5B4FC4 barColor=D4CEEF; teal tier: nameColor=0F9B8E barColor=B8E4DF; orange tier: nameColor=F65009 barColor=FFD9CC
 - stats: 3-4 real numbers from the proposal per slide
 - card tag field: null if no custom/add-on, otherwise {"type":"core|custom","text":"<label>"}
-- CRITICAL: Vietnamese spelling — never duplicate vowel diacritics (write "Sách" not "Sáách", "Ngân" not "Ngâân")
-- Return ONLY the JSON array, nothing else"""
+- CRITICAL: Vietnamese spelling — never duplicate vowel diacritics (write "Sách" not "Sáách")
+- START your response with [ — the very first character must be ["""
 
 
-def _extract_schema_section(skill_spec: str) -> str:
-    """Pull only the slide-schema + extraction-rules sections from SKILL.md.
-    Strips CSS/layout detail that confuses the extraction LLM."""
-    import re
-    if not skill_spec:
-        return ""
-    # Keep from "### Slide Types" (or "## Slide Types") through "## Extraction Rules" (inclusive)
-    match = re.search(
-        r'(#{1,3}\s+Slide Types.+?)(?=##\s+Output Format|##\s+Topbar|$)',
-        skill_spec,
-        re.DOTALL | re.IGNORECASE,
-    )
-    if match:
-        return match.group(1).strip()
-    # Fallback: return first 1500 chars (won't be the full file)
-    return skill_spec[:1500]
+def _find_json_array(text: str) -> str:
+    """Bracket-balanced extractor: finds the outermost [...] in text.
+    Handles LLM preamble/postamble and nested structures correctly."""
+    start = text.find('[')
+    if start == -1:
+        return text
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if escape:
+            escape = False
+            continue
+        if c == '\\' and in_string:
+            escape = True
+            continue
+        if c == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == '[':
+            depth += 1
+        elif c == ']':
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return text
+
+
+def _validate_slides(slides: list) -> list:
+    """Drop slides missing required fields; keeps only value/flow/tier types."""
+    valid = []
+    required = {"value": ["headline", "cards"], "flow": ["headline", "steps"], "tier": ["headline", "tiers"]}
+    for s in slides:
+        t = s.get("type")
+        if t not in required:
+            continue
+        if all(s.get(f) for f in required[t]):
+            valid.append(s)
+    return valid
 
 
 def _esc(s: str) -> str:
@@ -199,48 +227,61 @@ class HTMLDeckGenerator:
     """Generates self-contained AdtimaBox HTML slide decks per adtimabox-deck-html.skill."""
 
     async def generate(self, proposal_text: str, brief: dict, skill_spec: str = "") -> str:
-        try:
-            slides = await self._extract_slides(proposal_text, brief, skill_spec)
-        except Exception as e:
-            print(f"[HTMLDeck] Extraction failed ({e}), using fallback")
-            slides = self._fallback_slides(brief)
+        slides = await self._extract_slides_with_retry(proposal_text, brief)
         return self._render_html(slides)
 
-    async def _extract_slides(self, proposal_text: str, brief: dict, skill_spec: str = "") -> list[dict]:
+    async def _extract_slides_with_retry(self, proposal_text: str, brief: dict) -> list[dict]:
+        """Try extraction twice before falling back to hardcoded slides."""
+        for attempt in range(2):
+            try:
+                slides = await self._extract_slides(proposal_text, brief, attempt)
+                if slides:
+                    return slides
+            except Exception as e:
+                print(f"[HTMLDeck] Extraction attempt {attempt+1} failed: {e}")
+        print("[HTMLDeck] Both attempts failed, using fallback")
+        return self._fallback_slides(brief)
+
+    async def _extract_slides(self, proposal_text: str, brief: dict, attempt: int = 0) -> list[dict]:
         from llm.greennode import get_llm_client
         from skills.base import strip_think_blocks, extract_json_block
 
-        client = get_llm_client("product_solution")
+        # Use design model (minimax) — better at strict JSON-only output, no thinking mode issues
+        client = get_llm_client("design")
         brand_hint = (brief or {}).get("industry", "")
-        trimmed = proposal_text[:8000]
+        # Second attempt: shorter input to reduce LLM confusion
+        trimmed = proposal_text[:4000] if attempt > 0 else proposal_text[:8000]
 
-        # Prepend only the schema+rules section from SKILL.md (not CSS/layout details)
-        schema_hint = _extract_schema_section(skill_spec)
-        system = (_EXTRACT_SYSTEM + "\n\n# Additional spec from SKILL.md:\n" + schema_hint
-                  if schema_hint else _EXTRACT_SYSTEM)
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
             None,
             partial(
                 client.create_completion,
                 messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": f"Brand: {brand_hint}\n\n---\n{trimmed}"},
+                    {"role": "system", "content": _EXTRACT_SYSTEM},
+                    {"role": "user", "content": f"Brand context: {brand_hint}\n\nProposal:\n{trimmed}"},
                 ],
-                temperature=0.1,
+                temperature=0.0,
                 max_tokens=3000,
                 stream=False,
             ),
         )
-        raw = strip_think_blocks(resp.choices[0].message.content or "[]")
-        raw = extract_json_block(raw)
-        print(f"[HTMLDeck] extraction raw ({len(raw)} chars): {raw[:300]}")
+        raw = resp.choices[0].message.content or ""
+        raw = strip_think_blocks(raw)
+        raw = extract_json_block(raw)  # handles ```json...``` fences
+        raw = _find_json_array(raw)   # handles preamble text before [
+        print(f"[HTMLDeck] attempt {attempt+1} raw ({len(raw)} chars): {raw[:500]}")
+
         data = json.loads(raw)
         if not isinstance(data, list) or not data:
-            print("[HTMLDeck] extraction returned empty/invalid list, using fallback")
-            return self._fallback_slides(brief)
-        print(f"[HTMLDeck] extracted {len(data)} slides: {[s.get('type') for s in data]}")
-        return data
+            print(f"[HTMLDeck] attempt {attempt+1}: empty/invalid list")
+            return []
+        validated = _validate_slides(data)
+        if not validated:
+            print(f"[HTMLDeck] attempt {attempt+1}: {len(data)} slides parsed but 0 passed validation")
+            return []
+        print(f"[HTMLDeck] attempt {attempt+1}: {len(validated)} valid slides {[s.get('type') for s in validated]}")
+        return validated
 
     def _fallback_slides(self, brief: dict) -> list[dict]:
         b = brief or {}

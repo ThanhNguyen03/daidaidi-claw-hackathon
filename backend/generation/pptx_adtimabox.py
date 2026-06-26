@@ -52,10 +52,12 @@ class AdtimaBoxPPTXGenerator:
             return {"status": "error", "error": "python-pptx not installed"}
 
         try:
-            # Share extraction logic with html_deck (same schema, same LLM call)
+            # Share extraction with html_deck (same schema, retry logic included)
             from generation.html_deck import HTMLDeckGenerator
             helper = HTMLDeckGenerator()
-            slides_data = await helper._extract_slides(proposal_text, brief, skill_spec)
+            slides_data = await helper._extract_slides_with_retry(proposal_text, brief)
+            if not slides_data:
+                slides_data = self._fallback_slides(brief)
         except Exception as e:
             print(f"[PPTX] Extraction failed ({e}), using fallback")
             slides_data = self._fallback_slides(brief)

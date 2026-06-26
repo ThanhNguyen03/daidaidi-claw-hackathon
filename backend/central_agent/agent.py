@@ -260,6 +260,9 @@ class CentralAgent:
         if not skill_plan:
             skill_plan = _build_contextual_skill_plan(state, message)
 
+        # Snapshot which skills already ran in PRIOR turns (before this execution)
+        prior_skill_names: set[str] = set(state.outputs.keys())
+
         skill_registry = get_skill_registry()
         all_outputs: dict[str, SkillOutput] = {}
 
@@ -386,7 +389,7 @@ class CentralAgent:
 
         # Step 4: Synthesize final response
         if all_outputs:
-            async for event in self._synthesize(state, message, all_outputs):
+            async for event in self._synthesize(state, message, all_outputs, prior_skill_names):
                 yield event
         else:
             yield {"type": "content", "content": "Xin lỗi, các skill không trả về kết quả. Vui lòng thử lại."}
@@ -551,16 +554,18 @@ class CentralAgent:
         state: SalesCaseState,
         original_message: str,
         skill_outputs: dict[str, SkillOutput],
+        prior_skill_names: set[str] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream a synthesized final response from all skill outputs."""
         from llm.greennode import get_llm_client
         from main import _ThinkFilter
 
-        # If proposal_assembler ran as the primary/sole skill, stream its content directly —
-        # it has already synthesized everything from prior skill runs; re-synthesizing
-        # would produce near-duplicate output.
         proposal_out = skill_outputs.get("proposal_assembler")
-        if proposal_out and proposal_out.content and len(skill_outputs) == 1:
+        if proposal_out and proposal_out.content:
+            # Proposal already shown in a prior turn → user asked for deck only; skip re-streaming.
+            if prior_skill_names and "proposal_assembler" in prior_skill_names:
+                return
+            # First time proposal generated → stream full content.
             content = proposal_out.content
             yield {"type": "content", "content": content}
             state.messages.append({
