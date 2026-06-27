@@ -81,19 +81,20 @@ ALWAYS EXECUTE when clarification rounds ≥ 2 — never ask more questions afte
 
 Otherwise, decide based on task type and missing info:
 
-QUOTE / PRICING request ("báo giá", "bảng giá", "estimate", "quotation", "báo giá chi tiết"):
+QUOTE / PRICING request (user wants a formal pricing estimate, quotation, or cost breakdown):
   → CLARIFY if missing ANY of: (1) campaign type (short-term campaign vs long-term loyalty platform), (2) rough user base / expected scale
   → This rule takes priority over STRATEGY rule when brief contains both strategy + pricing asks
   → Questions to ask: campaign type & duration, expected number of users/participants, budget range (optional)
   → EXECUTE directly only if scale AND campaign type are both known
 
-STRATEGY / MARKET ANALYSIS request (first response — 0 prior assistant turns):
-  → CLARIFY if missing industry OR missing primary goal/objective
-  → CLARIFY if industry + goal present but missing ALL of: scale/user-base, budget range, timeline
-  → EXECUTE only if industry + goal + at least one of (scale, budget, timeline) is known
-
-STRATEGY / MARKET ANALYSIS request (follow-up — ≥1 prior assistant turn):
-  → ALWAYS EXECUTE — user is refining based on prior response
+STRATEGY / MARKET ANALYSIS request:
+  Clarification is allowed for up to 2 rounds (the server enforces execute after ≥2 assistant turns).
+  Apply these rules at each turn — regardless of how many prior turns exist:
+  → CLARIFY if industry OR primary goal/objective is still missing from the brief
+  → CLARIFY if industry + goal are known but ALL of (scale/user-base, budget, timeline) are missing
+  → EXECUTE when industry + goal + at least one of (scale, budget, timeline) is known
+  → EXECUTE immediately when prior assistant turn(s) already contained full analysis or recommendations
+    (the user has seen analysis output and is now refining or asking follow-up — NOT just answering questions)
 
 DESIGN / USERFLOW request:
   → CLARIFY if missing core mechanics or user journey goal
@@ -134,20 +135,17 @@ Additional skills to add when relevant:
   • compliance — add when brief involves personal data collection, ZNS, advertising claims, or regulatory concerns
   • client_simulator — add when brief has signs of a competitive pitch or objection-handling is useful
   • proposal_assembler (alone, last group):
-      ⚠ STICKY RULE — check ALL sources, not just the current message:
-      INCLUDE proposal_assembler whenever ANY of the following is true:
-        (a) Current message contains: "proposal", "tổng hợp", "làm deck", "xuất proposal",
-            "báo giá chi tiết", "báo giá", "bảng giá"
-        (b) ANY prior USER message in Conversation History contains those keywords
-            (user may be just providing budget/scale/timeline NOW but requested proposal earlier)
-        (c) Accumulated Brief's Context field contains "Proposal", "báo giá", or "deck"
-            (user's original message was parsed into the brief — intent still present)
+      INCLUDE when the user intends to receive a formal proposal document, deck, or pricing summary
+      as a deliverable — based on semantic understanding of the FULL conversation context.
 
-      The proposal request is SESSION-WIDE. Once a user asks for a proposal/deck/báo giá
-      anywhere in the conversation, ALWAYS include proposal_assembler in every execute response
-      for this session — even if the current message is only about budget, scale, or timeline.
+      ALREADY GENERATED: if "proposal_assembler" is listed in Already Executed This Session → it ran before.
+        → Re-include ONLY if the user is explicitly requesting a new or updated proposal THIS turn.
+        → Do NOT re-include just because the conversation continues or the user is adding context.
 
-      Do NOT trigger proposal_assembler if no proposal keyword appears anywhere at all.
+      NOT YET GENERATED: if proposal_assembler is NOT in Already Executed This Session:
+        → Include if the user's current message OR a very recent prior message (≤2 turns ago)
+          expressed intent to receive a formal proposal or deck — even if they are now
+          providing budget/scale/timeline details that complete that earlier request.
 
 Read the FULL context — Conversation History + Accumulated Brief + Current Message.
 The current message is the primary signal for which skills to select, but ALSO scan
@@ -163,15 +161,10 @@ STEP 3 — DESIRED OUTPUTS (semantic intent extraction)
 Before outputting JSON, extract what output artifacts the user wants. This field is STICKY
 across turns — once set it stays set for the whole session (the server accumulates it).
 
-Set desired_outputs to ["proposal"] if ANY message in the conversation (current or history)
-shows intent to receive a formal proposal document, presentation deck, pricing document, or
-executive summary. This includes ALL of these phrasings:
-  • "proposal", "báo giá", "báo giá chi tiết", "bảng giá", "tổng hợp", "xuất proposal"
-  • "làm deck", "tạo deck", "slides", "bản trình bày", "tài liệu đề xuất", "bản đề xuất"
-  • "pitch deck", "presentation", "bản báo cáo", "xuất tài liệu"
-  • Any intent to receive a formal written document or slideshow output
-
-Leave as [] if the user is asking a question, refining analysis, or requesting strategy only.
+Set desired_outputs to ["proposal"] when the user's overall intent across the conversation
+is to receive a formal proposal, deck, or pricing document as a deliverable.
+Detect this semantically — a user asking for formal output materials should set this field.
+Leave as [] for analysis-only conversations, refinement questions, or strategy discussions.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 4 — OUTPUT (valid JSON only, no markdown fences)
@@ -211,15 +204,13 @@ def _build_contextual_skill_plan(state, message: str) -> list[list[dict[str, str
 
     prior_skill_names = [n for n in state.outputs.keys() if n not in _SEQUENTIAL] if state.outputs else []
 
-    _proposal_desired = "proposal" in (getattr(state, "desired_outputs", None) or [])
-
     if prior_skill_names:
         first_group = [
             {"skill": s, "task": f"Continue and deepen analysis for: {task_short}"}
             for s in prior_skill_names
         ]
         plan: list[list[dict[str, str]]] = [first_group]
-        if "proposal_assembler" in (state.outputs or {}) or _proposal_desired:
+        if "proposal_assembler" in (state.outputs or {}):
             plan.append([{"skill": "proposal_assembler",
                            "task": f"Reassemble proposal incorporating: {task_short}"}])
         return plan
@@ -345,17 +336,49 @@ class CentralAgent:
     # Main entry point
     # ------------------------------------------------------------------
 
+    # Keywords that indicate a user wants a formal proposal/deck/pricing document.
+    # Covers common Vietnamese + English phrasing. This list is intentionally broad
+    # (false positives waste compute but aren't harmful; false negatives drop user requests).
+    _PROPOSAL_INTENT_KWS: frozenset[str] = frozenset({
+        # Vietnamese
+        "proposal", "báo giá", "báo giá chi tiết", "bảng giá",
+        "tổng hợp", "làm deck", "tạo deck", "xuất deck", "xuất proposal",
+        "bản trình bày", "bản đề xuất", "tài liệu đề xuất",
+        "bản báo cáo", "làm tài liệu", "kế hoạch chi tiết",
+        # English
+        "deck", "slides", "presentation", "pitch deck", "pitch",
+        "quotation", "quote", "estimate", "pricing doc",
+        "make deck", "generate deck", "create deck", "build deck",
+    })
+
+    def _detect_proposal_intent(self, state: SalesCaseState, message: str) -> bool:
+        """Return True if any text source (current msg, history, brief) contains proposal intent."""
+        haystack = message.lower()
+        for m in state.messages:
+            if m.get("role") == "user":
+                haystack += " " + (m.get("content") or "").lower()
+        if state.brief and state.brief.additional_context:
+            haystack += " " + state.brief.additional_context.lower()
+        return any(kw in haystack for kw in self._PROPOSAL_INTENT_KWS)
+
     async def run(
         self, state: SalesCaseState, message: str
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Process a user message.
+        Step 0: Pre-scan for proposal intent → update state.desired_outputs (server-side, reliable)
         Step 1: Casual check → greet if casual
         Step 2: Assess brief + plan → either clarify or execute
         Step 3A: If clarification needed → stream questions and stop
         Step 3B: If ready → execute skills in parallel
         Step 4: Synthesize and stream final response
         """
+        # Step 0: Reliable server-side proposal intent detection.
+        # Can't depend solely on the LLM to output desired_outputs correctly —
+        # models often omit new schema fields. Scan all text sources here first,
+        # then LLM extraction supplements for unusual paraphrases.
+        if self._detect_proposal_intent(state, message) and "proposal" not in state.desired_outputs:
+            state.desired_outputs.append("proposal")
 
         # Step 1: Quick check — is this just a greeting/casual chat?
         if self._is_casual(message):
@@ -687,22 +710,6 @@ class CentralAgent:
             if _desired and _desired not in state.desired_outputs:
                 state.desired_outputs.append(_desired)
 
-        # Enforce proposal_assembler based on semantic state, not brittle keyword matching.
-        # Once "proposal" is in desired_outputs (now or any prior turn), always include it.
-        if ("proposal" in state.desired_outputs
-                and not result.get("needs_clarification")
-                and result.get("skill_plan")):
-            _planned_skills = {s.get("skill") for g in result["skill_plan"] for s in g}
-            if "proposal_assembler" not in _planned_skills:
-                result["skill_plan"].append([{
-                    "skill": "proposal_assembler",
-                    "task": (
-                        "Tổng hợp toàn bộ phân tích thành proposal hoàn chỉnh: "
-                        "giới thiệu giải pháp Zalo, idea game, userflow, "
-                        "data reactivation strategy và báo giá chi tiết."
-                    ),
-                }])
-
         # Safety net: if LLM returned execute but no skill_plan, build from session state.
         if not result.get("needs_clarification") and not result.get("skill_plan"):
             result["skill_plan"] = _build_contextual_skill_plan(state, message)
@@ -778,10 +785,7 @@ class CentralAgent:
 
         proposal_out = skill_outputs.get("proposal_assembler")
         if proposal_out and proposal_out.content:
-            # Proposal already shown in a prior turn → user asked for deck only; skip re-streaming.
-            if prior_skill_names and "proposal_assembler" in prior_skill_names:
-                return
-            # First time proposal generated → stream full content.
+            # proposal_assembler ran and produced content → stream it as the full response.
             content = _fix_gantt(proposal_out.content)
             yield {"type": "content", "content": content}
             state.messages.append({
