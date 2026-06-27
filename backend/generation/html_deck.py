@@ -21,7 +21,7 @@ _CSS = """
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 body{
-  font-family:system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
   background:#0d0d16;
   display:flex;flex-direction:column;align-items:center;gap:40px;padding:40px;
 }
@@ -51,15 +51,15 @@ body{
 .logo .by{font-size:11px;color:var(--gray-light);font-weight:400;margin-left:6px;}
 
 /* ── Stat-bar (flex-shrink:0 → never compressed; always visible at bottom) */
-.stat-bar{margin-top:auto;flex-shrink:0;display:flex;gap:40px;padding-top:14px;border-top:1px solid var(--line);}
-.stat-bar .sv{font-size:24px;font-weight:700;color:var(--ink);line-height:1;}
-.stat-bar .sl{font-size:11px;color:var(--gray-light);margin-top:3px;font-weight:400;}
+.stat-bar{margin-top:auto;flex-shrink:0;display:flex;gap:40px;padding-top:16px;border-top:1px solid var(--line);}
+.stat-bar .v{font-size:28px;font-weight:700;color:var(--ink);line-height:1;}
+.stat-bar .l{font-size:12px;color:var(--gray-light);margin-top:4px;font-weight:400;}
 
 /* ── VALUE layout ──────────────────────────────────────────────────────── */
 /* min-height:0 on flex children is required for overflow:hidden to work   */
 .body-row{flex:1;min-height:0;overflow:hidden;display:flex;gap:56px;margin-top:16px;align-items:flex-start;}
 .left-col{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;}
-.left-col h2{font-size:30px;font-weight:400;color:var(--ink);line-height:1.18;letter-spacing:-.02em;margin-bottom:8px;}
+.left-col h2{font-size:38px;font-weight:400;color:var(--ink);line-height:1.18;letter-spacing:-.02em;margin-bottom:10px;}
 .left-col h2 b{color:var(--orange);font-weight:700;}
 .lede{font-size:13px;color:var(--gray);line-height:1.55;margin-bottom:12px;}
 .feat-list{display:flex;flex-direction:column;gap:7px;min-height:0;overflow:hidden;}
@@ -70,9 +70,10 @@ body{
 .feat-item .ic{
   width:30px;height:30px;border-radius:7px;background:var(--card);
   display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;
+  font-family:'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',system-ui,sans-serif;
 }
-.feat-item h4{font-size:13px;font-weight:600;color:var(--ink);line-height:1.3;margin-bottom:2px;}
-.feat-item p{font-size:12px;color:var(--gray);line-height:1.45;}
+.feat-item h4{font-size:14px;font-weight:600;color:var(--ink);line-height:1.3;margin-bottom:3px;}
+.feat-item p{font-size:13px;color:var(--gray);line-height:1.5;}
 .tag-core{
   font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
   color:var(--teal);background:rgba(15,155,142,.10);padding:2px 8px;border-radius:4px;
@@ -110,6 +111,7 @@ body{
   border:1px solid var(--line);font-size:26px;
   display:flex;align-items:center;justify-content:center;
   box-shadow:0 4px 12px rgba(0,0,0,.06);
+  font-family:'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',system-ui,sans-serif;
 }
 .core-dot{position:absolute;top:-4px;right:-4px;width:12px;height:12px;border-radius:50%;border:2px solid #fff;}
 .core-dot.core{background:var(--teal);}
@@ -170,12 +172,12 @@ Given a sales proposal (may include CLIENT BRIEF + multiple SKILL OUTPUT section
 IMPORTANT OUTPUT RULE: Your response must start with [ and end with ]. Output ONLY the raw JSON array.
 No preamble, no explanation, no markdown fences (no ```), no trailing text. Just the JSON array itself.
 
-SLIDE COUNT: Generate 5–8 slides. Do NOT generate fewer than 5 slides. Extract every distinct product, feature set, and pricing tier as its own slide.
+SLIDE COUNT: Generate as many slides as needed to cover the FULL proposal — typically 6–12+ slides. Do NOT cap at any number. Extract every distinct product, module, case study, user journey, and pricing tier as its own slide. Do NOT merge different products or sections into one slide.
 
 MANDATORY slide order:
 1. HIGHLIGHT slide — REQUIRED as the first slide: executive summary with 3–4 big impact metrics drawn from the proposal (reach, ROI, timeline, cost savings, etc.)
-2. VALUE slide(s) — one per major product/module section (e.g. slide for OA, slide for ZNS+Mini App, slide for overall Zalo ecosystem). Up to 3 value slides. Do NOT merge multiple products into one slide if distinct sections exist.
-3. FLOW slide — REQUIRED if ANY user journey, userflow, or sequence of steps is described. Extract ALL steps (up to 6).
+2. VALUE slide(s) — one per major product/module section (e.g. OA, ZNS, Mini App, gamification, data strategy, each case study). No cap on count. Do NOT merge multiple distinct products into one slide.
+3. FLOW slide(s) — REQUIRED if ANY user journey, userflow, or sequence of steps is described. Extract ALL steps (up to 6 per slide; create a second flow slide if there are more than 6 steps or multiple distinct journeys).
 4. TIER slide — REQUIRED if ANY pricing, packages, or tiers are mentioned. Extract ALL tiers.
 
 Slide schemas — use EXACTLY these field names:
@@ -263,6 +265,25 @@ def _validate_slides(slides: list) -> list:
 
 def _esc(s: str) -> str:
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def _safe_icon(text: str) -> str:
+    """Strip Unicode that causes invalid HTML or broken emoji rendering:
+    lone surrogates (illegal in HTML5), variation selectors without base,
+    and C0 control chars. Mirrors _safe_text in pptx_adtimabox.py."""
+    if not text:
+        return ""
+    result = []
+    for ch in str(text):
+        cp = ord(ch)
+        if 0xD800 <= cp <= 0xDFFF:
+            continue
+        if 0xFE00 <= cp <= 0xFE0F or 0xE0100 <= cp <= 0xE01EF:
+            continue
+        if cp < 0x20 and ch not in "\t\n\r":
+            continue
+        result.append(ch)
+    return "".join(result)
 
 
 class HTMLDeckGenerator:
@@ -375,7 +396,7 @@ class HTMLDeckGenerator:
         client = get_llm_client("design")
         brand_hint = (brief or {}).get("industry", "")
         # Second attempt: slightly shorter input to reduce LLM confusion
-        trimmed = proposal_text[:10000] if attempt > 0 else proposal_text[:15000]
+        trimmed = proposal_text[:18000] if attempt > 0 else proposal_text[:25000]
 
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
@@ -387,7 +408,7 @@ class HTMLDeckGenerator:
                     {"role": "user", "content": f"Brand context: {brand_hint}\n\nProposal:\n{trimmed}"},
                 ],
                 temperature=0.0,
-                max_tokens=8000,
+                max_tokens=12000,
                 stream=False,
             ),
         )
@@ -422,6 +443,8 @@ class HTMLDeckGenerator:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AdtimaBox Proposal Deck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>{_CSS}</style>
 </head>
 <body>
@@ -453,7 +476,7 @@ class HTMLDeckGenerator:
         if not stats:
             return ""
         items = "".join(
-            f'<div><div class="sv">{_esc(s.get("v",""))}</div><div class="sl">{_esc(s.get("l",""))}</div></div>'
+            f'<div><div class="v">{_esc(s.get("v",""))}</div><div class="l">{_esc(s.get("l",""))}</div></div>'
             for s in stats[:4]
         )
         return f'<div class="stat-bar">{items}</div>'
@@ -500,7 +523,7 @@ class HTMLDeckGenerator:
 
         cards_html = ""
         for c in cards[:4]:
-            icon = _esc(c.get("icon", ""))
+            icon = _esc(_safe_icon(c.get("icon", "")))
             title = _esc(c.get("title", ""))
             desc = _esc(c.get("desc", ""))
             tag = c.get("tag")
@@ -536,7 +559,7 @@ class HTMLDeckGenerator:
 
         steps_html = ""
         for i, st in enumerate(steps[:6]):
-            icon = _esc(st.get("icon", ""))
+            icon = _esc(_safe_icon(st.get("icon", "")))
             label = _esc(st.get("label", ""))
             desc = _esc(st.get("desc", ""))
             role = st.get("role", "customer")

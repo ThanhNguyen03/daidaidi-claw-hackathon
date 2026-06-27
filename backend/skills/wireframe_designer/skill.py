@@ -52,13 +52,19 @@ class WireframeDesignerSkill(BaseSkill):
             except Exception:
                 pass
 
-        skill_order = ["market_strategy", "product_solution", "compliance", "design", "proposal_assembler"]
         prev = context.previous_outputs or {}
-        for skill_name in skill_order:
-            content = prev.get(skill_name, {}).get("content", "")
-            if content and len(content) > 50:
-                # Cap each skill at 3000 chars to avoid overwhelming the extractor
-                parts.append(f"## {skill_name.upper()} OUTPUT\n{content[:3000]}")
+
+        # proposal_assembler already synthesizes all 4 skills — pass its full content
+        # as the primary source so the extractor sees the complete proposal.
+        proposal_content = prev.get("proposal_assembler", {}).get("content", "")
+        if proposal_content and len(proposal_content) > 100:
+            parts.append(f"## PROPOSAL DOCUMENT\n{proposal_content}")
+        else:
+            # Fallback: include individual skill outputs if proposal_assembler hasn't run
+            for skill_name in ["market_strategy", "product_solution", "compliance", "design"]:
+                content = prev.get(skill_name, {}).get("content", "")
+                if content and len(content) > 50:
+                    parts.append(f"## {skill_name.upper()} OUTPUT\n{content[:4000]}")
 
         return "\n\n---\n\n".join(parts)
 

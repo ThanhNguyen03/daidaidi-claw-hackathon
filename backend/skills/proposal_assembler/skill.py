@@ -39,7 +39,7 @@ class ProposalAssemblerSkill(BaseSkill):
             content = await self._call_llm(
                 system=system,
                 user_msg=user_msg,
-                history=context.messages,
+                history=[],  # All context already in user_msg via _build_assembly_context
                 max_tokens=16384,
             )
         except Exception as e:
