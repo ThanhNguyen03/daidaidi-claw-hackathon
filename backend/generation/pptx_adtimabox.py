@@ -457,9 +457,10 @@ class AdtimaBoxPPTXGenerator:
             crd.line.color.rgb = self._rgb("line")
             crd.line.width = _Pt(0.5)
 
-            # Colored accent bar at top of card
-            color_str = (m.get("color") or "").lstrip("#")
-            bar_color = self._hex_rgb(color_str) if len(color_str) == 6 else self._rgb("orange")
+            # Colored accent bar at top of card — metric colors are semantic names, not hex
+            _METRIC_COLORS = {"orange": "orange", "teal": "teal", "purple": "purple", "gold": "gold"}
+            color_name = (m.get("color") or "orange")
+            bar_color = self._rgb(_METRIC_COLORS.get(color_name, "orange"))
             bar = slide.shapes.add_shape(1, Inches(cx), Inches(card_y),
                                          Inches(card_w), Inches(0.06))
             bar.fill.solid()

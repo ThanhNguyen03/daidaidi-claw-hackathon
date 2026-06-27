@@ -40,7 +40,7 @@ class ProposalAssemblerSkill(BaseSkill):
                 system=system,
                 user_msg=user_msg,
                 history=context.messages,
-                max_tokens=8192,
+                max_tokens=16384,
             )
         except Exception as e:
             return SkillOutput(
