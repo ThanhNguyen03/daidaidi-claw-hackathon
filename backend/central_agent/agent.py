@@ -279,6 +279,8 @@ def _fix_gantt(content: str) -> str:
             task_name = stripped[:colon_idx]
             params_raw = stripped[colon_idx + 1:]
             params = [p.strip() for p in params_raw.split(',')]
+            # Strip 'during <taskId>' — not valid Mermaid gantt syntax
+            params = [p for p in params if not re.match(r'^during\b', p, re.I)]
 
             # Fix year-only date like "2024"
             fixed_date = None
@@ -423,6 +425,23 @@ class CentralAgent:
 
         if not skill_plan:
             skill_plan = _build_contextual_skill_plan(state, message)
+
+        # Safety net: if proposal intent was detected this session but proposal_assembler
+        # is missing from the plan (e.g. _plan() threw and the fallback skipped force-add),
+        # inject it here as its own final group.
+        if ("proposal" in state.desired_outputs
+                and not assessment.get("needs_clarification")
+                and "proposal_assembler" not in state.outputs):
+            _pa_in_plan = {s.get("skill") for g in skill_plan for s in g}
+            if "proposal_assembler" not in _pa_in_plan:
+                skill_plan.append([{
+                    "skill": "proposal_assembler",
+                    "task": (
+                        "Tổng hợp toàn bộ phân tích thành proposal hoàn chỉnh: "
+                        "giới thiệu giải pháp Zalo, idea game, userflow, "
+                        "data reactivation strategy và báo giá chi tiết."
+                    ),
+                }])
 
         # Snapshot which skills already ran in PRIOR turns (before this execution)
         prior_skill_names: set[str] = set(state.outputs.keys())
