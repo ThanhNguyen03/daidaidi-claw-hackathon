@@ -710,6 +710,28 @@ class CentralAgent:
             if _desired and _desired not in state.desired_outputs:
                 state.desired_outputs.append(_desired)
 
+        # One-time enforcement: if proposal was requested this session AND proposal_assembler
+        # hasn't run yet → add it to the plan now.
+        # This bridges the gap where the user asked for a proposal in a prior turn but the
+        # current message is just answering clarification questions (no proposal keyword present),
+        # so the LLM doesn't re-detect the intent.
+        # The "not in state.outputs" guard ensures this fires ONCE only — never again after
+        # proposal_assembler completes.
+        if ("proposal" in state.desired_outputs
+                and not result.get("needs_clarification")
+                and result.get("skill_plan")
+                and "proposal_assembler" not in state.outputs):
+            _planned_skills = {s.get("skill") for g in result["skill_plan"] for s in g}
+            if "proposal_assembler" not in _planned_skills:
+                result["skill_plan"].append([{
+                    "skill": "proposal_assembler",
+                    "task": (
+                        "Tổng hợp toàn bộ phân tích thành proposal hoàn chỉnh: "
+                        "giới thiệu giải pháp Zalo, idea game, userflow, "
+                        "data reactivation strategy và báo giá chi tiết."
+                    ),
+                }])
+
         # Safety net: if LLM returned execute but no skill_plan, build from session state.
         if not result.get("needs_clarification") and not result.get("skill_plan"):
             result["skill_plan"] = _build_contextual_skill_plan(state, message)
