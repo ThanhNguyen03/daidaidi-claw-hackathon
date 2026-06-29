@@ -826,6 +826,125 @@ interface MessageBubbleProps {
   isStreaming?: boolean;
 }
 
+// ── Phone screen wireframe renderer ─────────────────────────────────────────
+
+interface ScreenSpec {
+  label: string;
+  appName: string;
+  items: Array<{ type: 'header' | 'text' | 'button'; text: string }>;
+}
+
+/** Parse "Screen N: Title\n┌─…└─" ASCII art sections into structured specs. */
+function extractScreenSpecs(content: string): ScreenSpec[] | null {
+  if (!/Screen\s+\d+\s*:/i.test(content) || !/┌/.test(content)) return null;
+  const specs: ScreenSpec[] = [];
+  const lines = content.split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    const titleMatch = lines[i].match(/^Screen\s+\d+\s*:\s*(.+)$/i);
+    if (!titleMatch) { i++; continue; }
+    const label = titleMatch[1].trim();
+    i++;
+    while (i < lines.length && !lines[i].includes('┌')) i++;
+    if (i >= lines.length) break;
+    i++; // skip ┌ line
+    // First non-separator content line = app name
+    let appName = '';
+    for (let j = i; j < lines.length && j < i + 4; j++) {
+      if (lines[j].includes('╠')) break;
+      const m = lines[j].match(/│\s*(.+?)\s*│/);
+      if (m && m[1].trim() && !/^[─═\s]+$/.test(m[1])) { appName = m[1].trim(); break; }
+    }
+    const items: ScreenSpec['items'] = [];
+    let passedSep = false;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (line.includes('└')) { i++; break; }
+      if (line.includes('╠')) { passedSep = true; i++; continue; }
+      if (passedSep) {
+        const inner = line.replace(/^│\s*/, '').replace(/\s*│\s*$/, '').trim();
+        if (inner && !/^[─═\s┌┐└┘╠╣]{2,}$/.test(inner)) {
+          if (/[╭╰]/.test(line) || (/[►▶]/.test(inner) && inner.length < 35)) {
+            const t = inner.replace(/[╭╰╮╯]/g, '').replace(/─+/g, '').replace(/[►▶]/g, '▶').trim();
+            if (t) items.push({ type: 'button', text: t });
+          } else if (inner.endsWith(':') || /^[A-ZÁÀẢÃẠĂẮẶẲẴẰÂẤẬẨẪÀ\s]{5,}$/.test(inner)) {
+            items.push({ type: 'header', text: inner });
+          } else {
+            const cleaned = inner.replace(/[┌┐└┘│─╭╮╰╯]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+            if (cleaned) items.push({ type: 'text', text: cleaned });
+          }
+        }
+      }
+      i++;
+    }
+    if (label) specs.push({ label, appName, items: items.slice(0, 10) });
+  }
+  return specs.length > 0 ? specs : null;
+}
+
+/** Replace screen-spec ASCII sections with a ```phone-screen code block. */
+function convertScreenSpecsToPhoneBlock(content: string): string {
+  const specs = extractScreenSpecs(content);
+  if (!specs) return content;
+  const firstIdx = content.search(/Screen\s+\d+\s*:/i);
+  if (firstIdx === -1) return content;
+  const lastBox = content.lastIndexOf('└');
+  if (lastBox === -1) return content;
+  const lineEnd = content.indexOf('\n', lastBox);
+  const sectionEnd = lineEnd === -1 ? content.length : lineEnd + 1;
+  const phoneBlock = `\`\`\`phone-screen\n${JSON.stringify(specs)}\n\`\`\``;
+  return content.slice(0, firstIdx) + phoneBlock + content.slice(sectionEnd);
+}
+
+function PhoneScreenSection({ specs }: { specs: ScreenSpec[] }) {
+  return (
+    <div style={{ display: 'flex', gap: '20px', overflowX: 'auto', padding: '16px 4px 8px', justifyContent: specs.length === 1 ? 'flex-start' : 'center' }}>
+      {specs.map((spec, idx) => (
+        <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+          <div style={{
+            width: '175px', height: '320px',
+            background: 'linear-gradient(160deg, #1A1A2E 0%, #2C2C44 100%)',
+            borderRadius: '28px', padding: '8px 6px',
+            boxShadow: '0 8px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08)',
+            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          }}>
+            {/* Notch */}
+            <div style={{ width: '34px', height: '10px', background: '#0d0d1f', borderRadius: '6px', margin: '0 auto 5px', flexShrink: 0 }} />
+            {/* Screen */}
+            <div style={{ flex: 1, background: '#f8f8f8', borderRadius: '14px', overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              {/* App bar */}
+              <div style={{ background: '#F65009', padding: '5px 8px', flexShrink: 0, textAlign: 'center' }}>
+                <span style={{ color: '#fff', fontSize: '9px', fontWeight: 700, letterSpacing: '0.03em' }}>{spec.appName || 'Mini App'}</span>
+              </div>
+              {/* Content */}
+              <div style={{ flex: 1, overflow: 'hidden', padding: '5px 4px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                {spec.items.map((item, ii) => {
+                  if (item.type === 'button') return (
+                    <div key={ii} style={{ background: '#F65009', borderRadius: '5px', padding: '5px 6px', textAlign: 'center', color: '#fff', fontSize: '7.5px', fontWeight: 700, margin: '2px 3px', flexShrink: 0 }}>
+                      {item.text}
+                    </div>
+                  );
+                  if (item.type === 'header') return (
+                    <div key={ii} style={{ fontSize: '7px', fontWeight: 700, color: '#1D1D1F', padding: '3px 2px 1px', flexShrink: 0 }}>{item.text}</div>
+                  );
+                  return (
+                    <div key={ii} style={{ fontSize: '6.5px', color: '#555', lineHeight: 1.35, padding: '2px 3px', background: '#fff', borderRadius: '3px', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {item.text}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            {/* Home bar */}
+            <div style={{ width: '44px', height: '4px', background: 'rgba(255,255,255,0.25)', borderRadius: '2px', margin: '5px auto 0', flexShrink: 0 }} />
+          </div>
+          <span style={{ fontSize: '10.5px', color: 'var(--color-text-muted)', textAlign: 'center', maxWidth: '175px', lineHeight: 1.3 }}>{spec.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const AGENT_COLORS: Record<string, string> = {
   central_agent: '#6366f1',
   market_strategy: '#ec4899',
@@ -858,7 +977,7 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
 
   const showHeader = !isGrouped && !isUser && !isSystem && agentName;
   const isAI = !isUser && !isSystem;
-  const processedContent = wrapAsciiBoxes(fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(fixBareMermaidBlocks(message.content)))));
+  const processedContent = wrapAsciiBoxes(fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(fixBareMermaidBlocks(convertScreenSpecsToPhoneBlock(message.content))))));
   const contentBlocks = useMemo(() => splitContentIntoBlocks(processedContent), [processedContent]);
   const markdownComponents: any = {
     p: ({ children }: { children: React.ReactNode }) => <p style={{ margin: '0.5rem 0', lineHeight: 1.7 }}>{children}</p>,
@@ -961,6 +1080,14 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
       if (React.isValidElement(child)) {
         const el = child as React.ReactElement<{ className?: string; children?: React.ReactNode }>;
         const rawContent = String(el.props.children ?? '').replace(/\n$/, '');
+
+        // Phone screen wireframes
+        if (el.props.className === 'language-phone-screen') {
+          try {
+            const specs: ScreenSpec[] = JSON.parse(rawContent);
+            if (Array.isArray(specs) && specs.length > 0) return <PhoneScreenSection specs={specs} />;
+          } catch { /* fall through to default code block */ }
+        }
 
         // Mermaid diagrams
         if (el.props.className === 'language-mermaid') {

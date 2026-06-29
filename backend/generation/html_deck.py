@@ -283,7 +283,7 @@ MANDATORY slide order:
 2. VALUE slide(s) — one per major product/module section (e.g. OA, ZNS, Mini App, gamification, data strategy, each case study). No cap on count. Do NOT merge multiple distinct products into one slide.
 3. FLOW slide(s) — REQUIRED if ANY user journey, userflow, or sequence of steps is described. Extract ALL steps (up to 6 per slide; create a second flow slide if there are more than 6 steps or multiple distinct journeys).
 4. TIER slide — REQUIRED if ANY pricing, packages, or tiers are mentioned. Extract ALL tiers.
-5. SCREEN slide(s) — add 1–2 when the proposal describes Mini App screens, ZNS notification templates, Zalo OA home feed, gamification UI, or any app interface. Show 2–3 phone mockup screens per slide.
+5. SCREEN slide(s) — MANDATORY if the proposal contains a section titled "MÔ TẢ MÀN HÌNH", "SCREEN SPECIFICATIONS", "Screen 1:", "Screen 2:", or any ASCII box-art wireframe (┌─…─┐ boxes). Also add when Mini App screens, ZNS notification templates, Zalo OA home feed, gamification UI, or loyalty app interface is described. Show 2–3 phone mockup screens per slide. Each "Screen N: Title" box-art block → one entry in "screens" array: the heading inside ╠═╣ becomes app_name; each button/row/cta inside the box becomes an item.
 
 Slide schemas — use EXACTLY these field names:
 

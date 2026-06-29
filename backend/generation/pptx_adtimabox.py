@@ -89,6 +89,7 @@ class AdtimaBoxPPTXGenerator:
             "flow":      self._render_flow,
             "tier":      self._render_tier,
             "highlight": self._render_highlight,
+            "screen":    self._render_screen,
         }
         blank = prs.slide_layouts[6]
         for sd in slides:
@@ -574,6 +575,165 @@ class AdtimaBoxPPTXGenerator:
             if deploy:
                 self._text(slide, x + 0.12, deploy_y, tier_w - 0.26, 0.30,
                            f"Triển khai: {deploy}", 8, "gray")
+
+        self._stat_bar(slide, sd.get("stats") or [])
+
+    def _render_screen(self, slide, sd: dict):
+        """Phone mockup slide — up to 3 phones side by side."""
+        from pptx.util import Inches, Pt
+        from pptx.dml.color import RGBColor
+
+        self._bg(slide)
+        hl = sd.get("headline", {})
+        self._topbar(slide, sd.get("eyebrow", ""))
+
+        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W, 0.62,
+                         hl.get("plain", ""), hl.get("bold", ""), 18)
+
+        lede = sd.get("lede", "")
+        title_h = 0.62 + (0.26 if lede else 0)
+        if lede:
+            self._text(slide, PAD_X, BODY_TOP + 0.64, CONTENT_W, 0.26, lede, 9, "gray")
+
+        screens = (sd.get("screens") or [])[:3]
+        n = max(len(screens), 1)
+
+        phone_top = BODY_TOP + title_h + 0.10
+        phone_area_h = SLIDE_H - phone_top - STAT_BAR_H - 0.24
+        phone_h = min(phone_area_h, 3.10)
+        phone_w = phone_h * 0.48
+
+        total_w = n * phone_w
+        gap = (CONTENT_W - total_w) / (n + 1)
+
+        for i, sc in enumerate(screens):
+            px = PAD_X + gap * (i + 1) + phone_w * i
+            py = phone_top
+
+            # Phone body
+            body = slide.shapes.add_shape(5, Inches(px), Inches(py),
+                                           Inches(phone_w), Inches(phone_h))
+            body.fill.solid()
+            body.fill.fore_color.rgb = RGBColor(26, 26, 46)
+            body.line.fill.background()
+
+            # Screen area
+            margin = phone_w * 0.07
+            scr_x = px + margin
+            scr_y = py + phone_h * 0.055
+            scr_w = phone_w - margin * 2
+            scr_h = phone_h * 0.875
+
+            scr = slide.shapes.add_shape(1, Inches(scr_x), Inches(scr_y),
+                                         Inches(scr_w), Inches(scr_h))
+            scr.fill.solid()
+            scr.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            scr.line.fill.background()
+
+            # Notch
+            notch_w = scr_w * 0.25
+            notch = slide.shapes.add_shape(
+                1, Inches(scr_x + (scr_w - notch_w) / 2), Inches(scr_y),
+                Inches(notch_w), Inches(0.06))
+            notch.fill.solid()
+            notch.fill.fore_color.rgb = RGBColor(26, 26, 46)
+            notch.line.fill.background()
+
+            # App bar
+            bar_h = 0.20
+            bar = slide.shapes.add_shape(1, Inches(scr_x), Inches(scr_y + 0.06),
+                                         Inches(scr_w), Inches(bar_h))
+            bar.fill.solid()
+            bar.fill.fore_color.rgb = self._rgb("orange")
+            bar.line.fill.background()
+            self._text(slide, scr_x, scr_y + 0.06, scr_w, bar_h,
+                       self._safe_text(sc.get("app_name", "")), 6, "white",
+                       bold=True, align="CENTER")
+
+            # Content items
+            cy = scr_y + 0.06 + bar_h + 0.04
+            cx_i = scr_x + 0.04
+            iw = scr_w - 0.08
+            scr_bottom = scr_y + scr_h - 0.06
+
+            for item in (sc.get("items") or [])[:6]:
+                if cy + 0.18 > scr_bottom:
+                    break
+                kind = item.get("kind", "row")
+
+                if kind == "banner":
+                    h = min(0.32, scr_bottom - cy - 0.04)
+                    bshape = slide.shapes.add_shape(1, Inches(cx_i), Inches(cy),
+                                                    Inches(iw), Inches(h))
+                    bshape.fill.solid()
+                    bshape.fill.fore_color.rgb = self._rgb("orange")
+                    bshape.line.fill.background()
+                    txt = self._safe_text(f"{item.get('emoji','')} {item.get('text','')}")
+                    self._text(slide, cx_i + 0.02, cy + 0.04, iw - 0.04, h - 0.06,
+                               txt, 5.5, "white", bold=True, align="CENTER")
+                    cy += h + 0.04
+
+                elif kind == "row":
+                    h = 0.24
+                    rshape = slide.shapes.add_shape(1, Inches(cx_i), Inches(cy),
+                                                    Inches(iw), Inches(h))
+                    rshape.fill.solid()
+                    rshape.fill.fore_color.rgb = RGBColor(248, 248, 248)
+                    rshape.line.color.rgb = RGBColor(236, 230, 225)
+                    rshape.line.width = Pt(0.5)
+                    self._text(slide, cx_i + 0.02, cy + 0.03, 0.18, 0.20,
+                               self._safe_text(item.get("emoji", "")), 8, "ink",
+                               align="CENTER", emoji_font=True)
+                    self._text(slide, cx_i + 0.22, cy + 0.04, iw - 0.28, 0.18,
+                               self._safe_text(item.get("title", "")), 5.5, "ink")
+                    cy += h + 0.03
+
+                elif kind == "cta":
+                    h = 0.22
+                    cshape = slide.shapes.add_shape(5, Inches(cx_i + 0.04), Inches(cy),
+                                                    Inches(iw - 0.08), Inches(h))
+                    cshape.fill.solid()
+                    cshape.fill.fore_color.rgb = self._rgb("orange")
+                    cshape.line.fill.background()
+                    self._text(slide, cx_i + 0.06, cy + 0.04, iw - 0.12, h - 0.06,
+                               self._safe_text(item.get("text", "")), 6, "white",
+                               bold=True, align="CENTER")
+                    cy += h + 0.04
+
+                elif kind == "zns":
+                    h = 0.34
+                    if cy + h > scr_bottom:
+                        break
+                    zshape = slide.shapes.add_shape(1, Inches(cx_i), Inches(cy),
+                                                    Inches(iw), Inches(h))
+                    zshape.fill.solid()
+                    zshape.fill.fore_color.rgb = RGBColor(255, 255, 255)
+                    zshape.line.color.rgb = self._rgb("orange")
+                    zshape.line.width = Pt(1.0)
+                    self._text(slide, cx_i + 0.04, cy + 0.03, iw - 0.08, 0.14,
+                               self._safe_text(item.get("title", "")), 5.5, "orange",
+                               bold=True)
+                    self._text(slide, cx_i + 0.04, cy + 0.17, iw - 0.08, 0.14,
+                               self._safe_text(item.get("text", "")), 5, "gray")
+                    cy += h + 0.04
+
+                elif kind == "points":
+                    h = 0.22
+                    pshape = slide.shapes.add_shape(1, Inches(cx_i), Inches(cy),
+                                                    Inches(iw), Inches(h))
+                    pshape.fill.solid()
+                    pshape.fill.fore_color.rgb = self._rgb("teal")
+                    pshape.line.fill.background()
+                    txt = self._safe_text(
+                        f"{item.get('emoji','⭐')} {item.get('value','')} {item.get('text','')}")
+                    self._text(slide, cx_i + 0.02, cy + 0.04, iw - 0.04, h - 0.06,
+                               txt, 6, "white", bold=True, align="CENTER")
+                    cy += h + 0.03
+
+            # Screen label below phone
+            self._text(slide, px, py + phone_h + 0.04, phone_w, 0.18,
+                       self._safe_text(sc.get("label", f"Screen {i + 1}")),
+                       7, "gray_lt", align="CENTER")
 
         self._stat_bar(slide, sd.get("stats") or [])
 
