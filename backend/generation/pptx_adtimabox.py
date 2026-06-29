@@ -443,13 +443,22 @@ class AdtimaBoxPPTXGenerator:
             self._text(slide, PAD_X, BODY_TOP + 1.04, CONTENT_W * 0.80, 0.44,
                        summary, 10, "gray")
 
-        # Metric cards — horizontal row
+        # Metric cards — horizontal row, fixed compact height
         metrics = (sd.get("metrics") or [])[:4]
         n = max(len(metrics), 1)
         card_y = BODY_TOP + 1.58
-        card_h = BODY_H - 1.58 - 0.05
+        # Cap at 1.40" so cards don't fill all remaining space with blank white
+        stat_top = SLIDE_H - STAT_BAR_H - 0.04
+        card_h = min(stat_top - card_y - 0.10, 1.40)
         gap = 0.10
         card_w = (CONTENT_W - gap * (n - 1)) / n
+
+        # Fixed content sizes; center value+label block vertically inside card (below accent bar)
+        val_h = 0.62
+        lbl_h = 0.32
+        remaining = card_h - 0.06  # space below accent bar
+        v_pad = max((remaining - val_h - 0.06 - lbl_h) / 2.0, 0.10)
+        val_y = card_y + 0.06 + v_pad
 
         from pptx.util import Pt as _Pt
         for i, m in enumerate(metrics):
@@ -463,7 +472,7 @@ class AdtimaBoxPPTXGenerator:
             crd.line.color.rgb = self._rgb("line")
             crd.line.width = _Pt(0.5)
 
-            # Colored accent bar at top of card — metric colors are semantic names, not hex
+            # Colored accent bar at top of card
             _METRIC_COLORS = {"orange": "orange", "teal": "teal", "purple": "purple", "gold": "gold"}
             color_name = (m.get("color") or "orange")
             bar_color = self._rgb(_METRIC_COLORS.get(color_name, "orange"))
@@ -473,14 +482,13 @@ class AdtimaBoxPPTXGenerator:
             bar.fill.fore_color.rgb = bar_color
             bar.line.fill.background()
 
-            # Value (big number) — centered in upper portion
-            val_h = min(card_h * 0.55, 0.70)
-            self._text(slide, cx + 0.08, card_y + 0.20, card_w - 0.16, val_h,
-                       m.get("value", ""), 26, "ink", bold=True, align="CENTER")
+            # Value (big number) — vertically centered in card below accent bar
+            self._text(slide, cx + 0.08, val_y, card_w - 0.16, val_h,
+                       m.get("value", ""), 24, "ink", bold=True, align="CENTER", auto_fit=True)
 
-            # Label — below value
-            self._text(slide, cx + 0.08, card_y + 0.20 + val_h + 0.06, card_w - 0.16, 0.34,
-                       m.get("label", ""), 8.5, "gray", align="CENTER")
+            # Label — just below value
+            self._text(slide, cx + 0.08, val_y + val_h + 0.06, card_w - 0.16, lbl_h,
+                       m.get("label", ""), 8.5, "gray", align="CENTER", auto_fit=True)
 
         self._stat_bar(slide, sd.get("stats") or [])
 
