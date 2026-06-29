@@ -212,13 +212,16 @@ class AdtimaBoxPPTXGenerator:
         return "".join(result)
 
     def _text(self, slide, left, top, width, height, text, size, color_key,
-              bold=False, italic=False, align="LEFT", emoji_font=False):
+              bold=False, italic=False, align="LEFT", emoji_font=False, auto_fit=False):
         from pptx.util import Inches, Pt
         from pptx.enum.text import PP_ALIGN
         aligns = {"LEFT": PP_ALIGN.LEFT, "CENTER": PP_ALIGN.CENTER, "RIGHT": PP_ALIGN.RIGHT}
         tb = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
         tf = tb.text_frame
         tf.word_wrap = True
+        if auto_fit:
+            from pptx.enum.text import MSO_AUTO_SIZE
+            tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
         p = tf.paragraphs[0]
         p.alignment = aligns.get(align, PP_ALIGN.LEFT)
         run = p.add_run()
@@ -294,13 +297,15 @@ class AdtimaBoxPPTXGenerator:
             self._text(slide, PAD_X + 0.07, card_y + 0.05, 0.30, 0.28,
                        c.get("icon", ""), 11, "ink", align="CENTER", emoji_font=True)
 
-            # Title + desc with enough height to handle 1-2 lines without overflow
-            title_h = min((card_h - 0.06) * 0.40, 0.26)
-            desc_h = min((card_h - 0.06) * 0.55, 0.30)
+            # Title + desc: split available height 55/45 so 2-line titles fit cleanly.
+            # auto_fit=True shrinks font if text still overflows the allocated box.
+            avail = card_h - 0.06
+            title_h = min(avail * 0.55, 0.36)
+            desc_h  = min(avail * 0.42, 0.28)
             self._text(slide, PAD_X + 0.43, card_y + 0.05, CONTENT_W * 0.50, title_h,
-                       c.get("title", ""), 9.5, "ink", bold=True)
+                       c.get("title", ""), 9, "ink", bold=True, auto_fit=True)
             self._text(slide, PAD_X + 0.43, card_y + 0.05 + title_h + 0.02, CONTENT_W * 0.50, desc_h,
-                       c.get("desc", ""), 8.5, "gray")
+                       c.get("desc", ""), 8.5, "gray", auto_fit=True)
             card_y += card_h + 0.05
 
         self._stat_bar(slide, sd.get("stats") or [])
@@ -332,7 +337,7 @@ class AdtimaBoxPPTXGenerator:
         # ── Footer layout ──
         footer = sd.get("footer", "")
         stat_div_y = SLIDE_H - STAT_BAR_H - 0.02
-        footer_h = 0.22
+        footer_h = 0.40
         footer_y = stat_div_y - footer_h - 0.08 if footer else stat_div_y
 
         # ── Steps ──

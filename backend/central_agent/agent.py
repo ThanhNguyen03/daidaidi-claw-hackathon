@@ -54,7 +54,9 @@ _SKILL_TIMEOUT_S = 270  # per-skill wall-clock timeout; increased to give slow G
 _RECENT_HISTORY_WINDOW = 20
 _SYNTHESIS_HISTORY_WINDOW = 12
 # Skills that must run in the final group (after all analysis skills complete).
-# Both assembler and wireframe_designer run in parallel within that final group.
+# Both assembler and wireframe_designer run in parallel within that final group —
+# wireframe_designer reads the 4 analysis skill outputs directly (not assembler output)
+# which is exactly what we want: deck generation without waiting for the assembler.
 _ALWAYS_SEQUENTIAL: set[str] = {"proposal_assembler", "wireframe_designer"}
 # Fallback only: fires if wireframe_designer wasn't paired with assembler in the plan.
 # In normal flow both are injected together and _AUTO_AFTER never triggers.
@@ -445,13 +447,12 @@ class CentralAgent:
         # Step 3B: Brief clear → execute skills
         skill_plan: list[list[dict]] = assessment.get("skill_plan") or []
 
-        # wireframe_designer is now paired with proposal_assembler in the final group
-        # via the injection points below — no need to strip it from LLM plans.
-
         if not skill_plan:
             skill_plan = _build_contextual_skill_plan(state, message)
 
         # Safety net: inject assembler + wireframe as a paired parallel group if missing.
+        # Both run in parallel: assembler synthesizes the text response, wireframe_designer
+        # reads the 4 analysis skill outputs directly to build the deck (no assembler wait).
         if ("proposal" in state.desired_outputs
                 and not assessment.get("needs_clarification")
                 and "proposal_assembler" not in state.outputs):
@@ -795,7 +796,7 @@ class CentralAgent:
                     },
                 ])
             elif "wireframe_designer" not in _planned_skills:
-                # assembler is in the LLM plan but wireframe is missing — pair into same group
+                # assembler is already in the LLM plan but wireframe is missing — pair into same group
                 result["skill_plan"] = [
                     (group + [{"skill": "wireframe_designer",
                                "task": "Generate HTML deck + PPTX from all skill outputs"}])

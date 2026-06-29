@@ -54,17 +54,17 @@ class WireframeDesignerSkill(BaseSkill):
 
         prev = context.previous_outputs or {}
 
-        # proposal_assembler already synthesizes all 4 skills — pass its full content
-        # as the primary source so the extractor sees the complete proposal.
+        # wireframe_designer runs in parallel with proposal_assembler, so assembler output
+        # is not yet available. Use the 4 analysis skill outputs directly (no truncation).
+        # If proposal_assembler already ran in a prior turn, prefer its synthesized content.
         proposal_content = prev.get("proposal_assembler", {}).get("content", "")
         if proposal_content and len(proposal_content) > 100:
             parts.append(f"## PROPOSAL DOCUMENT\n{proposal_content}")
         else:
-            # Fallback: include individual skill outputs if proposal_assembler hasn't run
             for skill_name in ["market_strategy", "product_solution", "compliance", "design"]:
                 content = prev.get(skill_name, {}).get("content", "")
                 if content and len(content) > 50:
-                    parts.append(f"## {skill_name.upper()} OUTPUT\n{content[:8000]}")
+                    parts.append(f"## {skill_name.upper()} OUTPUT\n{content}")
 
         return "\n\n---\n\n".join(parts)
 

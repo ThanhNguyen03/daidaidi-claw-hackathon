@@ -91,10 +91,16 @@ function isInfoBox(content: string): boolean {
   if (nonEmptyLines.length >= 200) return false;
   // Multi-column flow diagrams have multiple ┌ on one line (e.g. 3-box side-by-side)
   if (nonEmptyLines.some(l => (l.match(/┌/g) || []).length > 1)) return false;
-  // Multi-column tables use │ as internal column separators — content lines have 3+ │ chars
+  // Multi-column tables: 3+ │ on a content line AND 3+ segments with real text.
+  // Nested-box lines like │  │  [BUTTON TEXT]  │    │ have only 1 text segment → not a table.
+  // Flow arrow lines like │  │   │   │   │ have 0 text segments → not a table.
   const hasMultiColRow = nonEmptyLines
     .filter(l => l.trim().startsWith('│') && !/^[┌┐└┘├┤┬┴┼─═\s│]+$/.test(l.trim()))
-    .some(l => (l.match(/│/g) || []).length >= 3);
+    .some(l => {
+      if ((l.match(/│/g) || []).length < 3) return false;
+      const segs = l.split('│').map(s => s.replace(/[┌┐└┘├┤┬┴┼─═\s]/g, '').trim());
+      return segs.filter(s => /[A-Za-zÀ-ỹ0-9]{2,}/.test(s)).length >= 3;
+    });
   if (hasMultiColRow) return false;
 
   return hasBox && hasSep && chartPctLines < 2;

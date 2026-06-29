@@ -244,7 +244,7 @@ TIMELINES:
             for skill_name, out in context.previous_outputs.items():
                 text = out.get("content") or out.get("summary", "")
                 if text:
-                    prev.append(f"### {skill_name}\n{text[:600]}")
+                    prev.append(f"### {skill_name}\n{text}")
             if prev:
                 parts.append("## Previous Analysis\n" + "\n\n".join(prev))
 

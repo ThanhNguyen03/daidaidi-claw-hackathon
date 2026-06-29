@@ -512,9 +512,10 @@ class HTMLDeckGenerator:
         # Use design model (minimax) — better at strict JSON-only output, no thinking mode issues
         client = get_llm_client("design")
         brand_hint = (brief or {}).get("industry", "")
-        # Second attempt: slightly shorter input to reduce LLM confusion
-        # MiniMax M2.5 has a 1M token context — safe to send 55k chars on first attempt
-        trimmed = proposal_text[:40000] if attempt > 0 else proposal_text[:60000]
+        # Second attempt: shorter input to reduce LLM confusion on retry.
+        # First attempt: up to 80k chars (4 skill outputs at ~15k each + brief = ~65k).
+        # MiniMax M2.5 has 1M token context so this is well within limits.
+        trimmed = proposal_text[:45000] if attempt > 0 else proposal_text[:80000]
 
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
