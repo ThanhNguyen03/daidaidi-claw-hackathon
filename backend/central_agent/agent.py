@@ -53,9 +53,11 @@ _CENTRAL_SKILL = _load_central_skill()
 _SKILL_TIMEOUT_S = 270  # per-skill wall-clock timeout; increased to give slow GreenNode MAAS room
 _RECENT_HISTORY_WINDOW = 20
 _SYNTHESIS_HISTORY_WINDOW = 12
-# Skills that must always run alone in the final group (they synthesize from others)
+# Skills that must run in the final group (after all analysis skills complete).
+# Both assembler and wireframe_designer run in parallel within that final group.
 _ALWAYS_SEQUENTIAL: set[str] = {"proposal_assembler", "wireframe_designer"}
-# Skills that run automatically after another skill completes (not LLM-planned)
+# Fallback only: fires if wireframe_designer wasn't paired with assembler in the plan.
+# In normal flow both are injected together and _AUTO_AFTER never triggers.
 _AUTO_AFTER: dict[str, str] = {"proposal_assembler": "wireframe_designer"}
 
 
@@ -194,8 +196,8 @@ def _build_contextual_skill_plan(state, message: str) -> list[list[dict[str, str
     """
     from skills.registry import get_skill_registry
     task_short = message[:400]
-    # wireframe_designer must NEVER appear in a planned skill group — it is always
-    # auto-triggered after proposal_assembler completes via _AUTO_AFTER.
+    # Sequential skills are excluded from the analysis group and injected
+    # as their own final parallel group (assembler + wireframe run together).
     _SEQUENTIAL = {"proposal_assembler", "wireframe_designer"}
 
     registry = get_skill_registry()
@@ -211,8 +213,12 @@ def _build_contextual_skill_plan(state, message: str) -> list[list[dict[str, str
         ]
         plan: list[list[dict[str, str]]] = [first_group]
         if "proposal_assembler" in (state.outputs or {}):
-            plan.append([{"skill": "proposal_assembler",
-                           "task": f"Reassemble proposal incorporating: {task_short}"}])
+            plan.append([
+                {"skill": "proposal_assembler",
+                 "task": f"Reassemble proposal incorporating: {task_short}"},
+                {"skill": "wireframe_designer",
+                 "task": "Generate HTML deck + PPTX from all skill outputs"},
+            ])
         return plan
 
     # Default: run all core skills
@@ -439,34 +445,41 @@ class CentralAgent:
         # Step 3B: Brief clear → execute skills
         skill_plan: list[list[dict]] = assessment.get("skill_plan") or []
 
-        # Safety guard: wireframe_designer must NEVER appear in any planned group.
-        # It is exclusively triggered by _AUTO_AFTER after proposal_assembler completes.
-        # Remove it here so both LLM-generated and fallback plans are safe.
-        skill_plan = [
-            [s for s in group if s.get("skill") != "wireframe_designer"]
-            for group in skill_plan
-        ]
-        skill_plan = [g for g in skill_plan if g]
+        # wireframe_designer is now paired with proposal_assembler in the final group
+        # via the injection points below — no need to strip it from LLM plans.
 
         if not skill_plan:
             skill_plan = _build_contextual_skill_plan(state, message)
 
-        # Safety net: if proposal intent was detected this session but proposal_assembler
-        # is missing from the plan (e.g. _plan() threw and the fallback skipped force-add),
-        # inject it here as its own final group.
+        # Safety net: inject assembler + wireframe as a paired parallel group if missing.
         if ("proposal" in state.desired_outputs
                 and not assessment.get("needs_clarification")
                 and "proposal_assembler" not in state.outputs):
             _pa_in_plan = {s.get("skill") for g in skill_plan for s in g}
             if "proposal_assembler" not in _pa_in_plan:
-                skill_plan.append([{
-                    "skill": "proposal_assembler",
-                    "task": (
-                        "Tổng hợp toàn bộ phân tích thành proposal hoàn chỉnh: "
-                        "giới thiệu giải pháp Zalo, idea game, userflow, "
-                        "data reactivation strategy và báo giá chi tiết."
-                    ),
-                }])
+                skill_plan.append([
+                    {
+                        "skill": "proposal_assembler",
+                        "task": (
+                            "Tổng hợp toàn bộ phân tích thành proposal hoàn chỉnh: "
+                            "giới thiệu giải pháp Zalo, idea game, userflow, "
+                            "data reactivation strategy và báo giá chi tiết."
+                        ),
+                    },
+                    {
+                        "skill": "wireframe_designer",
+                        "task": "Generate HTML deck + PPTX from all skill outputs",
+                    },
+                ])
+            elif "wireframe_designer" not in _pa_in_plan:
+                # assembler is already in the plan but wireframe is missing — pair them
+                skill_plan = [
+                    (group + [{"skill": "wireframe_designer",
+                               "task": "Generate HTML deck + PPTX from all skill outputs"}])
+                    if any(s.get("skill") == "proposal_assembler" for s in group)
+                    else group
+                    for group in skill_plan
+                ]
 
         # Snapshot which skills already ran in PRIOR turns (before this execution)
         prior_skill_names: set[str] = set(state.outputs.keys())
@@ -767,14 +780,29 @@ class CentralAgent:
                 and "proposal_assembler" not in state.outputs):
             _planned_skills = {s.get("skill") for g in result["skill_plan"] for s in g}
             if "proposal_assembler" not in _planned_skills:
-                result["skill_plan"].append([{
-                    "skill": "proposal_assembler",
-                    "task": (
-                        "Tổng hợp toàn bộ phân tích thành proposal hoàn chỉnh: "
-                        "giới thiệu giải pháp Zalo, idea game, userflow, "
-                        "data reactivation strategy và báo giá chi tiết."
-                    ),
-                }])
+                result["skill_plan"].append([
+                    {
+                        "skill": "proposal_assembler",
+                        "task": (
+                            "Tổng hợp toàn bộ phân tích thành proposal hoàn chỉnh: "
+                            "giới thiệu giải pháp Zalo, idea game, userflow, "
+                            "data reactivation strategy và báo giá chi tiết."
+                        ),
+                    },
+                    {
+                        "skill": "wireframe_designer",
+                        "task": "Generate HTML deck + PPTX from all skill outputs",
+                    },
+                ])
+            elif "wireframe_designer" not in _planned_skills:
+                # assembler is in the LLM plan but wireframe is missing — pair into same group
+                result["skill_plan"] = [
+                    (group + [{"skill": "wireframe_designer",
+                               "task": "Generate HTML deck + PPTX from all skill outputs"}])
+                    if any(s.get("skill") == "proposal_assembler" for s in group)
+                    else group
+                    for group in result["skill_plan"]
+                ]
 
         # Safety net: if LLM returned execute but no skill_plan, build from session state.
         if not result.get("needs_clarification") and not result.get("skill_plan"):

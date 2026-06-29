@@ -26,6 +26,9 @@ function sanitizeMermaid(raw: string): string {
   s = s.replace(/\\n/g, ' ');
   // Replace HTML line breaks with a space (invalid inside mermaid labels)
   s = s.replace(/<br\s*\/?>/gi, ' ');
+  // Replace Unicode comparison operators — Mermaid v11 lexer doesn't handle them reliably
+  // inside node labels, especially inside {…} decision nodes.
+  s = s.replace(/≥/g, '>=').replace(/≤/g, '<=');
   // Strip markdown bold/italic inside labels
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '$1');
   // Fix LLM-generated edge labels with spaces instead of pipe syntax:
@@ -33,12 +36,22 @@ function sanitizeMermaid(raw: string): string {
   // Matches: arrow, 2+ spaces, label text, 2+ spaces, node identifier+bracket
   s = s.replace(/(-->|->|==>|==)\s{2,}([^|\n<>{}\[\]]+?)\s{2,}([A-Za-z_][A-Za-z0-9_]*[\[(])/g,
     (_, arrow, label, nodeStart) => `${arrow}|${label.trim()}|${nodeStart}`);
-  // Fix double-quotes inside square-bracket node labels.
+  // Quote rectangular [label] node labels that contain characters breaking Mermaid v11
+  // (colons and # are the most common offenders). Remove stray double-quotes first,
+  // then re-quote the whole label if any special char is present.
   s = s.replace(/\[([^\[\]\n]*)\]/g, (_m, inner) => {
     if (inner.startsWith('"') && inner.endsWith('"') && inner.length >= 2) {
       return `[${inner}]`;
     }
-    return '[' + inner.replace(/"/g, '') + ']';
+    const clean = inner.replace(/"/g, '');
+    return /[:#]/.test(clean) ? `["${clean}"]` : `[${clean}]`;
+  });
+  // Quote diamond/decision {label} node labels that contain chars breaking Mermaid v11.
+  // The regex only matches "WORD{...}" to avoid touching classDef/style blocks.
+  s = s.replace(/([A-Za-z_]\w*)\{([^{}\n]+)\}/g, (_m, id, inner) => {
+    if (inner.startsWith('"') && inner.endsWith('"')) return `${id}{${inner}}`;
+    const clean = inner.replace(/"/g, '');
+    return /[?:>=<!#()]/.test(clean) ? `${id}{"${clean}"}` : `${id}{${clean}}`;
   });
 
   // Fix LLM-generated gantt diagrams:
