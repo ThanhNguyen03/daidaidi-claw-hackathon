@@ -102,11 +102,26 @@ class BaseSkill(ABC):
 ---
 ## OUTPUT FORMAT GUIDE (MUST FOLLOW — UI rendering depends on this)
 
-TABLES (comparisons, pricing, specs):
-  Use standard Markdown pipe syntax — NEVER ASCII box-drawing tables:
-  | Column A | Column B | Column C |
-  |----------|----------|----------|
-  | value    | value    | value    |
+TABLES (comparisons, pricing, feature matrices, platform comparisons):
+  ALWAYS use standard Markdown pipe syntax. NEVER use ASCII box-drawing for tables.
+  | Column A   | Column B | Column C |
+  |------------|----------|----------|
+  | value      | value    | value    |
+
+  ⚠️ CRITICAL: A comparison box like the one below is a TABLE, NOT an info box.
+  Use Markdown pipe syntax for it — NEVER wrap comparison rows in ┌┐└┘│├┤ borders:
+
+  WRONG (will break UI — do not generate this):
+  ┌──────────────┬──────────┬────────────┐
+  │  Feature     │  Zalo    │  Facebook  │
+  ├──────────────┼──────────┼────────────┤
+  │  Cost        │  Low     │  Medium    │
+  └──────────────┴──────────┴────────────┘
+
+  CORRECT:
+  | Feature | Zalo | Facebook |
+  |---------|------|----------|
+  | Cost    | Low  | Medium   |
 
 BAR CHARTS (budget breakdown, allocation, share by %):
   Always wrap in a plain ``` code block. Use ONLY this exact format:
@@ -120,6 +135,7 @@ BAR CHARTS (budget breakdown, allocation, share by %):
   └─────────────────────────────────────────┘
   ```
   NEVER use █ block characters. NEVER put % at end of line. NEVER nest a box inside another box.
+  NEVER add column separators │ inside the box — info boxes have ONE column of text only.
 
 INFO BOXES (game mechanics, form wireframes, step-by-step flows, feature descriptions):
   Each box = its OWN separate ``` code block. NEVER put 2+ boxes inside one fence.
@@ -142,6 +158,7 @@ INFO BOXES (game mechanics, form wireframes, step-by-step flows, feature descrip
   └─────────────────────────────────────────┘
   ```
   Use ╠══╣ separator (double-lines). ONE level of box only — NEVER nested boxes.
+  ONE column of content per box — if content needs columns, use a Markdown table instead.
 
 DIAGRAMS / USER FLOWS:
   Use Mermaid flowchart syntax. STRICT rules — the renderer will REJECT invalid syntax:
@@ -157,17 +174,19 @@ DIAGRAMS / USER FLOWS:
   2. Edge labels: PIPE SYNTAX ONLY → A -->|Yes|B[Next]
      NEVER spaces: A -->    Yes    B[Next]  ← WILL BREAK RENDERING
 
-  3. Node labels: SHORT plain text ONLY (max 5 words).
-     - NO HTML tags: <br/> <b> <span> — use a space or newline instead
-     - NO pipe character | inside labels — it breaks edge-label parsing
-     - NO curly braces { } or hash # unless required by syntax
-     - WRONG: A[User nhận link/QR<br/>qua Zalo]
-     - CORRECT: A[User nhận link qua Zalo]
+  3. Node labels: SHORT plain text ONLY (max 5 words). ZERO HTML allowed.
+     ❌ NEVER use <br/>, <b>, <span>, or ANY HTML tag inside node labels — they BREAK rendering.
+     ❌ NEVER use | inside labels — it breaks edge-label parsing.
+     ❌ NEVER use { } or # unless required by syntax.
+     ✅ Shorten the label or split into two nodes if text is long.
+     WRONG: A["User nhận link/QR<br/>qua Zalo"]
+     CORRECT: A[User nhan link qua Zalo]
 
   4. Quotes: use straight " not curly " " inside labels.
 
-  5. Keep diagrams simple — avoid style/classDef unless essential.
+  5. Keep diagrams simple — avoid style/classDef/subgraph unless truly essential.
      If used: style A fill:#e1f5fe,color:#000 (one line per node, no complex CSS).
+     NEVER put style statements after the closing `end` of a subgraph.
 
   6. Maximum ~12 nodes per diagram. Split into multiple diagrams if flow is longer.
 

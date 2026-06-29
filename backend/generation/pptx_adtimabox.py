@@ -41,6 +41,11 @@ CONTENT_W = SLIDE_W - PAD_X * 2
 BODY_TOP = PAD_T + TOPBAR_H + 0.18   # below topbar
 BODY_H = SLIDE_H - BODY_TOP - STAT_BAR_H - 0.10
 
+# Value slide right-stat-column (mirrors HTML rs-card-primary/secondary)
+RC_W = 2.10                          # right col width
+RC_X = SLIDE_W - PAD_X - RC_W       # = 7.23" — right col left edge
+LEFT_W_V = RC_X - PAD_X - 0.38      # = 6.18" — left body width (gap 0.38")
+
 
 class AdtimaBoxPPTXGenerator:
     """Generates AdtimaBox-branded PPTX from proposal markdown."""
@@ -114,6 +119,31 @@ class AdtimaBoxPPTXGenerator:
             return RGBColor(29, 29, 31)
         return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
+    @staticmethod
+    def _round_corners(shape, adj: int = 10000):
+        """Make a rectangle shape have rounded corners.
+        adj — corner radius as a fraction of the shorter edge × 100000.
+        Common values: 10000 = 10% (cards), 20000 = 20% (icon boxes), 50000 = pill.
+        Note: spPr lives in the p: (presentation) namespace; prstGeom/avLst/gd in a: (drawingml).
+        """
+        from lxml import etree
+        p_ns = "http://schemas.openxmlformats.org/presentationml/2006/main"
+        a_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
+        sp = shape._element
+        spPr = sp.find(f"{{{p_ns}}}spPr")
+        if spPr is None:
+            return
+        prstGeom = spPr.find(f"{{{a_ns}}}prstGeom")
+        if prstGeom is None:
+            return
+        prstGeom.set("prst", "roundRect")
+        for old in prstGeom.findall(f"{{{a_ns}}}avLst"):
+            prstGeom.remove(old)
+        avLst = etree.SubElement(prstGeom, f"{{{a_ns}}}avLst")
+        gd = etree.SubElement(avLst, f"{{{a_ns}}}gd")
+        gd.set("name", "adj")
+        gd.set("fmla", f"val {adj}")
+
     def _bg(self, slide):
         from pptx.util import Inches
         bg = slide.shapes.add_shape(1, 0, 0, Inches(SLIDE_W), Inches(SLIDE_H))
@@ -181,12 +211,13 @@ class AdtimaBoxPPTXGenerator:
             div.line.fill.background()
 
         stat_x = PAD_X
-        stat_y = SLIDE_H - STAT_BAR_H + 0.06
+        # stat_y must leave room for 0.30 (value) + 0.18 (label) = 0.48" within STAT_BAR_H 0.55"
+        stat_y = SLIDE_H - STAT_BAR_H + 0.02
         col_w = CONTENT_W / min(len(stats), 4)
         for s in stats[:4]:
-            self._text(slide, stat_x, stat_y, col_w - 0.1, 0.35,
+            self._text(slide, stat_x, stat_y, col_w - 0.1, 0.30,
                        s.get("v", ""), 22, "ink", bold=True)
-            self._text(slide, stat_x, stat_y + 0.35, col_w - 0.1, 0.20,
+            self._text(slide, stat_x, stat_y + 0.30, col_w - 0.1, 0.18,
                        s.get("l", ""), 8, "gray_lt")
             stat_x += col_w
 
@@ -259,56 +290,86 @@ class AdtimaBoxPPTXGenerator:
 
     def _render_value(self, slide, sd: dict):
         from pptx.util import Inches, Pt
+        from pptx.util import Pt as _Pt
         self._bg(slide)
         hl = sd.get("headline", {})
         self._topbar(slide, sd.get("eyebrow", ""), sd.get("tier", ""))
 
-        # Headline — 20pt; max 2 lines fits in 1.10" without overflowing lede
-        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W * 0.62, 1.10,
+        # Headline — 20pt; LEFT_W_V gives space for right stat col
+        self._text_mixed(slide, PAD_X, BODY_TOP, LEFT_W_V, 1.10,
                          hl.get("plain", ""), hl.get("bold", ""), 20)
 
         # Lede — tighter gap after headline
         lede = sd.get("lede", "")
         lede_h = 0.40
         if lede:
-            self._text(slide, PAD_X, BODY_TOP + 1.14, CONTENT_W * 0.58, lede_h, lede, 9.5, "gray")
+            self._text(slide, PAD_X, BODY_TOP + 1.14, LEFT_W_V - 0.10, lede_h, lede, 9.5, "gray")
 
-        # Feature cards — start is now closer (1.58" instead of 2.00") giving
-        # more vertical room per card, reducing desc text overflow risk
+        # Feature cards — use full LEFT_W_V width
         cards = sd.get("cards") or []
         card_y = BODY_TOP + (1.58 if lede else 1.14)
         cards_available_h = BODY_H - (card_y - BODY_TOP)
         card_h = max(cards_available_h / max(len(cards), 1) - 0.06, 0.52)
-        from pptx.util import Pt as _Pt
         for c in cards[:4]:
             crd = slide.shapes.add_shape(1, Inches(PAD_X), Inches(card_y),
-                                         Inches(CONTENT_W * 0.60), Inches(card_h))
+                                         Inches(LEFT_W_V), Inches(card_h))
             crd.fill.solid()
             crd.fill.fore_color.rgb = self._rgb("white")
             crd.line.color.rgb = self._rgb("line")
             crd.line.width = _Pt(0.5)
+            self._round_corners(crd, 10000)
 
-            # Icon box
+            # Icon box — rounder (HTML uses border-radius:8px on 32px = 25%)
             icon_box = slide.shapes.add_shape(1, Inches(PAD_X + 0.07), Inches(card_y + 0.06),
                                               Inches(0.28), Inches(0.28))
             icon_box.fill.solid()
             icon_box.fill.fore_color.rgb = self._rgb("cream")
             icon_box.line.fill.background()
+            self._round_corners(icon_box, 20000)
             self._text(slide, PAD_X + 0.07, card_y + 0.05, 0.30, 0.28,
                        c.get("icon", ""), 11, "ink", align="CENTER", emoji_font=True)
 
-            # Title + desc: split available height 55/45 so 2-line titles fit cleanly.
-            # auto_fit=True shrinks font if text still overflows the allocated box.
             avail = card_h - 0.06
             title_h = min(avail * 0.55, 0.36)
             desc_h  = min(avail * 0.42, 0.28)
-            self._text(slide, PAD_X + 0.43, card_y + 0.05, CONTENT_W * 0.50, title_h,
+            self._text(slide, PAD_X + 0.43, card_y + 0.05, LEFT_W_V - 0.50, title_h,
                        c.get("title", ""), 9, "ink", bold=True, auto_fit=True)
-            self._text(slide, PAD_X + 0.43, card_y + 0.05 + title_h + 0.02, CONTENT_W * 0.50, desc_h,
+            self._text(slide, PAD_X + 0.43, card_y + 0.05 + title_h + 0.02, LEFT_W_V - 0.50, desc_h,
                        c.get("desc", ""), 8.5, "gray", auto_fit=True)
             card_y += card_h + 0.05
 
-        self._stat_bar(slide, sd.get("stats") or [])
+        # Right stat column — mirrors HTML rs-card-primary / rs-card-secondary
+        stats = sd.get("stats") or []
+        if stats:
+            # Primary card (orange bg)
+            p_h = 1.36
+            pcard = slide.shapes.add_shape(1, Inches(RC_X), Inches(BODY_TOP),
+                                           Inches(RC_W), Inches(p_h))
+            pcard.fill.solid()
+            pcard.fill.fore_color.rgb = self._rgb("orange")
+            pcard.line.fill.background()
+            self._round_corners(pcard, 8000)
+            s0 = stats[0]
+            self._text(slide, RC_X + 0.14, BODY_TOP + 0.16, RC_W - 0.28, 0.54,
+                       s0.get("v", ""), 24, "white", bold=True, auto_fit=True)
+            self._text(slide, RC_X + 0.14, BODY_TOP + 0.74, RC_W - 0.28, 0.48,
+                       s0.get("l", ""), 8.5, "white")
+
+            # Secondary cards
+            sec_y = BODY_TOP + p_h + 0.12
+            for s in stats[1:3]:
+                scard = slide.shapes.add_shape(1, Inches(RC_X), Inches(sec_y),
+                                               Inches(RC_W), Inches(0.88))
+                scard.fill.solid()
+                scard.fill.fore_color.rgb = self._rgb("white")
+                scard.line.color.rgb = self._rgb("line")
+                scard.line.width = _Pt(0.5)
+                self._round_corners(scard, 8000)
+                self._text(slide, RC_X + 0.10, sec_y + 0.10, RC_W - 0.20, 0.36,
+                           s.get("v", ""), 20, "ink", bold=True, auto_fit=True)
+                self._text(slide, RC_X + 0.10, sec_y + 0.50, RC_W - 0.20, 0.26,
+                           s.get("l", ""), 8, "gray_lt")
+                sec_y += 0.88 + 0.12
 
     def _render_flow(self, slide, sd: dict):
         from pptx.util import Inches, Pt
@@ -362,31 +423,34 @@ class AdtimaBoxPPTXGenerator:
             dot = st.get("dot", "core")
             rc = role_colors.get(role, "gray_lt")
 
-            # Role pill (centered on cx)
+            # Role pill — fully rounded (pill shape)
             pill_w, pill_h = min(step_w - 0.12, 0.90), 0.16
             px = cx - pill_w / 2
             pill = slide.shapes.add_shape(1, Inches(px), Inches(icon_y - 0.26),
                                            Inches(pill_w), Inches(pill_h))
             pill.fill.solid(); pill.fill.fore_color.rgb = self._rgb(rc)
             pill.line.fill.background()
+            self._round_corners(pill, 50000)
             self._text(slide, px + 0.02, icon_y - 0.26, pill_w - 0.04, pill_h,
                        role.upper(), 6.5, "white", bold=True, align="CENTER")
 
-            # Icon box (centered on cx)
+            # Icon box — rounded (HTML: border-radius 16px on 68px ≈ 24%)
             ix = cx - icon_size / 2
             icon_box = slide.shapes.add_shape(1, Inches(ix), Inches(icon_y),
                                                Inches(icon_size), Inches(icon_size))
             icon_box.fill.solid(); icon_box.fill.fore_color.rgb = self._rgb("white")
             icon_box.line.color.rgb = self._rgb("line"); icon_box.line.width = Pt(0.5)
+            self._round_corners(icon_box, 20000)
             self._text(slide, ix + 0.02, icon_y + 0.05, icon_size - 0.04, icon_size - 0.10,
                        st.get("icon", ""), 18, "ink", align="CENTER", emoji_font=True)
 
-            # Core/custom dot (top-right of icon)
+            # Core/custom dot — circle
             dot_color = "teal" if dot == "core" else "orange"
             dd = slide.shapes.add_shape(1, Inches(cx + icon_size / 2 - 0.10), Inches(icon_y - 0.04),
                                          Inches(0.11), Inches(0.11))
             dd.fill.solid(); dd.fill.fore_color.rgb = self._rgb(dot_color)
             dd.line.fill.background()
+            self._round_corners(dd, 50000)
 
             # Label + desc centered below icon
             lbl_w = min(step_w - 0.10, 1.20)
@@ -447,9 +511,9 @@ class AdtimaBoxPPTXGenerator:
         metrics = (sd.get("metrics") or [])[:4]
         n = max(len(metrics), 1)
         card_y = BODY_TOP + 1.58
-        # Cap at 1.40" so cards don't fill all remaining space with blank white
+        # Cap at 2.20" — fills available space without looking sparse
         stat_top = SLIDE_H - STAT_BAR_H - 0.04
-        card_h = min(stat_top - card_y - 0.10, 1.40)
+        card_h = min(stat_top - card_y - 0.10, 2.20)
         gap = 0.10
         card_w = (CONTENT_W - gap * (n - 1)) / n
 
@@ -471,8 +535,9 @@ class AdtimaBoxPPTXGenerator:
             crd.fill.fore_color.rgb = self._rgb("white")
             crd.line.color.rgb = self._rgb("line")
             crd.line.width = _Pt(0.5)
+            self._round_corners(crd, 8000)
 
-            # Colored accent bar at top of card
+            # Colored accent bar at top of card (same radius so it sits flush inside card)
             _METRIC_COLORS = {"orange": "orange", "teal": "teal", "purple": "purple", "gold": "gold"}
             color_name = (m.get("color") or "orange")
             bar_color = self._rgb(_METRIC_COLORS.get(color_name, "orange"))
@@ -481,6 +546,7 @@ class AdtimaBoxPPTXGenerator:
             bar.fill.solid()
             bar.fill.fore_color.rgb = bar_color
             bar.line.fill.background()
+            self._round_corners(bar, 8000)
 
             # Value (big number) — vertically centered in card below accent bar
             self._text(slide, cx + 0.08, val_y, card_w - 0.16, val_h,
@@ -524,14 +590,16 @@ class AdtimaBoxPPTXGenerator:
             crd.fill.fore_color.rgb = self._rgb("white")
             crd.line.color.rgb = self._rgb("line")
             crd.line.width = Pt(0.5)
+            self._round_corners(crd, 8000)
 
-            # Top color bar (6px ≈ 0.06")
+            # Top color bar (6px ≈ 0.06") — rounded top to match card
             bar_color = self._hex_rgb(t.get("barColor", "ECE6E1"))
             top_bar = slide.shapes.add_shape(1, Inches(x + 0.04), Inches(tier_top),
                                              Inches(tier_w - 0.06), Inches(0.06))
             top_bar.fill.solid()
             top_bar.fill.fore_color.rgb = bar_color
             top_bar.line.fill.background()
+            self._round_corners(top_bar, 8000)
 
             # Tier name
             name_color = self._hex_rgb(t.get("nameColor", "1D1D1F"))
@@ -612,7 +680,8 @@ class AdtimaBoxPPTXGenerator:
         n = max(len(screens), 1)
 
         phone_top = BODY_TOP + title_h + 0.10
-        phone_area_h = SLIDE_H - phone_top - STAT_BAR_H - 0.24
+        # 0.32" padding reserves space for phone label (0.18") below phone + gap to stat divider
+        phone_area_h = SLIDE_H - phone_top - STAT_BAR_H - 0.32
         phone_h = min(phone_area_h, 3.10)
         phone_w = phone_h * 0.48
 
@@ -681,6 +750,7 @@ class AdtimaBoxPPTXGenerator:
                     bshape.fill.solid()
                     bshape.fill.fore_color.rgb = self._rgb("orange")
                     bshape.line.fill.background()
+                    self._round_corners(bshape, 12000)
                     txt = self._safe_text(f"{item.get('emoji','')} {item.get('text','')}")
                     self._text(slide, cx_i + 0.02, cy + 0.04, iw - 0.04, h - 0.06,
                                txt, 5.5, "white", bold=True, align="CENTER")
@@ -694,6 +764,7 @@ class AdtimaBoxPPTXGenerator:
                     rshape.fill.fore_color.rgb = RGBColor(248, 248, 248)
                     rshape.line.color.rgb = RGBColor(236, 230, 225)
                     rshape.line.width = Pt(0.5)
+                    self._round_corners(rshape, 12000)
                     self._text(slide, cx_i + 0.02, cy + 0.03, 0.18, 0.20,
                                self._safe_text(item.get("emoji", "")), 8, "ink",
                                align="CENTER", emoji_font=True)
@@ -703,11 +774,12 @@ class AdtimaBoxPPTXGenerator:
 
                 elif kind == "cta":
                     h = 0.22
-                    cshape = slide.shapes.add_shape(5, Inches(cx_i + 0.04), Inches(cy),
+                    cshape = slide.shapes.add_shape(1, Inches(cx_i + 0.04), Inches(cy),
                                                     Inches(iw - 0.08), Inches(h))
                     cshape.fill.solid()
                     cshape.fill.fore_color.rgb = self._rgb("orange")
                     cshape.line.fill.background()
+                    self._round_corners(cshape, 50000)
                     self._text(slide, cx_i + 0.06, cy + 0.04, iw - 0.12, h - 0.06,
                                self._safe_text(item.get("text", "")), 6, "white",
                                bold=True, align="CENTER")
@@ -723,6 +795,7 @@ class AdtimaBoxPPTXGenerator:
                     zshape.fill.fore_color.rgb = RGBColor(255, 255, 255)
                     zshape.line.color.rgb = self._rgb("orange")
                     zshape.line.width = Pt(1.0)
+                    self._round_corners(zshape, 12000)
                     self._text(slide, cx_i + 0.04, cy + 0.03, iw - 0.08, 0.14,
                                self._safe_text(item.get("title", "")), 5.5, "orange",
                                bold=True)
@@ -737,6 +810,7 @@ class AdtimaBoxPPTXGenerator:
                     pshape.fill.solid()
                     pshape.fill.fore_color.rgb = self._rgb("teal")
                     pshape.line.fill.background()
+                    self._round_corners(pshape, 12000)
                     txt = self._safe_text(
                         f"{item.get('emoji','⭐')} {item.get('value','')} {item.get('text','')}")
                     self._text(slide, cx_i + 0.02, cy + 0.04, iw - 0.04, h - 0.06,
