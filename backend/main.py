@@ -1217,14 +1217,30 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 if pptx_bytes:
                     pptx_id = f"pptx_{uuid.uuid4().hex[:10]}"
                     client_name = (state.brief.industry if state.brief and state.brief.industry else "Client")
-                    _artifact_store[pptx_id] = {
-                        "storage": "memory",
-                        "content": pptx_bytes if isinstance(pptx_bytes, bytes) else bytes(pptx_bytes),
-                        "filename": f"proposal_{client_name}.pptx",
-                        "media_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                        "type": "pptx",
-                        "title": f"Proposal Deck — {client_name}",
-                    }
+                    pptx_data = pptx_bytes if isinstance(pptx_bytes, bytes) else bytes(pptx_bytes)
+                    try:
+                        os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+                        pptx_path = os.path.join(ARTIFACTS_DIR, f"{pptx_id}.pptx")
+                        with open(pptx_path, "wb") as _f:
+                            _f.write(pptx_data)
+                        _artifact_store[pptx_id] = {
+                            "storage": "file",
+                            "path": pptx_path,
+                            "filename": f"proposal_{client_name}.pptx",
+                            "media_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                            "type": "pptx",
+                            "title": f"Proposal Deck — {client_name}",
+                        }
+                    except Exception as _e:
+                        print(f"[main] PPTX disk save failed, using in-memory: {_e}")
+                        _artifact_store[pptx_id] = {
+                            "storage": "memory",
+                            "content": pptx_data,
+                            "filename": f"proposal_{client_name}.pptx",
+                            "media_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                            "type": "pptx",
+                            "title": f"Proposal Deck — {client_name}",
+                        }
                     assets["pptx_url"] = f"/artifact/{pptx_id}"
 
                 if assets:
@@ -1965,6 +1981,23 @@ async def download_artifact(artifact_id: str):
     from fastapi.responses import FileResponse, Response as FastAPIResponse
 
     entry = _artifact_store.get(artifact_id)
+    if not entry:
+        # Fallback: check filesystem directly — handles server restarts where in-memory
+        # _artifact_store was wiped but the file was already written to ARTIFACTS_DIR.
+        for _ext, _mt, _fn_suffix in [
+            (".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"),
+            (".html", "text/html", ".html"),
+        ]:
+            _candidate = os.path.join(ARTIFACTS_DIR, artifact_id + _ext)
+            if os.path.exists(_candidate):
+                entry = {
+                    "storage": "file",
+                    "path": _candidate,
+                    "filename": artifact_id + _fn_suffix,
+                    "media_type": _mt,
+                }
+                _artifact_store[artifact_id] = entry  # re-cache for subsequent requests
+                break
     if not entry:
         raise HTTPException(status_code=404, detail="Artifact not found")
 
