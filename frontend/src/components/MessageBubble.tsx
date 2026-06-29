@@ -45,7 +45,7 @@ function sanitizeMermaid(raw: string): string {
   // LLMs often emit "Phase X: Label\n:active, date, dur" instead of
   // "section Phase X: Label\nTask :active, date, dur"
   if (/^\s*gantt\b/i.test(s)) {
-    const ganttKeyword = /^(gantt|title\s|dateFormat\s|axisFormat\s|tickInterval\s|section\s|%%|excludes\s|todayMarker)/i;
+    const ganttKeyword = /^(gantt|title\s|dateFormat\s|tickInterval\s|section\s|%%|excludes\s|todayMarker)/i;
     const lines = s.split('\n');
     const fixed: string[] = [];
     let lastSectionShort = 'Task';
@@ -56,6 +56,21 @@ function sanitizeMermaid(raw: string): string {
       const indent = line.match(/^(\s*)/)?.[1] ?? '    ';
 
       if (!trimmed) { fixed.push(line); continue; }
+
+      // Fix `dateFormat <actual-date>` → `dateFormat YYYY-MM-DD`
+      // LLMs often write the project start date instead of the Mermaid format pattern.
+      if (/^dateFormat\s/i.test(trimmed)) {
+        const val = trimmed.replace(/^dateFormat\s+/i, '').trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+          fixed.push(`${indent}dateFormat YYYY-MM-DD`);
+        } else {
+          fixed.push(line);
+        }
+        continue;
+      }
+
+      // Drop axisFormat — frequently causes parse failures when dateFormat is wrong
+      if (/^axisFormat\s/i.test(trimmed)) continue;
 
       // Track existing section names for task labelling
       if (/^section\s/i.test(trimmed)) {
@@ -78,6 +93,18 @@ function sanitizeMermaid(raw: string): string {
           fixed.push(`${indent}section ${trimmed}`);
           continue;
         }
+      }
+
+      // Remove `after <taskId>` from task lines that also have an explicit date —
+      // mixing both is invalid Mermaid gantt syntax.
+      if (trimmed.includes(':') && /\d{4}-\d{2}-\d{2}/.test(trimmed) && /\bafter\s+\w+/.test(trimmed)) {
+        const colonIdx = trimmed.indexOf(':');
+        const taskName = trimmed.slice(0, colonIdx);
+        const params = trimmed.slice(colonIdx + 1).split(',')
+          .map(p => p.trim())
+          .filter(p => !/^after\s+\w+/i.test(p));
+        fixed.push(`${indent}${taskName}:${params.join(', ')}`);
+        continue;
       }
 
       fixed.push(line);

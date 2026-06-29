@@ -171,10 +171,26 @@ DIAGRAMS / USER FLOWS:
 
   6. Maximum ~12 nodes per diagram. Split into multiple diagrams if flow is longer.
 
+  7. MULTI-PARTY FLOWS (User + Staff, Customer + System, Buyer + Seller):
+     Use `sequenceDiagram` — NEVER a two-column ASCII box. The renderer CANNOT display two-column
+     ASCII tables — column content will be destroyed. ALWAYS use sequenceDiagram for any flow
+     that involves two or more distinct actors (e.g. PHÍA USER + PHÍA STAFF).
+     CORRECT:
+     ```mermaid
+     sequenceDiagram
+         participant U as User
+         participant S as Staff
+         U->>S: Show QR code
+         S-->>U: Xác nhận thành công
+     ```
+     WRONG: ASCII box with two columns separated by │ — DO NOT generate this.
+
 TIMELINES:
   Use Mermaid gantt syntax inside ```mermaid fences. Same strict rules as flowchart above, plus:
-  - dateFormat must be YYYY-MM-DD
+  - Write `dateFormat YYYY-MM-DD` EXACTLY — NEVER put an actual date here (e.g. NEVER `dateFormat 2024-09-01`)
   - Every task line needs: TaskName :id, YYYY-MM-DD, Nd  (e.g. "Phase 1 :a1, 2024-01-01, 14d")
+  - NEVER use `after <taskId>` — use explicit absolute dates for every task
+  - NEVER include `axisFormat` — it causes rendering errors
   - NEVER leave out the date or duration — partial task lines break the renderer
   - If gantt would be complex, use a Markdown pipe table instead: Phase | Duration | Deliverable
 """

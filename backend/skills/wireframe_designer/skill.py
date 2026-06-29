@@ -64,7 +64,7 @@ class WireframeDesignerSkill(BaseSkill):
             for skill_name in ["market_strategy", "product_solution", "compliance", "design"]:
                 content = prev.get(skill_name, {}).get("content", "")
                 if content and len(content) > 50:
-                    parts.append(f"## {skill_name.upper()} OUTPUT\n{content[:4000]}")
+                    parts.append(f"## {skill_name.upper()} OUTPUT\n{content[:8000]}")
 
         return "\n\n---\n\n".join(parts)
 

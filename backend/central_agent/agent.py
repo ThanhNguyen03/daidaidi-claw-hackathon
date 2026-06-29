@@ -252,9 +252,26 @@ def _fix_gantt(content: str) -> str:
             stripped = line.strip()
             indent = line[: len(line) - len(line.lstrip())]
 
-            # Non-task lines (fences, directives, sections) — keep as-is
-            if (not stripped or stripped.startswith('```') or
-                    re.match(r'^(title|dateFormat|axisFormat|excludes|section|gantt)', stripped, re.I)):
+            # Non-task lines (fences, directives, sections) — keep as-is with targeted fixes
+            if not stripped or stripped.startswith('```'):
+                out.append(line)
+                continue
+
+            # Fix `dateFormat <actual-date>` → `dateFormat YYYY-MM-DD`
+            # LLMs often write the project start date instead of the format pattern.
+            if re.match(r'^dateFormat\b', stripped, re.I):
+                parts = stripped.split(None, 1)
+                if len(parts) == 2 and _GANTT_DATE_RE.fullmatch(parts[1].strip()):
+                    out.append(f"{indent}dateFormat YYYY-MM-DD")
+                else:
+                    out.append(line)
+                continue
+
+            # Drop axisFormat — frequently causes parse failures with non-YYYY-MM-DD dateFormat
+            if re.match(r'^axisFormat\b', stripped, re.I):
+                continue
+
+            if re.match(r'^(title|excludes|section|gantt)', stripped, re.I):
                 out.append(line)
                 continue
 
@@ -263,14 +280,22 @@ def _fix_gantt(content: str) -> str:
                 out.append(line)
                 continue
 
-            # Already has a valid date → keep, update context
+            # Already has a valid date — strip invalid `after <id>` if mixed with explicit date
             if _GANTT_DATE_RE.search(stripped):
                 dm = _GANTT_DATE_RE.search(stripped)
                 last_date = dm.group(0)
                 dur_m = re.search(r'(\d+)d\b', stripped)
                 if dur_m:
                     last_dur = int(dur_m.group(1))
-                out.append(line)
+                # Remove `after <taskId>` params mixed with an explicit date (invalid syntax)
+                if re.search(r'\bafter\s+\w+', stripped, re.I):
+                    colon_idx = stripped.index(':')
+                    task_name = stripped[:colon_idx]
+                    params = [p.strip() for p in stripped[colon_idx + 1:].split(',')]
+                    params = [p for p in params if not re.match(r'^after\b', p, re.I)]
+                    out.append(f"{indent}{task_name}:{', '.join(params)}")
+                else:
+                    out.append(line)
                 continue
 
             # --- Task line with invalid/incomplete date → repair ---
@@ -279,8 +304,8 @@ def _fix_gantt(content: str) -> str:
             task_name = stripped[:colon_idx]
             params_raw = stripped[colon_idx + 1:]
             params = [p.strip() for p in params_raw.split(',')]
-            # Strip 'during <taskId>' — not valid Mermaid gantt syntax
-            params = [p for p in params if not re.match(r'^during\b', p, re.I)]
+            # Strip 'during <taskId>' and 'after <taskId>' — not valid when date is absent/malformed
+            params = [p for p in params if not re.match(r'^(during|after)\b', p, re.I)]
 
             # Fix year-only date like "2024"
             fixed_date = None
@@ -919,11 +944,14 @@ DIAGRAMS (user flows, architecture):
   Edge labels: A -->|Label|B pipe syntax only — NEVER spaces.
   NEVER write placeholder blocks with only a label like "Mermaid User Journey".
   If no Mermaid code is available, describe the flow as a numbered list instead.
+  MULTI-PARTY FLOWS (User + Staff, Customer + System): use `sequenceDiagram` — NEVER a two-column ASCII box.
 
 TIMELINES / GANTT:
   Use Mermaid gantt syntax in a ```mermaid block. Copy AS-IS from specialist outputs.
   If writing new gantt: every task needs full date (YYYY-MM-DD) and duration (Nd). No partial lines.
-  dateFormat YYYY-MM-DD must be declared. If gantt would be complex, use a Markdown table instead."""
+  Write `dateFormat YYYY-MM-DD` EXACTLY — NEVER put an actual date here (e.g. NEVER `dateFormat 2024-09-01`).
+  NEVER use `after <taskId>` — use explicit absolute dates only. NEVER include `axisFormat`.
+  If gantt would be complex, use a Markdown table instead."""
 
             user_msg = (
                 f"## Original Request\n{original_message}\n\n"
@@ -950,7 +978,9 @@ BAR CHARTS: ``` plain block, ┌─╠═─┘ box, "NN%  Label" per line — N
 INFO BOXES: ``` plain block, ┌─├─┘ box (├──┤ separator), bullet/checkbox lines — NEVER nested boxes.
 DIAGRAMS: ```mermaid block. Node labels: short plain text only — NO <br/> NO HTML NO | { } in labels.
   Edge labels: -->|Label| pipe syntax only. Max ~12 nodes. If none available, use numbered list.
+  Multi-party flows (User + Staff): use sequenceDiagram — NEVER two-column ASCII box.
 TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format required.
+  Write `dateFormat YYYY-MM-DD` EXACTLY — NEVER an actual date. NEVER `after <taskId>`. NEVER `axisFormat`.
   If gantt would be complex or dates uncertain, use a Markdown table instead."""
 
             # Include recent conversation history so the synthesizer knows what was already covered.

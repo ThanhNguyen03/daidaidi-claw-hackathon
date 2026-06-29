@@ -66,11 +66,13 @@ body{
 .feat-item{
   display:flex;gap:12px;align-items:flex-start;
   background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 14px;flex-shrink:0;
+  border-left:3px solid var(--fi-accent,var(--line));
 }
 .feat-item .ic{
-  width:30px;height:30px;border-radius:7px;background:var(--card);
-  display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;
+  width:32px;height:32px;border-radius:8px;background:var(--fi-bg,var(--card));
+  display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;
   font-family:'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',system-ui,sans-serif;
+  box-shadow:0 2px 6px rgba(0,0,0,.06);
 }
 .feat-item h4{font-size:14px;font-weight:600;color:var(--ink);line-height:1.3;margin-bottom:3px;}
 .feat-item p{font-size:13px;color:var(--gray);line-height:1.5;}
@@ -135,7 +137,9 @@ body{
 .metric-card{
   display:flex;flex-direction:column;background:#fff;
   border:1px solid var(--line);border-radius:14px;padding:16px 22px;min-width:140px;flex:1;max-width:200px;
+  overflow:hidden;position:relative;
 }
+.metric-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--mc-color,var(--orange));}
 .metric-val{font-size:32px;font-weight:800;line-height:1;margin-bottom:5px;}
 .metric-lbl{font-size:11px;color:var(--gray);font-weight:400;line-height:1.4;}
 
@@ -163,6 +167,106 @@ body{
 .check-icon{color:var(--teal);font-size:11px;flex-shrink:0;margin-top:2px;}
 .tier-deploy{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:12px;color:var(--gray);}
 .tier-deploy b{font-weight:700;color:var(--ink);}
+
+/* ── VALUE right stat column ───────────────────────────────────── */
+.right-stat-col{width:240px;flex-shrink:0;display:flex;flex-direction:column;gap:12px;padding-top:6px;}
+.rs-card-primary{
+  background:linear-gradient(135deg,var(--orange) 0%,var(--orange-2) 100%);
+  border-radius:16px;padding:20px 22px;color:#fff;flex-shrink:0;
+}
+.rs-card-primary .rsv{font-size:44px;font-weight:800;line-height:1;margin-bottom:4px;}
+.rs-card-primary .rsl{font-size:12px;opacity:.88;font-weight:400;line-height:1.4;}
+.rs-card-secondary{
+  background:#fff;border:1px solid var(--line);
+  border-radius:16px;padding:16px 22px;flex-shrink:0;
+}
+.rs-card-secondary .rsv{font-size:32px;font-weight:800;color:var(--ink);line-height:1;margin-bottom:4px;}
+.rs-card-secondary .rsl{font-size:12px;color:var(--gray-light);font-weight:400;line-height:1.4;}
+
+/* ── SCREEN slide ──────────────────────────────────────────────── */
+.screen-body{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;margin-top:8px;}
+.screen-intro{margin-bottom:14px;flex-shrink:0;}
+.screen-intro h2{font-size:26px;font-weight:400;color:var(--ink);line-height:1.22;letter-spacing:-.02em;margin-bottom:4px;}
+.screen-intro h2 b{color:var(--orange);font-weight:700;}
+.screen-intro .sc-lede{font-size:13px;color:var(--gray);line-height:1.5;}
+.phones-row{display:flex;gap:32px;justify-content:center;align-items:flex-start;flex:1;min-height:0;}
+.phone-wrap{display:flex;flex-direction:column;align-items:center;}
+
+/* Phone shell */
+.phone{
+  width:196px;min-width:196px;height:356px;
+  background:linear-gradient(160deg,#1A1A2E 0%,#2C2C44 100%);
+  border-radius:34px;padding:10px 8px;
+  box-shadow:0 28px 72px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.06),inset 0 1px 0 rgba(255,255,255,.08);
+  display:flex;flex-direction:column;position:relative;flex-shrink:0;
+}
+.phone-notch{
+  width:64px;height:16px;
+  background:linear-gradient(160deg,#1A1A2E 0%,#2C2C44 100%);
+  border-radius:0 0 9px 9px;
+  position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:2;
+}
+.phone-screen{
+  flex:1;background:#F4F4F6;border-radius:26px;
+  overflow:hidden;display:flex;flex-direction:column;
+}
+.phone-label{
+  text-align:center;margin-top:9px;font-size:10px;font-weight:700;
+  color:var(--gray-light);letter-spacing:.06em;text-transform:uppercase;flex-shrink:0;
+}
+
+/* App elements inside phone */
+.app-bar{
+  background:var(--orange);padding:9px 12px 8px;
+  display:flex;align-items:center;gap:8px;flex-shrink:0;
+}
+.app-bar .app-name{color:#fff;font-size:11.5px;font-weight:700;flex:1;}
+.app-bar .app-icon{color:rgba(255,255,255,.8);font-size:13px;}
+.app-content{flex:1;overflow:hidden;display:flex;flex-direction:column;gap:5px;padding:7px 7px 5px;}
+
+.app-banner{
+  background:linear-gradient(135deg,var(--orange) 0%,#C43C0A 100%);
+  border-radius:9px;padding:9px 11px;color:#fff;
+  display:flex;align-items:center;gap:7px;flex-shrink:0;
+}
+.app-banner .bic{font-size:18px;flex-shrink:0;font-family:'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',sans-serif;}
+.app-banner .btxt{font-size:10.5px;font-weight:600;line-height:1.3;}
+
+.app-row{
+  background:#fff;border-radius:9px;padding:7px 9px;
+  display:flex;align-items:center;gap:7px;flex-shrink:0;
+  box-shadow:0 1px 4px rgba(0,0,0,.06);
+}
+.app-row .ric{font-size:15px;flex-shrink:0;font-family:'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',sans-serif;}
+.app-row .rtxt{flex:1;min-width:0;}
+.app-row .rtxt .rt{font-size:10.5px;font-weight:600;color:var(--ink);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.app-row .rtxt .rs{font-size:9.5px;color:var(--gray-light);}
+.app-row .rarrow{color:var(--gray-light);font-size:12px;flex-shrink:0;}
+
+.app-cta{
+  background:var(--orange);border-radius:8px;padding:8px;
+  color:#fff;font-size:10.5px;font-weight:700;
+  text-align:center;flex-shrink:0;margin-top:auto;
+}
+
+.app-zns{
+  background:#fff;border-radius:9px;padding:9px 10px;
+  border:1px solid rgba(246,80,9,.18);border-left:3px solid var(--orange);flex-shrink:0;
+}
+.app-zns .zns-from{font-size:9px;color:var(--orange);margin-bottom:1px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;}
+.app-zns .zns-title{font-size:11px;font-weight:700;color:var(--ink);margin-bottom:2px;line-height:1.3;}
+.app-zns .zns-body{font-size:9.5px;color:var(--gray);line-height:1.4;}
+
+.app-points{
+  background:linear-gradient(135deg,rgba(15,155,142,.08) 0%,rgba(15,155,142,.04) 100%);
+  border-radius:9px;padding:8px 11px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:space-between;
+  border:1px solid rgba(15,155,142,.12);
+}
+.app-points .pts-ico{font-size:18px;font-family:'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',sans-serif;}
+.app-points .pts-right{display:flex;flex-direction:column;align-items:flex-end;}
+.app-points .pts-val{font-size:20px;font-weight:800;color:var(--teal);line-height:1;}
+.app-points .pts-lbl{font-size:9px;color:var(--gray-light);margin-top:1px;}
 """
 
 # ─── EXTRACTION PROMPT (aligned with adtimabox-deck.skill schema) ─────────
@@ -179,6 +283,7 @@ MANDATORY slide order:
 2. VALUE slide(s) — one per major product/module section (e.g. OA, ZNS, Mini App, gamification, data strategy, each case study). No cap on count. Do NOT merge multiple distinct products into one slide.
 3. FLOW slide(s) — REQUIRED if ANY user journey, userflow, or sequence of steps is described. Extract ALL steps (up to 6 per slide; create a second flow slide if there are more than 6 steps or multiple distinct journeys).
 4. TIER slide — REQUIRED if ANY pricing, packages, or tiers are mentioned. Extract ALL tiers.
+5. SCREEN slide(s) — add 1–2 when the proposal describes Mini App screens, ZNS notification templates, Zalo OA home feed, gamification UI, or any app interface. Show 2–3 phone mockup screens per slide.
 
 Slide schemas — use EXACTLY these field names:
 
@@ -193,6 +298,15 @@ FLOW slide (user journey):
 
 TIER slide (pricing):
 {"type":"tier","eyebrow":"<section label>","headline":{"plain":"<phrase ending with space>","bold":"<key phrase>"},"lede":"<1 sentence, max 15 words>","tiers":[{"barColor":"<hex no #, pastel>","name":"<tier name>","nameColor":"<hex no #>","module":"<module name>","price":"<amount + unit, e.g. 20M VNĐ>","period":"<duration>","checks":["<feature, max 8 words>"],"deploy":"<X ngày làm việc>"}],"stats":[{"v":"<metric>","l":"<3-word label>"}]}
+
+SCREEN slide (app demo — use when proposal mentions Mini App UI, ZNS notifications, Zalo OA screens, gamification interface, or loyalty app):
+{"type":"screen","eyebrow":"<e.g. Demo — Zalo Mini App>","headline":{"plain":"<phrase ending with space>","bold":"<bold phrase>"},"lede":"<optional 1 sentence, max 15 words or empty string>","screens":[{"label":"<screen name 2-3 words>","app_name":"<app title max 4 words>","items":[{"kind":"banner","emoji":"<single emoji>","text":"<hero message max 10 words>"},{"kind":"row","emoji":"<single emoji>","title":"<feature name 2-4 words>","sub":"<sub-label 2-3 words>"},{"kind":"cta","text":"<CTA text max 5 words>"},{"kind":"zns","from":"<sender name>","title":"<notification title max 8 words>","text":"<body max 12 words>"},{"kind":"points","emoji":"<emoji>","value":"<number e.g. 1,250>","text":"<points label max 4 words>"}]}],"stats":[{"v":"<metric>","l":"<3-word label>"}]}
+
+Screen content rules:
+- Max 3 screens per slide; max 6 items per screen
+- Always start with a "banner" item as the hero; follow with 2-3 "row" items; end with "cta" or "points"
+- For ZNS slides: use "zns" kind to show the notification template preview
+- app_name: use the actual Mini App / product name from the proposal
 
 Content rules:
 - highlight metrics: extract 3–4 REAL big numbers (user reach, open rate, ROI %, timeline, price saved, etc.); assign colors: first=orange, second=teal, third=purple, fourth=gold
@@ -246,6 +360,7 @@ def _validate_slides(slides: list) -> list:
         "value": ["headline", "cards"],
         "flow": ["headline", "steps"],
         "tier": ["headline", "tiers"],
+        "screen": ["headline", "screens"],
     }
     for s in slides:
         t = s.get("type")
@@ -258,6 +373,8 @@ def _validate_slides(slides: list) -> list:
         if t == "flow" and not any(st.get("label") for st in (s.get("steps") or [])):
             continue
         if t == "tier" and not any(ti.get("name") for ti in (s.get("tiers") or [])):
+            continue
+        if t == "screen" and not any(sc.get("label") or sc.get("app_name") for sc in (s.get("screens") or [])):
             continue
         valid.append(s)
     return valid
@@ -396,7 +513,8 @@ class HTMLDeckGenerator:
         client = get_llm_client("design")
         brand_hint = (brief or {}).get("industry", "")
         # Second attempt: slightly shorter input to reduce LLM confusion
-        trimmed = proposal_text[:18000] if attempt > 0 else proposal_text[:25000]
+        # MiniMax M2.5 has a 1M token context — safe to send 55k chars on first attempt
+        trimmed = proposal_text[:40000] if attempt > 0 else proposal_text[:60000]
 
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
@@ -462,6 +580,8 @@ class HTMLDeckGenerator:
             return self._slide_flow(sd)
         if t == "tier":
             return self._slide_tier(sd)
+        if t == "screen":
+            return self._slide_screen(sd)
         return ""
 
     # ── Common topbar ──────────────────────────────────────────────────────
@@ -491,18 +611,23 @@ class HTMLDeckGenerator:
         stats = sd.get("stats") or []
 
         color_map = {
-            "orange": "var(--orange)", "teal": "var(--teal)",
-            "purple": "var(--purple)", "gold": "var(--gold)",
+            "orange": ("var(--orange)", "#F65009"),
+            "teal": ("var(--teal)", "#0F9B8E"),
+            "purple": ("var(--purple)", "#5B4FC4"),
+            "gold": ("var(--gold)", "#C8932B"),
         }
         metrics_html = ""
         for m in metrics[:4]:
-            color = color_map.get(m.get("color", "orange"), "var(--orange)")
-            metrics_html += f"""<div class="metric-card">
-  <div class="metric-val" style="color:{color}">{_esc(m.get("value",""))}</div>
+            css_var, hex_val = color_map.get(m.get("color", "orange"), ("var(--orange)", "#F65009"))
+            metrics_html += f"""<div class="metric-card" style="--mc-color:{css_var}">
+  <div class="metric-val" style="color:{css_var}">{_esc(m.get("value",""))}</div>
   <div class="metric-lbl">{_esc(m.get("label",""))}</div>
 </div>"""
 
-        return f"""<div class="slide">
+        # Decorative background circle — adds depth without cluttering
+        deco = '<div style="position:absolute;right:-80px;top:-120px;width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,rgba(246,80,9,.06) 0%,transparent 65%);pointer-events:none;"></div>'
+        return f"""<div class="slide" style="overflow:hidden;">
+  {deco}
   {self._topbar(sd.get("eyebrow",""))}
   <div class="highlight-body">
     <h2>{plain}<b>{bold}</b></h2>
@@ -513,6 +638,13 @@ class HTMLDeckGenerator:
 </div>\n"""
 
     # ── Value slide ────────────────────────────────────────────────────────
+    _CARD_ACCENTS = [
+        ("var(--teal)", "rgba(15,155,142,.08)"),
+        ("var(--orange)", "rgba(246,80,9,.07)"),
+        ("var(--purple)", "rgba(91,79,196,.08)"),
+        ("var(--gold)", "rgba(200,147,43,.08)"),
+    ]
+
     def _slide_value(self, sd: dict) -> str:
         hl = sd.get("headline", {})
         plain = _esc(hl.get("plain", ""))
@@ -522,7 +654,7 @@ class HTMLDeckGenerator:
         stats = sd.get("stats") or []
 
         cards_html = ""
-        for c in cards[:4]:
+        for idx, c in enumerate(cards[:4]):
             icon = _esc(_safe_icon(c.get("icon", "")))
             title = _esc(c.get("title", ""))
             desc = _esc(c.get("desc", ""))
@@ -531,10 +663,27 @@ class HTMLDeckGenerator:
             if tag and isinstance(tag, dict):
                 tc = "tag-core" if tag.get("type") == "core" else "tag-custom"
                 tag_html = f'<span class="{tc}">{_esc(tag.get("text",""))}</span>'
-            cards_html += f"""<div class="feat-item">
+            accent_border, accent_bg = self._CARD_ACCENTS[idx % 4]
+            cards_html += f"""<div class="feat-item" style="--fi-accent:{accent_border};--fi-bg:{accent_bg}">
   <div class="ic">{icon}</div>
   <div><h4>{title}</h4><p>{desc}</p>{tag_html}</div>
 </div>"""
+
+        # Right stat column — show top stats visually for fast scanning
+        right_col_html = ""
+        if stats:
+            primary = stats[0]
+            right_col_html = f"""<div class="right-stat-col">
+  <div class="rs-card-primary">
+    <div class="rsv">{_esc(primary.get("v",""))}</div>
+    <div class="rsl">{_esc(primary.get("l",""))}</div>
+  </div>"""
+            for s in stats[1:3]:
+                right_col_html += f"""<div class="rs-card-secondary">
+    <div class="rsv">{_esc(s.get("v",""))}</div>
+    <div class="rsl">{_esc(s.get("l",""))}</div>
+  </div>"""
+            right_col_html += "</div>"
 
         return f"""<div class="slide">
   {self._topbar(sd.get("eyebrow",""), sd.get("tier",""))}
@@ -544,8 +693,8 @@ class HTMLDeckGenerator:
       {f'<p class="lede">{lede}</p>' if lede else ""}
       <div class="feat-list">{cards_html}</div>
     </div>
+    {right_col_html}
   </div>
-  {self._stat_bar(stats)}
 </div>\n"""
 
     # ── Flow slide ─────────────────────────────────────────────────────────
@@ -653,6 +802,92 @@ class HTMLDeckGenerator:
     <h2>{plain}<b>{bold}</b></h2>
     {f'<p class="lede-sm">{lede}</p>' if lede else ""}
     <div class="tier-grid {grid_cls}">{cards_html}</div>
+  </div>
+  {self._stat_bar(stats)}
+</div>\n"""
+
+
+    # ── Screen slide (app mockup) ──────────────────────────────────────────
+    def _slide_screen(self, sd: dict) -> str:
+        hl = sd.get("headline", {})
+        plain = _esc(hl.get("plain", ""))
+        bold = _esc(hl.get("bold", ""))
+        lede = _esc(sd.get("lede", ""))
+        screens = sd.get("screens") or []
+        stats = sd.get("stats") or []
+
+        phones_html = ""
+        for phone_data in screens[:3]:
+            label = _esc(phone_data.get("label", ""))
+            app_name = _esc(phone_data.get("app_name", "Mini App"))
+            items = phone_data.get("items") or []
+
+            content_html = ""
+            for item in items[:6]:
+                kind = item.get("kind", "row")
+                emoji = _esc(_safe_icon(item.get("emoji", "")))
+
+                if kind == "banner":
+                    text = _esc(item.get("text", ""))
+                    content_html += f"""<div class="app-banner">
+  <span class="bic">{emoji}</span>
+  <span class="btxt">{text}</span>
+</div>"""
+                elif kind == "row":
+                    title = _esc(item.get("title", ""))
+                    sub = _esc(item.get("sub", ""))
+                    sub_html = f'<div class="rs">{sub}</div>' if sub else ""
+                    content_html += f"""<div class="app-row">
+  <span class="ric">{emoji}</span>
+  <div class="rtxt"><div class="rt">{title}</div>{sub_html}</div>
+  <span class="rarrow">›</span>
+</div>"""
+                elif kind == "cta":
+                    text = _esc(item.get("text", ""))
+                    content_html += f'<div class="app-cta">{text}</div>'
+                elif kind == "zns":
+                    zns_from = _esc(item.get("from", "Thông báo"))
+                    zns_title = _esc(item.get("title", ""))
+                    zns_body = _esc(item.get("text", ""))
+                    content_html += f"""<div class="app-zns">
+  <div class="zns-from">{zns_from}</div>
+  <div class="zns-title">{zns_title}</div>
+  <div class="zns-body">{zns_body}</div>
+</div>"""
+                elif kind == "points":
+                    pts_emoji = _esc(_safe_icon(item.get("emoji", "⭐")))
+                    pts_val = _esc(item.get("value", "0"))
+                    pts_lbl = _esc(item.get("text", "Điểm tích lũy"))
+                    content_html += f"""<div class="app-points">
+  <span class="pts-ico">{pts_emoji}</span>
+  <div class="pts-right">
+    <div class="pts-val">{pts_val}</div>
+    <div class="pts-lbl">{pts_lbl}</div>
+  </div>
+</div>"""
+
+            phones_html += f"""<div class="phone-wrap">
+  <div class="phone">
+    <div class="phone-notch"></div>
+    <div class="phone-screen">
+      <div class="app-bar">
+        <span class="app-name">{app_name}</span>
+        <span class="app-icon">☰</span>
+      </div>
+      <div class="app-content">{content_html}</div>
+    </div>
+  </div>
+  {f'<div class="phone-label">{label}</div>' if label else ''}
+</div>"""
+
+        return f"""<div class="slide">
+  {self._topbar(sd.get("eyebrow",""))}
+  <div class="screen-body">
+    <div class="screen-intro">
+      <h2>{plain}<b>{bold}</b></h2>
+      {f'<p class="sc-lede">{lede}</p>' if lede else ""}
+    </div>
+    <div class="phones-row">{phones_html}</div>
   </div>
   {self._stat_bar(stats)}
 </div>\n"""
