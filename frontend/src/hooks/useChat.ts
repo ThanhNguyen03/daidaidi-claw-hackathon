@@ -145,9 +145,26 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   };
   const savedModeStates = useRef<Record<string, ModeSnapshot>>({});
 
+  // Stream generation counter: incremented on every mode switch.
+  // sendMessage captures the gen at call-time and checks it before each
+  // SSE event — any event arriving after a mode switch is discarded.
+  const streamGenRef = useRef(0);
+
   useEffect(() => {
     const prevMode = prevModeRef.current;
     if (prevMode === mode) return;
+
+    // Kill any in-flight SSE request from the previous mode immediately.
+    // Without this, SSE events keep firing and setMessages writes into the
+    // newly-active mode's message list instead of the previous one.
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    // Bump the generation so any micro-task-queued events from the old
+    // stream are silently discarded even if they arrive after the abort.
+    streamGenRef.current += 1;
 
     // Snapshot current mode's state
     savedModeStates.current[prevMode] = {
@@ -249,6 +266,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       }
       abortControllerRef.current = new AbortController();
 
+      // Snapshot the generation at send-time. If the user switches mode before
+      // this stream finishes, streamGenRef.current will be incremented and we
+      // will discard all remaining SSE events (second line of defence after abort).
+      const myGen = streamGenRef.current;
+
       setIsLoading(true);
       setError(null);
       setIsThinking(false);
@@ -303,6 +325,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
           for (const line of lines) {
             if (line.startsWith('data: ')) {
+              // Generation guard: discard any event that arrives after a mode
+              // switch (streamGenRef was bumped by the mode-switch effect).
+              if (streamGenRef.current !== myGen) return;
               try {
                 const data = JSON.parse(line.slice(6));
                 await handleSSEEvent(data);
@@ -314,12 +339,15 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         }
       } catch (e) {
         if ((e as Error).name === 'AbortError') {
-          // Request was cancelled, ignore
+          // Request was cancelled by mode switch or new sendMessage — ignore
           return;
         }
         setError((e as Error).message);
       } finally {
-        setIsLoading(false);
+        // Only update loading state if we're still the active stream
+        if (streamGenRef.current === myGen) {
+          setIsLoading(false);
+        }
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
