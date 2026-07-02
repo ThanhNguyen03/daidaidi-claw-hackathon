@@ -142,6 +142,8 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     pendingQuestions: Question[];
     activeCheckpoint: Checkpoint | null;
     artifacts: Artifact[];
+    isLoading: boolean;
+    isThinking: boolean;
   };
   const savedModeStates = useRef<Record<string, ModeSnapshot>>({});
 
@@ -162,7 +164,8 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     // buffers content into savedModeStates so the user sees the response
     // when they switch back to the origin mode.
 
-    // Snapshot current mode's state
+    // Snapshot current mode's state — include loading/thinking so the stream
+    // continues visually when the user returns to this mode.
     savedModeStates.current[prevMode] = {
       sessionId,
       messages,
@@ -170,6 +173,8 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       pendingQuestions,
       activeCheckpoint,
       artifacts,
+      isLoading,
+      isThinking,
     };
 
     // Restore target mode's state (or start fresh)
@@ -181,6 +186,8 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       setPendingQuestions(saved.pendingQuestions);
       setActiveCheckpoint(saved.activeCheckpoint);
       setArtifacts(saved.artifacts);
+      setIsLoading(saved.isLoading);
+      setIsThinking(saved.isThinking);
     } else {
       setSessionId(null);
       setMessages([]);
@@ -188,12 +195,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       setPendingQuestions([]);
       setActiveCheckpoint(null);
       setArtifacts([]);
+      setIsLoading(false);
+      setIsThinking(false);
     }
 
-    // Reset transient UI state
     setError(null);
-    setIsThinking(false);
-    setIsLoading(false);
 
     // Reset agents for the new mode
     const csAgents = [
@@ -245,8 +251,8 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     setBrainState(null);
   }, [salespersonId, mode]);
 
-  // Ref for aborting requests
-  const abortControllerRef = useRef<AbortController | null>(null);
+  // Per-mode abort controllers so cancelling one mode's stream never kills another.
+  const modeAbortControllers = useRef<Record<string, AbortController | null>>({});
 
   // Reset agent statuses when starting new message
   const resetAgentStatuses = useCallback(() => {
@@ -256,16 +262,14 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   // Send message with SSE streaming
   const sendMessage = useCallback(
     async (message: string, brief?: Brief) => {
-      // Cancel any existing request
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-      abortControllerRef.current = new AbortController();
-
-      // Capture the origin mode at send-time. If the user switches to another
-      // mode while this stream is in flight, content events are buffered into
-      // savedModeStates[myMode] so the user sees them when they return.
+      // Capture origin mode first — everything below is scoped to this mode.
       const myMode = mode;
+
+      // Cancel any existing request for THIS mode only — never touches other
+      // modes' streams (that's the whole point of per-mode controllers).
+      modeAbortControllers.current[myMode]?.abort();
+      const controller = new AbortController();
+      modeAbortControllers.current[myMode] = controller;
 
       setIsLoading(true);
       setError(null);
@@ -292,7 +296,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: requestBody,
-          signal: abortControllerRef.current.signal,
+          signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -376,10 +380,18 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           setError((e as Error).message);
         }
       } finally {
-        // Only clear loading for our own mode; don't stomp on the new mode's
-        // loading indicator if the user has already switched away.
+        modeAbortControllers.current[myMode] = null;
         if (currentModeRef.current === myMode) {
+          // Still on our mode — clear live state
           setIsLoading(false);
+          setIsThinking(false);
+        } else {
+          // User has switched away — update the snapshot so loading clears
+          // when they return to this mode.
+          const snap = savedModeStates.current[myMode];
+          if (snap) {
+            savedModeStates.current[myMode] = { ...snap, isLoading: false, isThinking: false };
+          }
         }
       }
     },
@@ -1068,12 +1080,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     console.log('Releasing ask lock...');
   }, []);
 
-  // Cleanup on unmount
+  // Cleanup on unmount — abort all in-flight streams across all modes
   useEffect(() => {
     return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
+      Object.values(modeAbortControllers.current).forEach((c) => c?.abort());
     };
   }, []);
 
