@@ -18,43 +18,40 @@ from typing import AsyncGenerator
 
 from schemas.state import SalesCaseState
 
-# Tarot / fortune reading triggers → predict_agent
+# Triggers that route to predict_agent
 _PREDICT_TRIGGERS = [
-    "tarot",
-    "xem bói",
-    "xem tarot",
-    "bói",
-    "boi",
-    "dự đoán",
-    "du doan",
-    "fortune",
-    "predict",
-    "số phận",
-    "so phan",
-    "vận mệnh",
-    "van menh",
-    "xem vận",
-    "xem van",
-    "tử vi",
-    "tu vi",
-    "xem ngày",
-    "xem ngay",
-    "gieo quẻ",
-    "gieo que",
-    "rút bài",
-    "rut bai",
-    "bài tarot",
-    "bai tarot",
-    "xem cho mình",
-    "xem cho minh",
-    "vận hôm nay",
-    "van hom nay",
-    "tình duyên",
-    "tinh duyen",
-    "tài lộc",
-    "tai loc",
-    "sự nghiệp",
-    "su nghiep",
+    # Tarot
+    "tarot", "xem tarot", "bài tarot", "bai tarot", "rút bài", "rut bai",
+    # General divination
+    "xem bói", "bói", "boi", "bói toán", "boi toan",
+    # Numerology (new)
+    "thần số học", "than so hoc", "số học", "so hoc",
+    "số đường đời", "so duong doi", "số vận mệnh", "so van menh",
+    # Gieo quẻ / xin sâm (new)
+    "gieo quẻ", "gieo que", "xin quẻ", "xin que",
+    "xin sâm", "xin sam", "quẻ sâm", "que sam",
+    "lắc ống", "lac ong",
+    # Fate / fortune
+    "số phận", "so phan", "vận mệnh", "van menh",
+    "vận hôm nay", "van hom nay", "vận số", "van so",
+    "xem vận", "xem van", "xem số", "xem so",
+    # Topics
+    "tình duyên", "tinh duyen", "tài lộc", "tai loc",
+    "sự nghiệp", "su nghiep", "tử vi", "tu vi",
+    # Casual divination phrasing
+    "xem cho mình", "xem cho minh", "xem cho tao", "xem cho tui",
+    "bói cho mình", "bói cho tao", "bói cho tui",
+    "dự đoán", "du doan", "fortune", "predict",
+    "xem ngày", "xem ngay", "hôm nay thế nào", "hom nay the nao",
+]
+
+# CS-specific keywords — if user is in predict context but message has these,
+# re-route back to cs_agent
+_CS_KEYWORDS = [
+    "bug", "lỗi", "loi", "cshub", "zns", "oa", "mini app", "zalo",
+    "ticket", "report", "báo cáo", "bao cao", "fix", "sửa", "sua",
+    "hỗ trợ", "ho tro", "hướng dẫn", "huong dan", "cách dùng",
+    "tính năng", "tinh nang", "api", "webhook", "config", "cấu hình",
 ]
 
 _cs_agent_instance = None
@@ -89,11 +86,30 @@ class CsAgent:
             self._predict_skill = PredictAgentSkill()
         return self._predict_skill
 
-    def _choose_skill(self, message: str):
+    def _choose_skill(self, message: str, history: list | None = None):
         msg_lower = message.lower()
+
+        # 1. Explicit predict trigger → always predict_agent
         for trigger in _PREDICT_TRIGGERS:
             if trigger in msg_lower:
                 return self._get_predict_skill(), "predict_agent"
+
+        # 2. Context continuity: if the last assistant turn used predict_agent
+        #    AND this message has no CS-specific keywords, keep routing to
+        #    predict_agent so follow-ups ("giải thích thêm", "bói lại", "đổi
+        #    phương thức") don't accidentally fall through to cs_agent.
+        if history:
+            for msg in reversed(history):
+                if msg.get("role") == "assistant":
+                    if msg.get("agent") == "predict_agent":
+                        # Still in predict session — re-route to cs only if the
+                        # user is clearly asking a CS question
+                        for kw in _CS_KEYWORDS:
+                            if kw in msg_lower:
+                                return self._get_cs_skill(), "cs_agent"
+                        return self._get_predict_skill(), "predict_agent"
+                    break  # last assistant was cs_agent → use default routing
+
         return self._get_cs_skill(), "cs_agent"
 
     async def run(
@@ -112,15 +128,31 @@ class CsAgent:
             "timestamp": datetime.now().isoformat(),
         })
 
-        skill, skill_name = self._choose_skill(message)
+        history = state.messages[:-1]  # all messages except the one just appended
+        skill, skill_name = self._choose_skill(message, history)
 
         # Emit agent status: thinking
         yield {"type": "agent_status", "agent": skill_name, "status": "thinking"}
 
         from skills.base import SkillContext
+
+        # Each skill only receives history from its own turns to avoid cross-skill
+        # context contamination (e.g. predict_agent seeing "Tôi là CSHub Assistant"
+        # messages and following that persona instead of its own system prompt).
+        if skill_name == "predict_agent":
+            skill_history = [
+                m for m in history
+                if m.get("role") == "user" or m.get("agent") == "predict_agent"
+            ]
+        else:
+            skill_history = [
+                m for m in history
+                if m.get("role") == "user" or m.get("agent") == "cs_agent"
+            ]
+
         context = SkillContext(
             task=message,
-            messages=state.messages[:-1],  # exclude the just-appended user msg
+            messages=skill_history,
             session_id=state.session_id,
         )
 
