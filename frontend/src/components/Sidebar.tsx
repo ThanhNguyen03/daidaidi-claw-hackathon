@@ -5,7 +5,7 @@
  * Uses Tailwind CSS for styling.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   MessageCircle,
   ClipboardList,
@@ -20,12 +20,8 @@ import {
   Moon,
   ChevronLeft,
   ChevronRight,
-  Menu,
-  X,
-  Loader2,
 } from 'lucide-react';
 import type { ChatMode } from '../lib/types';
-import { getApiBaseUrl } from '../lib/api';
 
 interface SidebarProps {
   currentMode: ChatMode;
@@ -45,32 +41,29 @@ interface AgentStatus {
   status: 'idle' | 'thinking' | 'waiting' | 'completed' | 'failed';
 }
 
-interface AgentInfo {
-  name: string;
-  display_name: string;
-}
 
 const MODES: { id: ChatMode; label: string; icon: React.ReactNode; description: string; comingSoon?: boolean }[] = [
   { id: 'chat', label: 'Chat', icon: <MessageCircle size={18} />, description: 'Q&A & advisory' },
-  { id: 'cs', label: 'CS Mode', icon: <Headphones size={18} />, description: 'Customer Service' },
+  { id: 'cs', label: 'Customer Services', icon: <Headphones size={18} />, description: 'Customer Service' },
   { id: 'planning', label: 'Planning', icon: <ClipboardList size={18} />, description: 'Coming soon', comingSoon: true },
   { id: 'execute', label: 'Execute', icon: <Rocket size={18} />, description: 'Coming soon', comingSoon: true },
   { id: 'brainstorm', label: 'Brainstorm', icon: <Lightbulb size={18} />, description: 'Coming soon', comingSoon: true },
 ];
 
-// Map agent names to display names
-const AGENT_DISPLAY_NAMES: Record<string, string> = {
-  central_agent: 'Sales AI',
-  market_strategy: 'Market Strategy',
-  product_solution: 'Product Solution',
-  design: 'UX Design',
-  compliance: 'Compliance',
-  client_simulator: 'Client Simulator',
-  proposal_assembler: 'Proposal Assembler',
-  wireframe_designer: 'Deck Generator',
-  cs_agent: 'CS Assistant',
-  predict_agent: 'User Guide',
-};
+const SALE_AGENTS: { name: string; display_name: string }[] = [
+  { name: 'market_strategy', display_name: 'Market Strategy' },
+  { name: 'compliance', display_name: 'Compliance' },
+  { name: 'product_solution', display_name: 'Product Solution' },
+  { name: 'design', display_name: 'UX Design' },
+  { name: 'client_simulator', display_name: 'Client Simulator' },
+  { name: 'proposal_assembler', display_name: 'Proposal Assembler' },
+  { name: 'wireframe_designer', display_name: 'Deck Generator' },
+];
+
+const CS_AGENTS: { name: string; display_name: string }[] = [
+  { name: 'cs_agent', display_name: 'CS Assistant' },
+  { name: 'predict_agent', display_name: 'Tarot & Fortune' },
+];
 
 // Status color classes
 const getStatusColorClass = (status: AgentStatus['status']): string => {
@@ -118,45 +111,8 @@ export function Sidebar({
   onToggleTheme,
 }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [agentsList, setAgentsList] = useState<AgentInfo[]>([]);
-  const [loadingAgents, setLoadingAgents] = useState(false);
 
-  // Fetch agents from /debug/agents on mount
-  useEffect(() => {
-    const fetchAgents = async () => {
-      setLoadingAgents(true);
-      try {
-        const res = await fetch(
-          `${getApiBaseUrl()}/debug/agents`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          const agents = (data.skills ?? data.agents ?? []).map((a: { name: string; display_name?: string; description?: string }) => ({
-            name: a.name,
-            display_name: a.display_name || AGENT_DISPLAY_NAMES[a.name] || a.name,
-          }));
-          setAgentsList(agents);
-        }
-      } catch (err) {
-        console.error('Failed to fetch agents:', err);
-      } finally {
-        setLoadingAgents(false);
-      }
-    };
-
-    fetchAgents();
-  }, []);
-
-  // Use fetched agents, fallback to defaults if empty
-  const displayAgents = agentsList.length > 0 ? agentsList : [
-    { name: 'market_strategy', display_name: 'Market Strategy' },
-    { name: 'compliance', display_name: 'Compliance' },
-    { name: 'product_solution', display_name: 'Product Solution' },
-    { name: 'design', display_name: 'UX Design' },
-    { name: 'client_simulator', display_name: 'Client Simulator' },
-    { name: 'proposal_assembler', display_name: 'Proposal Assembler' },
-    { name: 'wireframe_designer', display_name: 'Deck Generator' },
-  ];
+  const displayAgents = currentMode === 'cs' ? CS_AGENTS : SALE_AGENTS;
 
   // Create a map of agent statuses
   const agentStatusMap = new Map<string, AgentStatus['status']>();
@@ -255,43 +211,36 @@ export function Sidebar({
             Active Agents
           </h2>
         )}
-        {loadingAgents ? (
-          <div className="flex justify-center py-2">
-            <Loader2 size={16} className="animate-spin text-text-muted" />
-          </div>
-        ) : (
-          <div className="flex flex-col gap-1">
-            {displayAgents.map((agent) => {
-              const status = agentStatusMap.get(agent.name) || 'idle';
-              const displayName = agent.display_name || AGENT_DISPLAY_NAMES[agent.name] || agent.name;
+        <div className="flex flex-col gap-1">
+          {displayAgents.map((agent) => {
+            const status = agentStatusMap.get(agent.name) || 'idle';
 
-              return (
-                <div
-                  key={agent.name}
-                  className={`
-                    flex items-center gap-2 text-xs
-                    ${isCollapsed ? 'justify-center py-2' : 'px-3 py-2'}
-                  `}
-                  title={displayName}
-                >
-                  <span
-                    className={`w-2 h-2 rounded-full ${getStatusColorClass(status)}`}
-                    style={{ backgroundColor: getStatusColorStyle(status) }}
-                    title={status}
-                  />
-                  {!isCollapsed && (
-                    <span className={getStatusTextClass(status)} style={{ color: getStatusColorStyle(status) }}>
-                      {displayName}
-                    </span>
-                  )}
-                  {status === 'thinking' && !isCollapsed && (
-                    <span className="text-xs text-status-thinking">●</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+            return (
+              <div
+                key={agent.name}
+                className={`
+                  flex items-center gap-2 text-xs
+                  ${isCollapsed ? 'justify-center py-2' : 'px-3 py-2'}
+                `}
+                title={agent.display_name}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${getStatusColorClass(status)}`}
+                  style={{ backgroundColor: getStatusColorStyle(status) }}
+                  title={status}
+                />
+                {!isCollapsed && (
+                  <span className={getStatusTextClass(status)} style={{ color: getStatusColorStyle(status) }}>
+                    {agent.display_name}
+                  </span>
+                )}
+                {status === 'thinking' && !isCollapsed && (
+                  <span className="text-xs text-status-thinking">●</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Spacer */}
