@@ -6,7 +6,7 @@
  */
 
 import React from 'react';
-import { MessageCircle, ClipboardList, Rocket, Lightbulb, Plus, Menu, X, PanelRightClose } from 'lucide-react';
+import { MessageCircle, ClipboardList, Rocket, Lightbulb, Headphones, Plus, Menu, X, PanelRightClose } from 'lucide-react';
 import type { ChatMode } from '../lib/types';
 
 interface MobileNavProps {
@@ -20,6 +20,7 @@ interface MobileNavProps {
 
 const MODES: { id: ChatMode; icon: React.ReactNode; label: string; comingSoon?: boolean }[] = [
   { id: 'chat', icon: <MessageCircle size={20} />, label: 'Chat' },
+  { id: 'cs', icon: <Headphones size={20} />, label: 'CS' },
   { id: 'planning', icon: <ClipboardList size={20} />, label: 'Plan', comingSoon: true },
   { id: 'execute', icon: <Rocket size={20} />, label: 'Execute', comingSoon: true },
   { id: 'brainstorm', icon: <Lightbulb size={20} />, label: 'Brain', comingSoon: true },

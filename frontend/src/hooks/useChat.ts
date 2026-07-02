@@ -133,6 +133,75 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     is_ended: boolean;
   } | null>(null);
 
+  // --- Mode isolation: save/restore state per mode ---
+  const prevModeRef = useRef<string>(mode);
+  type ModeSnapshot = {
+    sessionId: string | null;
+    messages: Message[];
+    brief: Brief | null;
+    pendingQuestions: Question[];
+    activeCheckpoint: Checkpoint | null;
+    artifacts: Artifact[];
+  };
+  const savedModeStates = useRef<Record<string, ModeSnapshot>>({});
+
+  useEffect(() => {
+    const prevMode = prevModeRef.current;
+    if (prevMode === mode) return;
+
+    // Snapshot current mode's state
+    savedModeStates.current[prevMode] = {
+      sessionId,
+      messages,
+      brief,
+      pendingQuestions,
+      activeCheckpoint,
+      artifacts,
+    };
+
+    // Restore target mode's state (or start fresh)
+    const saved = savedModeStates.current[mode];
+    if (saved) {
+      setSessionId(saved.sessionId);
+      setMessages(saved.messages);
+      setBrief(saved.brief);
+      setPendingQuestions(saved.pendingQuestions);
+      setActiveCheckpoint(saved.activeCheckpoint);
+      setArtifacts(saved.artifacts);
+    } else {
+      setSessionId(null);
+      setMessages([]);
+      setBrief(null);
+      setPendingQuestions([]);
+      setActiveCheckpoint(null);
+      setArtifacts([]);
+    }
+
+    // Reset transient UI state
+    setError(null);
+    setIsThinking(false);
+    setIsLoading(false);
+
+    // Reset agents for the new mode
+    const csAgents = [
+      { name: 'cs_agent', status: 'idle' as const },
+      { name: 'predict_agent', status: 'idle' as const },
+    ];
+    const saleAgents = [
+      { name: 'market_strategy', status: 'idle' as const },
+      { name: 'compliance', status: 'idle' as const },
+      { name: 'product_solution', status: 'idle' as const },
+      { name: 'design', status: 'idle' as const },
+      { name: 'client_simulator', status: 'idle' as const },
+      { name: 'proposal_assembler', status: 'idle' as const },
+      { name: 'wireframe_designer', status: 'idle' as const },
+    ];
+    setActiveAgents(mode === 'cs' ? csAgents : saleAgents);
+
+    prevModeRef.current = mode;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
   // Load artifacts from sessionStorage on mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -152,6 +221,8 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem(`chat_session_${salespersonIdRef.current}`);
     }
+    // Clear saved snapshot for current mode too
+    delete savedModeStates.current[mode];
     setSessionId(null);
     setMessages([]);
     setBrief(null);
@@ -159,7 +230,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     setActiveCheckpoint(null);
     setArtifacts([]);
     setBrainState(null);
-  }, [salespersonId]);
+  }, [salespersonId, mode]);
 
   // Ref for aborting requests
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -193,16 +264,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
       let response: Response;
 
-      const requestBody = JSON.stringify({
-        message,
-        session_id: sessionId,
-        salesperson_id: salespersonId,
-        mode,
-        brief,
-      });
+      const isCs = mode === 'cs';
+      const requestBody = isCs
+        ? JSON.stringify({ message, session_id: sessionId, salesperson_id: salespersonId })
+        : JSON.stringify({ message, session_id: sessionId, salesperson_id: salespersonId, mode, brief });
 
       try {
-        response = await fetch(`${BACKEND_URL}/chat/stream`, {
+        response = await fetch(`${BACKEND_URL}${isCs ? '/cs/chat/stream' : '/chat/stream'}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: requestBody,
@@ -313,10 +381,12 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           setIsThinking(false);
           {
             const content = data.content as string;
+            // Determine agent name for this streaming turn
+            const streamAgent = mode === 'cs' ? 'cs_agent' : 'sales_orchestrator';
             setMessages((prev) => {
               const last = prev[prev.length - 1];
-              if (last && last.role === 'assistant' && last.agent === 'sales_orchestrator') {
-                // Append to existing assistant message
+              if (last && last.role === 'assistant') {
+                // Append to existing assistant message (any agent - within same streaming turn)
                 return [...prev.slice(0, -1), { ...last, content: last.content + content }];
               } else {
                 // Create new assistant message
@@ -325,7 +395,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
                   {
                     role: 'assistant',
                     content,
-                    agent: 'sales_orchestrator',
+                    agent: streamAgent,
                     timestamp: new Date().toISOString(),
                   },
                 ];

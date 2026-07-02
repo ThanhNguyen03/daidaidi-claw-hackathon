@@ -93,6 +93,7 @@ export default function Home() {
     rejectCheckpoint,
     editCheckpoint,
     clearError,
+    resetSession,
   } = useChat({
     salespersonId: salespersonName || 'demo_user',
     displayName: salespersonName,
@@ -134,7 +135,7 @@ export default function Home() {
     }
   };
 
-  // Handle new chat — clear all session data so the reload starts completely fresh
+  // Handle new chat — clears all session data (both modes) and reloads
   const handleNewChat = () => {
     if (typeof window !== 'undefined') {
       Object.keys(sessionStorage)
@@ -142,6 +143,7 @@ export default function Home() {
         .forEach((k) => sessionStorage.removeItem(k));
       sessionStorage.removeItem('artifacts');
     }
+    resetSession();
     window.location.reload();
   };
 

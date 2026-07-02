@@ -171,6 +171,26 @@ class ChatResponse(BaseModel):
 # In-memory state store
 _session_store: dict[str, SalesCaseState] = {}
 
+# CS mode has its own isolated session store (mode="cs", prefix "cs_sess_")
+_cs_session_store: dict[str, SalesCaseState] = {}
+
+
+def _get_or_create_cs_session(
+    session_id: Optional[str], salesperson_id: str
+) -> SalesCaseState:
+    """Get existing CS session or create a new one."""
+    if session_id and session_id in _cs_session_store:
+        return _cs_session_store[session_id]
+    new_id = session_id or f"cs_sess_{uuid.uuid4().hex[:12]}"
+    state = SalesCaseState(
+        session_id=new_id,
+        salesperson_id=salesperson_id,
+        mode="cs",
+        validation_status="PENDING",
+    )
+    _cs_session_store[new_id] = state
+    return state
+
 
 def _brief_to_dict(brief) -> dict | None:
     """Serialize brief to dict, filtering out None values. Returns None if no fields set."""
@@ -1267,6 +1287,67 @@ async def chat_stream(request: Request, payload: ChatRequest):
 
     return StreamingResponse(
         event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+class CsChatRequest(BaseModel):
+    """Request payload for CS mode chat."""
+
+    message: str
+    session_id: Optional[str] = None
+    salesperson_id: str = Field(..., description="Salesperson identifier")
+
+
+@app.post("/cs/chat/stream")
+@limiter.limit("10/minute")
+async def cs_chat_stream(request: Request, payload: CsChatRequest):
+    """
+    CS mode chat endpoint — streaming via SSE.
+    Uses cs_agent and predict_agent skills only. Completely isolated from sale mode.
+    """
+    from cs_agent.agent import get_cs_agent
+
+    state = _get_or_create_cs_session(
+        session_id=payload.session_id,
+        salesperson_id=payload.salesperson_id,
+    )
+
+    cs_agent = get_cs_agent()
+
+    async def cs_event_generator():
+        try:
+            yield _sse_data({"type": "session", "session_id": state.session_id})
+            yield _sse_data({"type": "user_message", "content": payload.message})
+
+            content_emitted = False
+            async for event_payload in cs_agent.run(state, payload.message):
+                if event_payload.get("type") == "content" and event_payload.get("content"):
+                    content_emitted = True
+                yield _sse_data(event_payload)
+
+            if not content_emitted:
+                yield _sse_data({
+                    "type": "assistant_message",
+                    "agent": "cs_agent",
+                    "content": "Xin lỗi, mình chưa tìm được câu trả lời. Bạn thử mô tả rõ hơn nhé.",
+                })
+
+            _cs_session_store[state.session_id] = state
+            yield _sse_data({"type": "session_updated", "session_id": state.session_id})
+            yield _sse_data({"type": "done"})
+        except Exception as exc:
+            print(f"Error in CS chat stream: {exc}")
+            yield _sse_data({"type": "error", "error": str(exc)})
+            yield _sse_data({"type": "done"})
+
+    return StreamingResponse(
+        cs_event_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

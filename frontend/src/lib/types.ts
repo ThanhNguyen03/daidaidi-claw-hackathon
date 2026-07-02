@@ -8,7 +8,7 @@
 // Mode Types
 // =============================================================================
 
-export type ChatMode = 'chat' | 'planning' | 'execute' | 'brainstorm';
+export type ChatMode = 'chat' | 'planning' | 'execute' | 'brainstorm' | 'cs';
 
 // =============================================================================
 // Brief

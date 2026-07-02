@@ -11,6 +11,7 @@ import {
   ClipboardList,
   Rocket,
   Lightbulb,
+  Headphones,
   Plus,
   Clock,
   Users,
@@ -51,6 +52,7 @@ interface AgentInfo {
 
 const MODES: { id: ChatMode; label: string; icon: React.ReactNode; description: string; comingSoon?: boolean }[] = [
   { id: 'chat', label: 'Chat', icon: <MessageCircle size={18} />, description: 'Q&A & advisory' },
+  { id: 'cs', label: 'CS Mode', icon: <Headphones size={18} />, description: 'Customer Service' },
   { id: 'planning', label: 'Planning', icon: <ClipboardList size={18} />, description: 'Coming soon', comingSoon: true },
   { id: 'execute', label: 'Execute', icon: <Rocket size={18} />, description: 'Coming soon', comingSoon: true },
   { id: 'brainstorm', label: 'Brainstorm', icon: <Lightbulb size={18} />, description: 'Coming soon', comingSoon: true },
@@ -66,6 +68,8 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
   client_simulator: 'Client Simulator',
   proposal_assembler: 'Proposal Assembler',
   wireframe_designer: 'Deck Generator',
+  cs_agent: 'CS Assistant',
+  predict_agent: 'User Guide',
 };
 
 // Status color classes
