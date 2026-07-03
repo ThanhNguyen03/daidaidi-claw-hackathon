@@ -27,7 +27,7 @@ import json
 from typing import Optional, Generator, Any
 from dataclasses import dataclass
 
-from openai import OpenAI
+from openai import APIConnectionError, APITimeoutError, OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from dotenv import load_dotenv
 from tenacity import (
@@ -50,6 +50,11 @@ LLM_BASE_URL = os.getenv(
     "LLM_BASE_URL", "https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1"
 )
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+
+# Per-request HTTP timeout. GreenNode MAAS can be slow under concurrent load — this must stay
+# below central_agent's per-skill wall-clock budget (_SKILL_TIMEOUT_S, currently 270s) but high
+# enough that a real (non-hung) completion isn't killed mid-generation.
+LLM_REQUEST_TIMEOUT_S = float(os.getenv("LLM_REQUEST_TIMEOUT_S", "240.0"))
 
 # Per-agent/skill model mapping (from environment)
 MODEL_MAPPING = {
@@ -150,7 +155,9 @@ class GreenNodeClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(TimeoutError),
+        # openai raises APITimeoutError/APIConnectionError (not the builtin TimeoutError)
+        # on request timeouts and connection failures — retry on those.
+        retry=retry_if_exception_type((APITimeoutError, APIConnectionError)),
         before_sleep=lambda retry_state: print(
             f"Retrying... attempt {retry_state.attempt_number}"
         ),
@@ -256,7 +263,7 @@ class GreenNodeLLM:
             self._client = OpenAI(
                 base_url=LLM_BASE_URL,
                 api_key=LLM_API_KEY,
-                timeout=60.0,  # Default timeout
+                timeout=LLM_REQUEST_TIMEOUT_S,
                 max_retries=3,
             )
         return self._client

@@ -261,7 +261,9 @@ TIMELINES:
         if context.previous_outputs:
             prev = []
             for skill_name, out in context.previous_outputs.items():
-                text = out.get("content") or out.get("summary", "")
+                # `summary` on a failed skill is an error message (e.g. "Skill X failed:
+                # timed out"), not real analysis — never pass it off as prior content.
+                text = out.get("content") or ""
                 if text:
                     prev.append(f"### {skill_name}\n{text}")
             if prev:

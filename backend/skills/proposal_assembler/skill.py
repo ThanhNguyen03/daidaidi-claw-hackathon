@@ -75,19 +75,21 @@ class ProposalAssemblerSkill(BaseSkill):
             skill_order = ["market_strategy", "compliance", "product_solution", "design"]
             outputs: dict = context.previous_outputs  # type: ignore[assignment]
 
-            # Ordered pass first, then any extras
+            # Ordered pass first, then any extras.
+            # Only ever use `content` here — `summary` on a FAILED skill is an error
+            # message (e.g. "Skill market_strategy failed: timed out"), not real section
+            # content, and must never be assembled into the proposal as if it were.
             for skill_name in skill_order:
                 if skill_name not in outputs:
                     continue
-                out = outputs[skill_name]
-                section_content = out.get("content") or out.get("summary") or ""
+                section_content = outputs[skill_name].get("content") or ""
                 if section_content:
                     parts.append(f"### {skill_name.upper()}\n{section_content}")
 
             for skill_name, out in outputs.items():
                 if skill_name in skill_order:
                     continue
-                section_content = out.get("content") or out.get("summary") or ""
+                section_content = out.get("content") or ""
                 if section_content:
                     parts.append(f"### {skill_name.upper()}\n{section_content}")
 
