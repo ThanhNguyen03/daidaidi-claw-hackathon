@@ -1,8 +1,10 @@
 """
 AdtimaBox-branded PPTX generator.
-Follows adtimabox-deck-pptx.skill + adtimabox-deck.skill design system.
-Slide types: value / flow / tier  (no title/closing — spec doesn't define them)
-Extraction schema shared with html_deck.py (_EXTRACT_SYSTEM imported from there).
+Slide types + extraction schema: agents/wireframe_designer_agent/SKILL.md (same source
+html_deck.py loads) — all 14 types (cover, closing, agenda, split, highlight, value, flow,
+touchpoints, compliance, tier, roi, timeline, checklist, screen) must stay handled here in
+sync with html_deck.py's `_render_slide`, or a slide silently falls back to `_render_value`
+and renders title-only with a blank body.
 """
 
 from __future__ import annotations
@@ -90,11 +92,20 @@ class AdtimaBoxPPTXGenerator:
         prs.slide_height = Inches(SLIDE_H)
 
         dispatch = {
-            "value":     self._render_value,
-            "flow":      self._render_flow,
-            "tier":      self._render_tier,
-            "highlight": self._render_highlight,
-            "screen":    self._render_screen,
+            "cover":       self._render_cover,
+            "closing":     self._render_closing,
+            "agenda":      self._render_agenda,
+            "split":       self._render_split,
+            "highlight":   self._render_highlight,
+            "value":       self._render_value,
+            "flow":        self._render_flow,
+            "touchpoints": self._render_touchpoints,
+            "compliance":  self._render_compliance,
+            "tier":        self._render_tier,
+            "roi":         self._render_roi,
+            "timeline":    self._render_timeline,
+            "checklist":   self._render_checklist,
+            "screen":      self._render_screen,
         }
         blank = prs.slide_layouts[6]
         for sd in slides:
@@ -287,6 +298,426 @@ class AdtimaBoxPPTXGenerator:
         return tb
 
     # ── Slide renderers ──────────────────────────────────────────────────
+
+    def _dark_bg(self, slide):
+        from pptx.util import Inches
+        bg = slide.shapes.add_shape(1, Inches(0), Inches(0), Inches(SLIDE_W), Inches(SLIDE_H))
+        bg.fill.solid()
+        bg.fill.fore_color.rgb = self._rgb("ink")
+        bg.line.fill.background()
+        bar = slide.shapes.add_shape(1, Inches(0), Inches(0), Inches(SLIDE_W), Inches(0.05))
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = self._rgb("orange")
+        bar.line.fill.background()
+
+    def _render_cover(self, slide, sd: dict):
+        """Dark hero cover slide (always first)."""
+        self._dark_bg(slide)
+        brand = sd.get("brand", "")
+        industry = sd.get("industry", "")
+        date = sd.get("date", "")
+        track = sd.get("track", "")
+
+        self._text(slide, PAD_X, 1.10, CONTENT_W, 0.30, brand.upper(), 12, "orange", bold=True)
+        self._text(slide, PAD_X, 1.48, CONTENT_W, 0.90, "ADTIMABOX PROPOSAL", 32, "white", bold=True)
+        self._text(slide, PAD_X, 2.45, CONTENT_W, 0.30,
+                   f"Zalo Ecosystem Solutions — {industry or 'Client Pitch'}", 12, "gray_lt")
+
+        meta = [(l, v) for l, v in (("Date", date), ("Industry", industry), ("Track", track)) if v]
+        if meta:
+            mx = PAD_X
+            col_w = 2.3
+            meta_y = SLIDE_H - 0.85
+            for label, val in meta:
+                self._text(slide, mx, meta_y, col_w - 0.2, 0.18, label.upper(), 7.5, "gray_lt")
+                self._text(slide, mx, meta_y + 0.20, col_w - 0.2, 0.24, val, 10, "white", bold=True)
+                mx += col_w
+        self._text(slide, SLIDE_W - PAD_X - 1.2, SLIDE_H - 0.35, 1.2, 0.2, "ADTIMA", 7.5, "gray_lt", align="RIGHT")
+
+    def _render_closing(self, slide, sd: dict):
+        """Dark thank-you closing slide (always last)."""
+        from pptx.util import Pt
+        self._dark_bg(slide)
+        brand = sd.get("brand", "")
+        date = sd.get("date", "")
+        note = sd.get("note", "Confidential. Prices excl. VAT 8%. Valid 30 days from proposal date.")
+
+        from pptx.util import Inches
+        tag = slide.shapes.add_shape(1, Inches(PAD_X), Inches(1.10), Inches(2.1), Inches(0.30))
+        tag.fill.solid()
+        tag.fill.fore_color.rgb = self._rgb("orange")
+        tag.line.fill.background()
+        self._round_corners(tag, 15000)
+        self._text(slide, PAD_X, 1.10, 2.1, 0.30, "ADTIMABOX BY ADTIMA", 8, "white", bold=True, align="CENTER")
+
+        self._text(slide, PAD_X, 1.60, CONTENT_W, 0.65, f"Cảm ơn {brand}", 28, "white", bold=True)
+        self._text(slide, PAD_X, 2.30, CONTENT_W, 0.30,
+                   "Hẹn gặp lại — chúng tôi sẵn sàng hỗ trợ bạn.", 12, "gray_lt")
+
+        meta_y = SLIDE_H - 1.05
+        self._text(slide, PAD_X, meta_y, 2.4, 0.18, "PREPARED BY", 7.5, "gray_lt")
+        self._text(slide, PAD_X, meta_y + 0.20, 2.4, 0.24, "AdtimaBox Sales Team", 10, "white", bold=True)
+        if date:
+            self._text(slide, PAD_X + 2.6, meta_y, 2.0, 0.18, "DATE", 7.5, "gray_lt")
+            self._text(slide, PAD_X + 2.6, meta_y + 0.20, 2.0, 0.24, date, 10, "white", bold=True)
+
+        self._text(slide, PAD_X, SLIDE_H - 0.55, CONTENT_W, 0.20, note, 8, "gray_lt")
+        self._text(slide, SLIDE_W - PAD_X - 1.2, SLIDE_H - 0.35, 1.2, 0.2, "ADTIMA", 7.5, "gray_lt", align="RIGHT")
+
+    def _render_agenda(self, slide, sd: dict):
+        """Numbered grid of section names present in the proposal."""
+        from pptx.util import Inches, Pt
+        self._bg(slide)
+        self._topbar(slide, sd.get("eyebrow", "Agenda"))
+
+        items = (sd.get("items") or [])[:12]
+        n = max(len(items), 1)
+        cols = 2 if n <= 6 else 3
+        rows = (n + cols - 1) // cols
+        gap_x, gap_y = 0.16, 0.14
+        item_w = (CONTENT_W - gap_x * (cols - 1)) / cols
+        item_h = min((BODY_H - gap_y * (rows - 1)) / rows, 0.55)
+        block_h = item_h * rows + gap_y * (rows - 1)
+        start_y = BODY_TOP + max((BODY_H - block_h) / 2, 0)
+
+        for i, item in enumerate(items):
+            r, c = divmod(i, cols)
+            x = PAD_X + c * (item_w + gap_x)
+            y = start_y + r * (item_h + gap_y)
+            card = slide.shapes.add_shape(1, Inches(x), Inches(y), Inches(item_w), Inches(item_h))
+            card.fill.solid()
+            card.fill.fore_color.rgb = self._rgb("cream")
+            card.line.color.rgb = self._rgb("line")
+            card.line.width = Pt(0.5)
+            self._round_corners(card, 10000)
+
+            num_size = min(item_h - 0.16, 0.30)
+            num_y = y + (item_h - num_size) / 2
+            badge = slide.shapes.add_shape(9, Inches(x + 0.10), Inches(num_y),
+                                           Inches(num_size), Inches(num_size))
+            badge.fill.solid()
+            badge.fill.fore_color.rgb = self._rgb("orange")
+            badge.line.fill.background()
+            self._text(slide, x + 0.10, num_y, num_size, num_size,
+                       str(i + 1), 10, "white", bold=True, align="CENTER")
+            self._text(slide, x + 0.10 + num_size + 0.10, y, item_w - num_size - 0.30, item_h,
+                       item, 10.5, "ink", bold=True)
+
+    def _render_split(self, slide, sd: dict):
+        """Two-panel business-problem slide (AS-IS / TO-BE)."""
+        from pptx.util import Inches, Pt
+        self._bg(slide)
+        self._topbar(slide, sd.get("eyebrow", "Business Problem"))
+
+        left_label = sd.get("left_label", "Current State")
+        left_text = sd.get("left_text", "")
+        left_pain = sd.get("left_pain", "")
+        right_label = sd.get("right_label", "Target State")
+        right_text = sd.get("right_text", "")
+        gap_text = sd.get("gap", "")
+        right_items = (sd.get("right_items") or [])[:4]
+        stats = sd.get("stats") or []
+
+        panel_gap = 0.24
+        panel_w = (CONTENT_W - panel_gap) / 2
+        panel_h = BODY_H
+        panel_y = BODY_TOP
+        pain_tint = self._hex_rgb("FDEAE0")
+
+        # Left panel — orange accent border
+        lp = slide.shapes.add_shape(1, Inches(PAD_X), Inches(panel_y), Inches(panel_w), Inches(panel_h))
+        lp.fill.solid()
+        lp.fill.fore_color.rgb = self._rgb("cream")
+        lp.line.color.rgb = self._rgb("orange")
+        lp.line.width = Pt(1.25)
+        self._round_corners(lp, 6000)
+        self._text(slide, PAD_X + 0.16, panel_y + 0.14, panel_w - 0.32, 0.20,
+                   left_label.upper(), 8.5, "orange", bold=True)
+        pain_h = 0.42 if left_pain else 0
+        self._text(slide, PAD_X + 0.16, panel_y + 0.42, panel_w - 0.32,
+                   panel_h - 0.58 - pain_h, left_text, 9.5, "gray")
+        if left_pain:
+            py = panel_y + panel_h - 0.50
+            box = slide.shapes.add_shape(1, Inches(PAD_X + 0.16), Inches(py),
+                                         Inches(panel_w - 0.32), Inches(0.38))
+            box.fill.solid()
+            box.fill.fore_color.rgb = pain_tint
+            box.line.fill.background()
+            self._round_corners(box, 12000)
+            self._text(slide, PAD_X + 0.26, py + 0.04, panel_w - 0.52, 0.30,
+                       f'"{left_pain}"', 8.5, "ink", italic=True)
+
+        # Right panel
+        rx = PAD_X + panel_w + panel_gap
+        rp = slide.shapes.add_shape(1, Inches(rx), Inches(panel_y), Inches(panel_w), Inches(panel_h))
+        rp.fill.solid()
+        rp.fill.fore_color.rgb = self._rgb("cream")
+        rp.line.color.rgb = self._rgb("line")
+        rp.line.width = Pt(0.5)
+        self._round_corners(rp, 6000)
+        self._text(slide, rx + 0.16, panel_y + 0.14, panel_w - 0.32, 0.20,
+                   right_label.upper(), 8.5, "orange", bold=True)
+        gap_h = 0.36 if gap_text else 0
+        self._text(slide, rx + 0.16, panel_y + 0.42, panel_w - 0.32, 0.60, right_text, 9.5, "gray")
+        cy = panel_y + 1.06
+        if gap_text:
+            box = slide.shapes.add_shape(1, Inches(rx + 0.16), Inches(cy),
+                                         Inches(panel_w - 0.32), Inches(gap_h))
+            box.fill.solid()
+            box.fill.fore_color.rgb = pain_tint
+            box.line.fill.background()
+            self._round_corners(box, 12000)
+            self._text(slide, rx + 0.26, cy + 0.03, panel_w - 0.52, gap_h - 0.06,
+                       gap_text, 8.5, "ink", italic=True)
+            cy += gap_h + 0.08
+        for it in right_items:
+            self._text(slide, rx + 0.16, cy, panel_w - 0.32, 0.24, f"→  {it}", 9, "ink")
+            cy += 0.26
+
+        self._stat_bar(slide, stats)
+
+    def _render_touchpoints(self, slide, sd: dict):
+        """Messaging-map table slide."""
+        from pptx.util import Inches, Pt
+        self._bg(slide)
+        self._topbar(slide, sd.get("eyebrow", "Messaging Touchpoints"))
+        hl = sd.get("headline", {})
+        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W, 0.42,
+                         hl.get("plain", ""), hl.get("bold", ""), 18)
+
+        rows = (sd.get("rows") or [])[:8]
+        stats = sd.get("stats") or []
+        table_top = BODY_TOP + 0.46
+        table_h = BODY_H - 0.46
+        n_rows = len(rows) + 1  # + header
+
+        if rows:
+            headers = ["Trigger", "Message Type", "Channel", "Timing"]
+            gfx = slide.shapes.add_table(n_rows, len(headers),
+                                         Inches(PAD_X), Inches(table_top),
+                                         Inches(CONTENT_W), Inches(table_h))
+            table = gfx.table
+            col_w = [0.34, 0.24, 0.20, 0.22]
+            for i, w in enumerate(col_w):
+                table.columns[i].width = Inches(CONTENT_W * w)
+
+            for c, h in enumerate(headers):
+                cell = table.cell(0, c)
+                cell.text = h
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = self._rgb("cream")
+                run = cell.text_frame.paragraphs[0].runs[0]
+                run.font.name = FONT
+                run.font.size = Pt(8.5)
+                run.font.bold = True
+                run.font.color.rgb = self._rgb("gray")
+
+            for r, row in enumerate(rows, start=1):
+                values = [row.get("trigger", ""), row.get("message_type", ""),
+                         row.get("channel", ""), row.get("timing", "")]
+                for c, val in enumerate(values):
+                    cell = table.cell(r, c)
+                    cell.text = self._safe_text(str(val))
+                    cell.fill.solid()
+                    cell.fill.fore_color.rgb = self._rgb("white")
+                    run = cell.text_frame.paragraphs[0].runs[0]
+                    run.font.name = FONT
+                    run.font.size = Pt(8.5)
+                    run.font.color.rgb = self._rgb("ink")
+
+        self._stat_bar(slide, stats)
+
+    def _render_compliance(self, slide, sd: dict):
+        """Compliance verdict badge + conditions/docs columns."""
+        from pptx.util import Inches, Pt
+        self._bg(slide)
+        self._topbar(slide, sd.get("eyebrow", "Compliance Status"))
+
+        verdict = (sd.get("verdict") or "CLEAR").upper()
+        verdict_label = sd.get("verdict_label") or {
+            "CLEAR": "CLEAR TO PROCEED",
+            "CONDITIONS": "PROCEED WITH CONDITIONS",
+            "BLOCKED": "BLOCKED",
+        }.get(verdict, verdict)
+        verdict_colors = {
+            "CLEAR": ("DFF3F0", "0A7A71"),
+            "CONDITIONS": ("FEF3C7", "92620E"),
+            "BLOCKED": ("FEE2E2", "991B1B"),
+        }
+        bg_hex, fg_hex = verdict_colors.get(verdict, verdict_colors["CLEAR"])
+        conditions = (sd.get("conditions") or [])[:6]
+        docs = (sd.get("docs_required") or [])[:6]
+        blocker = sd.get("blocker", "")
+        stats = sd.get("stats") or []
+
+        badge = slide.shapes.add_shape(1, Inches(PAD_X), Inches(BODY_TOP), Inches(3.6), Inches(0.42))
+        badge.fill.solid()
+        badge.fill.fore_color.rgb = self._hex_rgb(bg_hex)
+        badge.line.fill.background()
+        self._round_corners(badge, 20000)
+        vb = slide.shapes.add_textbox(Inches(PAD_X + 0.14), Inches(BODY_TOP + 0.06),
+                                      Inches(3.3), Inches(0.30))
+        vp = vb.text_frame.paragraphs[0]
+        vr = vp.add_run()
+        vr.text = verdict_label
+        vr.font.name = FONT
+        vr.font.size = Pt(12)
+        vr.font.bold = True
+        vr.font.color.rgb = self._hex_rgb(fg_hex)
+
+        y = BODY_TOP + 0.58
+        if blocker:
+            box = slide.shapes.add_shape(1, Inches(PAD_X), Inches(y), Inches(CONTENT_W), Inches(0.42))
+            box.fill.solid()
+            box.fill.fore_color.rgb = self._hex_rgb("FEE2E2")
+            box.line.fill.background()
+            self._round_corners(box, 8000)
+            self._text(slide, PAD_X + 0.10, y + 0.06, CONTENT_W - 0.20, 0.30,
+                       f"Blocker: {blocker}", 9.5, "ink", bold=True)
+            y += 0.50
+
+        col_w = (CONTENT_W - 0.24) / 2
+        col_h = SLIDE_H - y - STAT_BAR_H - 0.10
+
+        def _col(x, label, lst):
+            self._text(slide, x, y, col_w, 0.20, label.upper(), 8, "gray", bold=True)
+            cy = y + 0.26
+            for it in lst:
+                self._text(slide, x, cy, col_w, 0.24, f"•  {it}", 8.5, "ink")
+                cy += 0.26
+
+        if conditions:
+            _col(PAD_X, "Conditions Before Launch", conditions)
+        if docs:
+            _col(PAD_X + col_w + 0.24, "Documents Required", docs)
+
+        self._stat_bar(slide, stats)
+
+    def _render_roi(self, slide, sd: dict):
+        """ROI / Why Now — dark stat cards + reasons list."""
+        from pptx.util import Inches, Pt
+        self._bg(slide)
+        self._topbar(slide, sd.get("eyebrow", "ROI / Why Now"))
+        hl = sd.get("headline", {})
+        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W, 0.42,
+                         hl.get("plain", ""), hl.get("bold", ""), 18)
+
+        stats = (sd.get("stats") or [])[:3]
+        reasons = (sd.get("reasons") or [])[:5]
+        color_map = {"orange": "orange", "teal": "teal", "purple": "purple", "gold": "gold"}
+
+        body_top = BODY_TOP + 0.50
+        body_h = SLIDE_H - body_top - STAT_BAR_H - 0.10
+        stats_col_w = 2.4
+        gap = 0.24
+
+        # Stat cards (dark), stacked vertically on the left
+        if stats:
+            card_h = min((body_h - 0.12 * (len(stats) - 1)) / len(stats), 1.10)
+            cy = body_top
+            for s in stats:
+                card = slide.shapes.add_shape(1, Inches(PAD_X), Inches(cy),
+                                              Inches(stats_col_w), Inches(card_h))
+                card.fill.solid()
+                card.fill.fore_color.rgb = self._rgb("ink")
+                card.line.fill.background()
+                self._round_corners(card, 10000)
+                color_key = color_map.get(s.get("color", "orange"), "orange")
+                self._text(slide, PAD_X + 0.14, cy + 0.10, stats_col_w - 0.28, 0.42,
+                           s.get("value", ""), 22, color_key, bold=True, auto_fit=True)
+                self._text(slide, PAD_X + 0.14, cy + 0.10 + 0.44, stats_col_w - 0.28, 0.40,
+                           s.get("label", ""), 8.5, "white")
+                cy += card_h + 0.12
+
+        # Reasons list on the right
+        if reasons:
+            rx = PAD_X + stats_col_w + gap
+            rw = CONTENT_W - stats_col_w - gap
+            reason_h = min((body_h - 0.10 * (len(reasons) - 1)) / len(reasons), 0.60)
+            ry = body_top + max((body_h - (reason_h * len(reasons) + 0.10 * (len(reasons) - 1))) / 2, 0)
+            for r in reasons:
+                box = slide.shapes.add_shape(1, Inches(rx), Inches(ry), Inches(rw), Inches(reason_h))
+                box.fill.solid()
+                box.fill.fore_color.rgb = self._rgb("cream")
+                box.line.color.rgb = self._rgb("line")
+                box.line.width = Pt(0.5)
+                self._round_corners(box, 10000)
+                self._text(slide, rx + 0.14, ry, rw - 0.28, reason_h, r, 9, "ink", auto_fit=True)
+                ry += reason_h + 0.10
+
+    def _render_timeline(self, slide, sd: dict):
+        """Phased implementation timeline (week -> label -> items)."""
+        from pptx.util import Inches, Pt
+        self._bg(slide)
+        self._topbar(slide, sd.get("eyebrow", "Next Steps & Timeline"))
+        hl = sd.get("headline", {})
+        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W, 0.42,
+                         hl.get("plain", ""), hl.get("bold", ""), 18)
+
+        weeks = (sd.get("weeks") or [])[:6]
+        stats = sd.get("stats") or []
+        top = BODY_TOP + 0.46
+        avail_h = BODY_H - 0.46
+        row_h = min(avail_h / max(len(weeks), 1), 0.58)
+
+        y = top
+        for w in weeks:
+            items_text = " · ".join(w.get("items") or [])
+            self._text(slide, PAD_X, y + 0.06, 1.1, row_h - 0.10,
+                       w.get("week", ""), 8.5, "orange", bold=True)
+            self._text(slide, PAD_X + 1.2, y + 0.02, CONTENT_W - 1.2, 0.24,
+                       w.get("label", ""), 10, "ink", bold=True)
+            self._text(slide, PAD_X + 1.2, y + 0.26, CONTENT_W - 1.2, row_h - 0.30,
+                       items_text, 8.5, "gray")
+            if row_h > 0.20:
+                div = slide.shapes.add_shape(1, Inches(PAD_X), Inches(y + row_h - 0.02),
+                                             Inches(CONTENT_W), Inches(0.008))
+                div.fill.solid()
+                div.fill.fore_color.rgb = self._rgb("line")
+                div.line.fill.background()
+            y += row_h
+
+        self._stat_bar(slide, stats)
+
+    def _render_checklist(self, slide, sd: dict):
+        """Client decisions + tech-confirmation checklist."""
+        from pptx.util import Inches, Pt
+        self._bg(slide)
+        self._topbar(slide, sd.get("eyebrow", "Key Decisions Required"))
+        hl = sd.get("headline", {})
+        self._text_mixed(slide, PAD_X, BODY_TOP, CONTENT_W, 0.42,
+                         hl.get("plain", ""), hl.get("bold", ""), 18)
+
+        decisions = (sd.get("decisions") or [])[:6]
+        tech_items = (sd.get("tech_items") or [])[:6]
+        stats = sd.get("stats") or []
+
+        y0 = BODY_TOP + 0.50
+        col_gap = 0.28
+        two_col = bool(tech_items)
+        col_w = (CONTENT_W - col_gap) / 2 if two_col else CONTENT_W
+
+        self._text(slide, PAD_X, y0, col_w, 0.20, "CLIENT DECISIONS", 8, "gray", bold=True)
+        cy = y0 + 0.26
+        for d in decisions:
+            text = d.get("text", "") if isinstance(d, dict) else d
+            priority = d.get("priority", "") if isinstance(d, dict) else ""
+            box = slide.shapes.add_shape(1, Inches(PAD_X), Inches(cy), Inches(0.16), Inches(0.16))
+            box.fill.solid()
+            box.fill.fore_color.rgb = self._rgb("orange" if priority == "high" else "line")
+            box.line.fill.background()
+            self._text(slide, PAD_X + 0.24, cy - 0.03, col_w - 0.24, 0.24, str(text), 9, "ink")
+            cy += 0.30
+
+        if two_col:
+            tx = PAD_X + col_w + col_gap
+            self._text(slide, tx, y0, col_w, 0.20, "TECH CONFIRMATION REQUIRED", 8, "gray", bold=True)
+            ty = y0 + 0.26
+            for t in tech_items:
+                self._text(slide, tx, ty, col_w, 0.24, f"⚙  {t}", 9, "ink")
+                ty += 0.28
+
+        self._stat_bar(slide, stats)
 
     def _render_value(self, slide, sd: dict):
         from pptx.util import Inches, Pt
