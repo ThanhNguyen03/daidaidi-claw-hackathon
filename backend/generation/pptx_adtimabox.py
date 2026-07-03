@@ -222,13 +222,15 @@ class AdtimaBoxPPTXGenerator:
             div.line.fill.background()
 
         stat_x = PAD_X
-        # stat_y must leave room for 0.30 (value) + 0.18 (label) = 0.48" within STAT_BAR_H 0.55"
+        # 22pt bold text needs ~0.37" for a single line (font_pt * 1.22 / 72) — the old 0.30"
+        # box clipped/overlapped even short values. value(0.36) + label(0.16) = 0.52" within
+        # STAT_BAR_H 0.55".
         stat_y = SLIDE_H - STAT_BAR_H + 0.02
         col_w = CONTENT_W / min(len(stats), 4)
         for s in stats[:4]:
-            self._text(slide, stat_x, stat_y, col_w - 0.1, 0.30,
-                       s.get("v", ""), 22, "ink", bold=True)
-            self._text(slide, stat_x, stat_y + 0.30, col_w - 0.1, 0.18,
+            self._text(slide, stat_x, stat_y, col_w - 0.1, 0.36,
+                       s.get("v", ""), 22, "ink", bold=True, auto_fit=True)
+            self._text(slide, stat_x, stat_y + 0.36, col_w - 0.1, 0.16,
                        s.get("l", ""), 8, "gray_lt")
             stat_x += col_w
 
@@ -252,6 +254,45 @@ class AdtimaBoxPPTXGenerator:
                 continue
             result.append(ch)
         return "".join(result)
+
+    @staticmethod
+    def _est_lines(text: str, width_in: float, font_pt: float) -> int:
+        """Estimate wrapped line count for `text` at `font_pt` inside a `width_in`-wide box.
+        Unlike HTML/CSS, python-pptx text boxes don't reflow their container — callers must
+        size boxes to fit real (often multi-line Vietnamese) content, or PowerPoint silently
+        overflows text on top of whatever shape sits below."""
+        import math
+        if not text:
+            return 0
+        avg_char_w_in = font_pt * 0.52 / 72.0
+        chars_per_line = max(int(width_in / avg_char_w_in), 1)
+        lines = 0
+        for para in str(text).split("\n"):
+            lines += max(1, math.ceil(len(para) / chars_per_line))
+        return lines
+
+    def _est_h(self, text: str, width_in: float, font_pt: float, line_factor: float = 1.22) -> float:
+        """Estimated rendered height (inches) of `text` wrapped at `width_in` and `font_pt`."""
+        return self._est_lines(text, width_in, font_pt) * font_pt * line_factor / 72.0
+
+    def _fit_list_height(self, items: list, width_in: float, font_pt: float, max_h_in: float,
+                          item_gap: float = 0.06, min_item_h: float = 0.22,
+                          line_factor: float = 1.22):
+        """Greedily keep as many `items` as fit within `max_h_in`, sizing each to its real
+        wrapped height instead of a fixed per-row increment. Returns (kept_items, heights,
+        dropped_count) — always keeps at least one item so we never render nothing."""
+        heights: list[float] = []
+        kept: list = []
+        total = 0.0
+        for it in items:
+            text = it.get("text", it) if isinstance(it, dict) else it
+            h = max(self._est_h(text, width_in, font_pt, line_factor) + item_gap, min_item_h)
+            if total + h > max_h_in and kept:
+                break
+            kept.append(it)
+            heights.append(h)
+            total += h
+        return kept, heights, len(items) - len(kept)
 
     def _text(self, slide, left, top, width, height, text, size, color_key,
               bold=False, italic=False, align="LEFT", emoji_font=False, auto_fit=False):
@@ -457,9 +498,13 @@ class AdtimaBoxPPTXGenerator:
         self._round_corners(rp, 6000)
         self._text(slide, rx + 0.16, panel_y + 0.14, panel_w - 0.32, 0.20,
                    right_label.upper(), 8.5, "orange", bold=True)
+        # right_text routinely wraps past the old fixed 0.60"/2-line budget — size it to its
+        # real height (min 0.60 to match prior look for short text) so items never overlap it.
+        rt_w = panel_w - 0.32
+        rt_h = max(self._est_h(right_text, rt_w, 9.5) + 0.04, 0.60)
+        self._text(slide, rx + 0.16, panel_y + 0.42, rt_w, rt_h, right_text, 9.5, "gray")
+        cy = panel_y + 0.42 + rt_h + 0.04
         gap_h = 0.36 if gap_text else 0
-        self._text(slide, rx + 0.16, panel_y + 0.42, panel_w - 0.32, 0.60, right_text, 9.5, "gray")
-        cy = panel_y + 1.06
         if gap_text:
             box = slide.shapes.add_shape(1, Inches(rx + 0.16), Inches(cy),
                                          Inches(panel_w - 0.32), Inches(gap_h))
@@ -470,9 +515,14 @@ class AdtimaBoxPPTXGenerator:
             self._text(slide, rx + 0.26, cy + 0.03, panel_w - 0.52, gap_h - 0.06,
                        gap_text, 8.5, "ink", italic=True)
             cy += gap_h + 0.08
-        for it in right_items:
-            self._text(slide, rx + 0.16, cy, panel_w - 0.32, 0.24, f"→  {it}", 9, "ink")
-            cy += 0.26
+        items_avail = panel_y + panel_h - 0.10 - cy
+        kept, heights, more = self._fit_list_height(
+            right_items, panel_w - 0.32 - 0.20, 9, max(items_avail, 0), min_item_h=0.24)
+        for it, h in zip(kept, heights):
+            self._text(slide, rx + 0.16, cy, panel_w - 0.32, h - 0.02, f"→  {it}", 9, "ink")
+            cy += h
+        if more:
+            self._text(slide, rx + 0.16, cy, panel_w - 0.32, 0.20, f"+{more} khác…", 8, "gray_lt", italic=True)
 
         self._stat_bar(slide, stats)
 
@@ -582,9 +632,16 @@ class AdtimaBoxPPTXGenerator:
         def _col(x, label, lst):
             self._text(slide, x, y, col_w, 0.20, label.upper(), 8, "gray", bold=True)
             cy = y + 0.26
-            for it in lst:
-                self._text(slide, x, cy, col_w, 0.24, f"•  {it}", 8.5, "ink")
-                cy += 0.26
+            avail = col_h - 0.26
+            # Real compliance/legal text routinely wraps to 2+ lines — size each item to its
+            # actual wrapped height (not a fixed row height) so items never overlap, and drop
+            # trailing items rather than overflow the slide if they don't all fit.
+            kept, heights, more = self._fit_list_height(lst, col_w - 0.20, 8.5, avail)
+            for it, h in zip(kept, heights):
+                self._text(slide, x, cy, col_w, h - 0.02, f"•  {it}", 8.5, "ink")
+                cy += h
+            if more:
+                self._text(slide, x, cy, col_w, 0.20, f"+{more} khác…", 8, "gray_lt", italic=True)
 
         if conditions:
             _col(PAD_X, "Conditions Before Launch", conditions)
@@ -658,17 +715,29 @@ class AdtimaBoxPPTXGenerator:
         stats = sd.get("stats") or []
         top = BODY_TOP + 0.46
         avail_h = BODY_H - 0.46
-        row_h = min(avail_h / max(len(weeks), 1), 0.58)
+        items_w = CONTENT_W - 1.2
+
+        # Each week's joined item text can wrap to 2+ lines — an equal fixed row_h overflows
+        # into the divider/next row for any week with more than a short one-liner. Size every
+        # row to its real content height, then scale all rows down proportionally if the deck
+        # as a whole doesn't fit (still bounded, never overlapping).
+        items_texts = [" · ".join(w.get("items") or []) for w in weeks]
+        min_row_h = 0.30
+        raw_heights = [
+            max(0.26 + self._est_h(t, items_w, 8.5), min_row_h) for t in items_texts
+        ]
+        total_h = sum(raw_heights) or 1.0
+        scale = min(avail_h / total_h, 1.0) if weeks else 1.0
+        row_heights = [max(h * scale, min_row_h * scale) for h in raw_heights]
 
         y = top
-        for w in weeks:
-            items_text = " · ".join(w.get("items") or [])
+        for w, items_text, row_h in zip(weeks, items_texts, row_heights):
             self._text(slide, PAD_X, y + 0.06, 1.1, row_h - 0.10,
                        w.get("week", ""), 8.5, "orange", bold=True)
-            self._text(slide, PAD_X + 1.2, y + 0.02, CONTENT_W - 1.2, 0.24,
+            self._text(slide, PAD_X + 1.2, y + 0.02, items_w, 0.24,
                        w.get("label", ""), 10, "ink", bold=True)
-            self._text(slide, PAD_X + 1.2, y + 0.26, CONTENT_W - 1.2, row_h - 0.30,
-                       items_text, 8.5, "gray")
+            self._text(slide, PAD_X + 1.2, y + 0.26, items_w, row_h - 0.28,
+                       items_text, 8.5, "gray", auto_fit=True)
             if row_h > 0.20:
                 div = slide.shapes.add_shape(1, Inches(PAD_X), Inches(y + row_h - 0.02),
                                              Inches(CONTENT_W), Inches(0.008))
@@ -697,25 +766,38 @@ class AdtimaBoxPPTXGenerator:
         two_col = bool(tech_items)
         col_w = (CONTENT_W - col_gap) / 2 if two_col else CONTENT_W
 
+        col_h = SLIDE_H - y0 - STAT_BAR_H - 0.10
+        avail = col_h - 0.26
+
         self._text(slide, PAD_X, y0, col_w, 0.20, "CLIENT DECISIONS", 8, "gray", bold=True)
         cy = y0 + 0.26
-        for d in decisions:
+        # Decision text can run long (budget/approval sentences) — size each row to its real
+        # wrapped height so rows never overlap; drop trailing items if they don't all fit.
+        d_kept, d_heights, d_more = self._fit_list_height(
+            decisions, col_w - 0.24, 9, avail, min_item_h=0.28)
+        for d, h in zip(d_kept, d_heights):
             text = d.get("text", "") if isinstance(d, dict) else d
             priority = d.get("priority", "") if isinstance(d, dict) else ""
             box = slide.shapes.add_shape(1, Inches(PAD_X), Inches(cy), Inches(0.16), Inches(0.16))
             box.fill.solid()
             box.fill.fore_color.rgb = self._rgb("orange" if priority == "high" else "line")
             box.line.fill.background()
-            self._text(slide, PAD_X + 0.24, cy - 0.03, col_w - 0.24, 0.24, str(text), 9, "ink")
-            cy += 0.30
+            self._text(slide, PAD_X + 0.24, cy - 0.03, col_w - 0.24, h - 0.02, str(text), 9, "ink")
+            cy += h
+        if d_more:
+            self._text(slide, PAD_X, cy, col_w, 0.20, f"+{d_more} khác…", 8, "gray_lt", italic=True)
 
         if two_col:
             tx = PAD_X + col_w + col_gap
             self._text(slide, tx, y0, col_w, 0.20, "TECH CONFIRMATION REQUIRED", 8, "gray", bold=True)
             ty = y0 + 0.26
-            for t in tech_items:
-                self._text(slide, tx, ty, col_w, 0.24, f"⚙  {t}", 9, "ink")
-                ty += 0.28
+            t_kept, t_heights, t_more = self._fit_list_height(
+                tech_items, col_w - 0.10, 9, avail, min_item_h=0.24)
+            for t, h in zip(t_kept, t_heights):
+                self._text(slide, tx, ty, col_w, h - 0.02, f"⚙  {t}", 9, "ink")
+                ty += h
+            if t_more:
+                self._text(slide, tx, ty, col_w, 0.20, f"+{t_more} khác…", 8, "gray_lt", italic=True)
 
         self._stat_bar(slide, stats)
 
@@ -1072,16 +1154,19 @@ class AdtimaBoxPPTXGenerator:
             d.fill.fore_color.rgb = self._rgb("line")
             d.line.fill.background()
 
-            # Checks — dynamic cap to never overlap deploy text
+            # Checks — sized to real wrapped height so a longer feature line never overlaps
+            # the next check or the deploy text below.
             deploy = t.get("deploy", "")
             deploy_y = tier_top + tier_h - 0.34
             checks_start = tier_top + 1.46
             available_h = deploy_y - checks_start - 0.10
-            max_ck = max(0, min(4, int(available_h / 0.27)))
+            kept, heights, more = self._fit_list_height(
+                (t.get("checks") or [])[:4], tier_w - 0.38 - 0.20, 8.5, available_h,
+                min_item_h=0.24)
             cy = checks_start
-            for ck in (t.get("checks") or [])[:max_ck]:
-                self._text(slide, x + 0.24, cy, tier_w - 0.38, 0.25, "✓  " + ck, 8.5, "ink")
-                cy += 0.27
+            for ck, h in zip(kept, heights):
+                self._text(slide, x + 0.24, cy, tier_w - 0.38, h - 0.02, "✓  " + ck, 8.5, "ink")
+                cy += h
 
             # Deploy
             if deploy:
