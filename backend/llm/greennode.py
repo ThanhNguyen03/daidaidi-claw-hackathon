@@ -67,6 +67,8 @@ MODEL_MAPPING = {
     # CS mode skills (default to minimax; override via env if needed)
     "cs_agent": os.getenv("MODEL_CS_AGENT", "minimax/minimax-m2.5"),
     "predict_agent": os.getenv("MODEL_PREDICT_AGENT", "minimax/minimax-m2.5"),
+    # Synthesis skill (default to minimax; override via MODEL_PROPOSAL_ASSEMBLER)
+    "proposal_assembler": os.getenv("MODEL_PROPOSAL_ASSEMBLER", "minimax/minimax-m2.5"),
 }
 
 

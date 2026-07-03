@@ -43,6 +43,7 @@ class ComplianceSkill(BaseSkill):
                 system=system,
                 user_msg=user_msg,
                 history=context.messages,
+                max_tokens=2000,
             )
         except Exception as e:
             return SkillOutput(

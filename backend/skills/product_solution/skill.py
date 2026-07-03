@@ -43,6 +43,7 @@ class ProductSolutionSkill(BaseSkill):
                 system=system,
                 user_msg=user_msg,
                 history=context.messages,
+                max_tokens=3500,
             )
         except Exception as e:
             return SkillOutput(

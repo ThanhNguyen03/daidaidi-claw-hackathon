@@ -24,7 +24,7 @@ class CsAgentSkill(BaseSkill):
         super().__init__(
             name="cs_agent",
             description="CSHub Sale Assistant: userguide lookup and bug intake for internal sales team",
-            model_key="MODEL_MINIMAX",
+            model_key="MODEL_CS_AGENT",
             skill_md_path=_SKILL_MD,
         )
         # Load reference docs at init for direct injection (reference/ not in KB knowledge/)
