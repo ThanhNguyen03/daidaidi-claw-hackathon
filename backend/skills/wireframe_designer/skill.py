@@ -21,7 +21,9 @@ import uuid
 from skills.base import BaseSkill, SkillContext, SkillOutput
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_SKILL_MD = os.path.join(_HERE, "SKILL.md")
+# Real prompt/schema doc lives in agents/wireframe_designer_agent/SKILL.md (same file
+# generation/html_deck.py loads for its extraction LLM call — single source of truth).
+_SKILL_MD = os.path.join(_HERE, "..", "..", "agents", "wireframe_designer_agent", "SKILL.md")
 _ARTIFACTS_DIR = os.path.join(_HERE, "..", "..", "data", "artifacts")
 
 
