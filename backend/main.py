@@ -2204,13 +2204,14 @@ async def checkpoint_decision(
     if not checkpoint or checkpoint.id != checkpoint_id:
         raise HTTPException(status_code=404, detail=f"Checkpoint not found: {checkpoint_id} (session has {checkpoint.id if checkpoint else 'none'})")
 
+    # No local re-import of get_checkpoint_manager here: a function-scoped import makes
+    # the name local for the whole function, so the module-level import at the top became
+    # invisible and the call below raised UnboundLocalError on every request — this route
+    # returned 500 unconditionally.
+    cpm = get_checkpoint_manager()
     if request.auto_approve:
-        from checkpoint.manager import get_checkpoint_manager
-
-        cpm = get_checkpoint_manager()
         cpm.set_auto_approve(session_id, checkpoint.action.type, True)
 
-    cpm = get_checkpoint_manager()
     updated = await cpm.process_decision(checkpoint, request.decision, request.params)
 
     if request.decision == "edit" and request.params:

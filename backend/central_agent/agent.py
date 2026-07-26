@@ -34,7 +34,13 @@ from schemas.state import (
     Question,
     SalesCaseState,
 )
-from skills.base import SkillContext, SkillOutput, strip_think_blocks, extract_json_block
+from skills.base import (
+    SkillContext,
+    SkillOutput,
+    extract_json_block,
+    loads_lenient,
+    strip_think_blocks,
+)
 from skills.registry import get_skill_registry
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -55,14 +61,40 @@ _CENTRAL_SKILL = _load_central_skill()
 _SKILL_TIMEOUT_S = 270  # per-skill wall-clock timeout; increased to give slow GreenNode MAAS room
 _RECENT_HISTORY_WINDOW = 20
 _SYNTHESIS_HISTORY_WINDOW = 12
-# Skills that must run in the final group (after all analysis skills complete).
-# Both assembler and wireframe_designer run in parallel within that final group —
-# wireframe_designer reads the 4 analysis skill outputs directly (not assembler output)
-# which is exactly what we want: deck generation without waiting for the assembler.
+# Skills that must run after all analysis skills complete, each in its own group and
+# in this order: the deck is built from the assembler's finished proposal.
+#
+# These two used to share one parallel group, on the reasoning that the deck should not
+# wait for the assembler. It cost nothing and bought nothing. `previous_outputs` is
+# snapshotted before a group runs, so a paired wireframe_designer can never see the
+# assembler however fast the assembler finishes — it fell back to the four raw analysis
+# outputs, and when those were thin the extractor did exactly as its prompt says and
+# skipped every slide it had no source for: one cover slide, 53 tokens, a two-page deck.
+# And with LLM_MAX_CONCURRENCY=1 the pair was serialised by the semaphore anyway, so
+# "parallel" was never buying the latency it was justified by.
 _ALWAYS_SEQUENTIAL: set[str] = {"proposal_assembler", "wireframe_designer"}
-# Fallback only: fires if wireframe_designer wasn't paired with assembler in the plan.
-# In normal flow both are injected together and _AUTO_AFTER never triggers.
+# The order they run in, one group each. Every code path that arranges the plan must
+# preserve this — the deck is rendered from the assembler's output.
+_SEQUENTIAL_ORDER: list[str] = ["proposal_assembler", "wireframe_designer"]
+# Fires when wireframe_designer is not already the group after the assembler.
 _AUTO_AFTER: dict[str, str] = {"proposal_assembler": "wireframe_designer"}
+# The deck group, injected on its own after proposal_assembler.
+_DECK_STEP: dict[str, str] = {
+    "skill": "wireframe_designer",
+    "task": "Generate HTML deck + PPTX from the assembled proposal",
+}
+
+
+def _insert_deck_after_assembler(
+    plan: list[list[dict[str, str]]],
+) -> list[list[dict[str, str]]]:
+    """Put the deck step in its own group directly after the assembler's group."""
+    out: list[list[dict[str, str]]] = []
+    for group in plan:
+        out.append(group)
+        if any(s.get("skill") == "proposal_assembler" for s in group):
+            out.append([dict(_DECK_STEP)])
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -282,9 +314,8 @@ def _build_contextual_skill_plan(
             plan.append([
                 {"skill": "proposal_assembler",
                  "task": f"Reassemble proposal incorporating: {task_short}"},
-                {"skill": "wireframe_designer",
-                 "task": "Generate HTML deck + PPTX from all skill outputs"},
             ])
+            plan.append([dict(_DECK_STEP)])
         return plan
 
     # Default: run all core skills
@@ -829,9 +860,8 @@ class CentralAgent:
                 print(f"[plan] intent={intent}: dropped {sorted(dropped)} — no deliverable requested")
             skill_plan = stripped or _build_contextual_skill_plan(state, message, intent)
 
-        # Safety net: inject assembler + wireframe as a paired parallel group if missing.
-        # Both run in parallel: assembler synthesizes the text response, wireframe_designer
-        # reads the 4 analysis skill outputs directly to build the deck (no assembler wait).
+        # Safety net: inject assembler, then the deck as its own following group, if
+        # missing. The order matters — see _ALWAYS_SEQUENTIAL.
         # `desired_outputs` is sticky for the whole session by design, so once a rep
         # has asked for a proposal every later turn tried to build one — including a
         # question about pricing or a request to rehearse an objection.
@@ -850,20 +880,11 @@ class CentralAgent:
                             "data reactivation strategy và báo giá chi tiết."
                         ),
                     },
-                    {
-                        "skill": "wireframe_designer",
-                        "task": "Generate HTML deck + PPTX from all skill outputs",
-                    },
                 ])
+                skill_plan.append([dict(_DECK_STEP)])
             elif "wireframe_designer" not in _pa_in_plan:
-                # assembler is already in the plan but wireframe is missing — pair them
-                skill_plan = [
-                    (group + [{"skill": "wireframe_designer",
-                               "task": "Generate HTML deck + PPTX from all skill outputs"}])
-                    if any(s.get("skill") == "proposal_assembler" for s in group)
-                    else group
-                    for group in skill_plan
-                ]
+                # assembler is already in the plan — insert the deck as the group after it
+                skill_plan = _insert_deck_after_assembler(skill_plan)
 
         # Snapshot which skills already ran in PRIOR turns (before this execution)
         prior_skill_names: set[str] = set(state.outputs.keys())
@@ -991,7 +1012,18 @@ class CentralAgent:
                             content=out.content,
                             confidence=out.confidence,
                         )
-                        yield {"type": "agent_status", "agent": skill_name, "status": "completed"}
+                        # A skill that returned FAILED used to be announced as
+                        # "completed" — the rate-limited run that produced nothing showed
+                        # a full row of green ticks, and only the final message admitted
+                        # anything was wrong. The status event carries the real status.
+                        if out.status == "COMPLETE":
+                            yield {"type": "agent_status", "agent": skill_name,
+                                   "status": "completed"}
+                        else:
+                            print(f"[CentralAgent] {skill_name} returned {out.status}: "
+                                  f"{(out.summary or '')[:120]}")
+                            yield {"type": "agent_status", "agent": skill_name,
+                                   "status": "failed", "message": out.summary}
                     except asyncio.TimeoutError:
                         print(f"[CentralAgent] Skill {skill_name} timed out after {_SKILL_TIMEOUT_S}s")
                         yield {"type": "agent_status", "agent": skill_name, "status": "failed",
@@ -1132,6 +1164,17 @@ class CentralAgent:
         """
         try:
             return await self._plan(state, message)
+        except json.JSONDecodeError as e:
+            # The provider answered; we just could not read the answer. That is not an
+            # outage, and telling the rep it is one ends the turn with nothing when the
+            # contextual plan below would have served them perfectly well. Measured on
+            # the live box: two turns in three ended this way on a malformed escape.
+            print(f"[CentralAgent] plan JSON unreadable ({e}) — falling back to contextual plan")
+            return {
+                "brief_update": {},
+                "needs_clarification": False,
+                "skill_plan": _build_contextual_skill_plan(state, message),
+            }
         except Exception as e:
             # Flag it. Previously this returned a normal "execute" result, so a dead
             # provider was indistinguishable from a real plan — the turn fell through
@@ -1213,7 +1256,7 @@ class CentralAgent:
         raw = strip_think_blocks(raw)
         raw = extract_json_block(raw)
 
-        result = json.loads(raw)
+        result = loads_lenient(raw)
 
         # Option B: allow up to 2 clarification rounds, then always execute.
         # Round 0 (0 assistant turns): may clarify if info missing.
@@ -1252,20 +1295,11 @@ class CentralAgent:
                             "data reactivation strategy và báo giá chi tiết."
                         ),
                     },
-                    {
-                        "skill": "wireframe_designer",
-                        "task": "Generate HTML deck + PPTX from all skill outputs",
-                    },
                 ])
+                result["skill_plan"].append([dict(_DECK_STEP)])
             elif "wireframe_designer" not in _planned_skills:
-                # assembler is already in the LLM plan but wireframe is missing — pair into same group
-                result["skill_plan"] = [
-                    (group + [{"skill": "wireframe_designer",
-                               "task": "Generate HTML deck + PPTX from all skill outputs"}])
-                    if any(s.get("skill") == "proposal_assembler" for s in group)
-                    else group
-                    for group in result["skill_plan"]
-                ]
+                # assembler is already in the LLM plan — deck goes in the group after it
+                result["skill_plan"] = _insert_deck_after_assembler(result["skill_plan"])
 
         # Safety net: if LLM returned execute but no skill_plan, build from session state.
         if not result.get("needs_clarification") and not result.get("skill_plan"):
@@ -1285,8 +1319,13 @@ class CentralAgent:
             if not result["skill_plan"]:
                 result["skill_plan"] = _build_contextual_skill_plan(state, message)
 
-            # Enforce sequential skills: pull them out of any mixed group and
-            # append them as their own final group so they always run after others.
+            # Enforce sequential skills: pull them out of any mixed group and append
+            # them after the others — one group each, in _SEQUENTIAL_ORDER.
+            #
+            # This used to collapse them into a single final group, which silently
+            # undid every attempt upstream to order the assembler before the deck: the
+            # deck was rebuilt into the assembler's own group and so never saw the
+            # proposal it is supposed to render. Ordering here is the last word.
             plan = result["skill_plan"]
             sequential_entries: list[dict] = []
             cleaned: list[list[dict]] = []
@@ -1296,8 +1335,10 @@ class CentralAgent:
                 if regular:
                     cleaned.append(regular)
                 sequential_entries.extend(pulled)
-            if sequential_entries:
-                cleaned.append(sequential_entries)
+            for skill_name in _SEQUENTIAL_ORDER:
+                step = [s for s in sequential_entries if s.get("skill") == skill_name]
+                if step:
+                    cleaned.append(step[:1])  # a duplicate entry is a planner artefact
             result["skill_plan"] = cleaned
 
         return result
@@ -1629,6 +1670,11 @@ Your job: respond ONLY to what they asked about in the Current Request.
 - Language: match the user's language (Vietnamese if they wrote in Vietnamese).
 - Do NOT mention "skill", "agent", "module", or internal pipeline names.
 
+NEVER INVENT SLIDE CONTENTS. If a deck was built, its real slide list is in the
+context under the deck output — describe those slides and no others. If it says DECK
+NOT BUILT, say the deck could not be built yet and to retry shortly; never list slides
+or offer a download for a file that does not exist.
+
 YOU PRODUCE REAL FILES. This system generates an AdtimaBox-branded HTML deck and a
 downloadable PPTX, delivered as "View Deck" and "Download PPTX" buttons in the chat.
 Claiming "mình là AI chạy trên nền tảng chat nên không xuất được file" is FALSE and a
@@ -1667,10 +1713,26 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                     history_lines.append(f"Assistant: {content}")
             history_block = "\n\n".join(history_lines)
 
+            # "Deck có mấy slide?" usually arrives on a turn that runs no skills, so the
+            # only deck facts in the prompt would be whatever the transcript happens to
+            # mention — and the model filled the gap by inventing a table of contents.
+            # The manifest wireframe_designer wrote is on the session; put it back in.
+            deck_block = ""
+            if "wireframe_designer" not in skill_outputs:
+                prior_deck = (state.outputs or {}).get("wireframe_designer")
+                prior_content = (
+                    prior_deck.get("content", "")
+                    if isinstance(prior_deck, dict)
+                    else getattr(prior_deck, "content", "")
+                ) or ""
+                if prior_content:
+                    deck_block = f"\n\n## Deck Built Earlier This Session\n{prior_content}"
+
             user_msg = (
                 f"## Conversation So Far\n{history_block}\n\n"
                 f"## Current Request\n{original_message}\n\n"
-                f"## New Analysis (respond based on this)\n{outputs_block}\n\n"
+                f"## New Analysis (respond based on this)\n{outputs_block}"
+                f"{deck_block}\n\n"
                 "Respond directly to the Current Request. Be thorough on the specific topics asked. "
                 "Do not repeat what was already covered in the previous response."
             )
@@ -2028,7 +2090,9 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                 ),
             )
             raw = strip_think_blocks(response.choices[0].message.content or "{}")
-            return json.loads(extract_json_block(raw))
+            # Lenient: this extracts Vietnamese brief fields, which is exactly where the
+            # invalid-escape replies show up, and the except below drops the brief silently.
+            return loads_lenient(extract_json_block(raw))
         except Exception:
             return {}
 

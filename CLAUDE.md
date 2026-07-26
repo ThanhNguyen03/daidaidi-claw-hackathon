@@ -83,6 +83,19 @@ ingest, but nothing needs it.
 for a lookup or a coaching turn. It classifies correctly and plans an assembler
 anyway. Render skills are stripped in code after the plan comes back.
 
+**The deck renders the assembler's output, so it runs after it.** `proposal_assembler`
+and `wireframe_designer` get one plan group each, in `_SEQUENTIAL_ORDER`. They used to
+share a group, justified as "the deck should not wait for the assembler" — it waited
+anyway (`LLM_MAX_CONCURRENCY=1` serialises the pair) and `previous_outputs` is
+snapshotted before a group runs, so the deck could never see the assembler no matter
+who finished first. It fell back to the raw analysis outputs, and thin input does not
+make a thin deck: extraction is told to skip any slide it has no source for, so it
+returned one cover slide.
+
+Four code paths arrange that plan. The arrangement pass at the end of `_plan` is the
+last word — it used to collapse every sequential skill into a single final group and
+silently undid the other three.
+
 ---
 
 ## Adding a skill
@@ -213,7 +226,27 @@ Present, unreferenced, and safe to delete when someone has time. Roughly 1,500 l
   session that generated a deck silently stopped being saved.
 - **A degraded artifact must announce itself.** Slide extraction falls back to a bare
   cover-and-closing scaffold and used to report success, so the first sign of trouble
-  was a rep opening a two-page proposal.
+  was a rep opening a two-page proposal. It also returned `content=""`, so the answer
+  writer knew nothing about the deck and invented a seven-slide table of contents for a
+  file that held two. A skill that builds something reports what it actually built.
+- **A skill that returns FAILED is not "completed".** The `agent_status` event said
+  completed whenever the coroutine returned without raising, so a run where all five
+  skills 429'd their way to `RetryError` showed the rep a full column of green ticks and
+  only the final message admitted otherwise.
+- **`LLM_RETRY_ATTEMPTS` governed nothing that mattered.** The non-streaming retry
+  decorator carried a hardcoded 5 attempts and a 30s ceiling, and every skill call is
+  non-streaming — so the one knob documented for a rate-limited tier only ever reached
+  the synthesis handshake. Both paths read the env vars now.
+- **A JSON parse failure is not a provider outage.** Every exception around the planner
+  call was reported to the rep as one, ending the turn with nothing. Gemini writing
+  Vietnamese emits the occasional malformed `\u` escape — two turns in three died that
+  way — so `skills/base.py:loads_lenient` repairs the escapes and a `JSONDecodeError`
+  now falls through to the contextual plan. Only transport errors are an outage.
+- **Never re-import a module-level name inside a function.** A `from checkpoint.manager
+  import get_checkpoint_manager` in one branch of `checkpoint_decision` made the name
+  local for the whole function, so the unconditional call below it raised
+  `UnboundLocalError` and `POST /checkpoint/{id}/decision` returned 500 every time. The
+  UI uses `/workflow/interact`, which is why nobody noticed.
 - **`desired_outputs` is sticky for the session.** Once a proposal is requested, every
   later turn tries to build one unless the intent guard stops it.
 - **Next.js standalone binds to `$HOSTNAME`**, which Docker sets to the container ID —

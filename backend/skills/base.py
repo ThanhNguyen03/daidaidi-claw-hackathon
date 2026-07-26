@@ -8,6 +8,7 @@ A skill is a focused executor: receives context + task, executes, returns struct
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from abc import ABC, abstractmethod
@@ -37,6 +38,37 @@ def extract_json_block(text: str) -> str:
     if match:
         return match.group(1).strip()
     return text.strip()
+
+
+# A backslash that starts no legal JSON escape. Gemini produces these while writing
+# Vietnamese — a truncated "\u1EA" or a stray "\d" inside a string — and json.loads
+# then rejects the entire reply with "Invalid \uXXXX escape". Measured on the planner
+# call: two turns in three died that way and were reported to the rep as a provider
+# outage, which is both wrong and unactionable.
+_BAD_ESCAPE = re.compile(r'\\(?:u(?![0-9a-fA-F]{4})|[^"\\/bfnrtu])')
+
+
+def repair_json_escapes(text: str) -> str:
+    """Double any backslash that is not a valid JSON escape, so the value survives as
+    literal text instead of taking the whole document down with it."""
+    return _BAD_ESCAPE.sub(lambda m: '\\' + m.group(0), text)
+
+
+def loads_lenient(text: str):
+    """json.loads, retried once with invalid escapes repaired.
+
+    Kept separate from a bare json.loads so callers keep the strict error when the
+    reply is genuinely malformed rather than merely badly escaped.
+    """
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        repaired = repair_json_escapes(text)
+        if repaired == text:
+            raise
+        result = json.loads(repaired)
+        print("[json] recovered a reply that had invalid escape sequences")
+        return result
 
 
 class SkillContext(BaseModel):
