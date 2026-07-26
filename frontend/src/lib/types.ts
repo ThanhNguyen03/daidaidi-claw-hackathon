@@ -240,6 +240,47 @@ export interface SSEEvent {
 }
 
 // =============================================================================
+// Model & Quota Types
+// =============================================================================
+
+/** One model's declared ceilings and what this app has spent against them.
+ *  `used_*` is counted by the backend, not reported by Google — see ModelsResponse.caveat.
+ *  `limit_*` is null when the limits file declares no ceiling for that model. */
+export interface ModelInfo {
+  model: string;
+  state: 'ok' | 'unused' | 'rate_limited' | 'out_of_quota_today';
+  used_rpm: number;
+  used_rpd: number;
+  limit_rpm: number | null;
+  limit_rpd: number | null;
+  note: string;
+  successes: number;
+  rate_limits: number;
+  other_errors: number;
+  last_error: string;
+}
+
+export interface SkillModel {
+  skill: string;
+  /** What it will start on: override first, then MODEL_<NAME>. */
+  model: string;
+  /** What the environment says, which differs from `model` once overridden. */
+  configured: string | null;
+  overridden: boolean;
+  /** What actually served its last call — differs from `model` when a fallback fired. */
+  last_used: string | null;
+  chain: string[];
+}
+
+export interface ModelsResponse {
+  skills: SkillModel[];
+  models: ModelInfo[];
+  overrides: Record<string, string>;
+  fallback_chain: string[];
+  caveat: string;
+}
+
+// =============================================================================
 // UI State Types
 // =============================================================================
 

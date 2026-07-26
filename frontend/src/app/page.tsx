@@ -11,6 +11,7 @@ import React, { useState, useEffect } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { ChatWindow } from '../components/ChatWindow';
 import { ContextPanel } from '../components/ContextPanel';
+import { ModelPanel } from '../components/ModelPanel';
 import { MobileNav } from '../components/MobileNav';
 import { AttentionField } from '../components/AttentionField';
 import { useChat } from '../hooks/useChat';
@@ -33,6 +34,7 @@ export default function Home() {
 
   // Context panel state — open by default only on large screens
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
+  const [modelPanelOpen, setModelPanelOpen] = useState(false);
 
   // Sidebar state for responsive
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -254,8 +256,11 @@ export default function Home() {
           onToggle={() => setSidebarOpen(!sidebarOpen)}
           isDarkMode={isDarkMode}
           onToggleTheme={toggleTheme}
+          onOpenModelPanel={() => setModelPanelOpen(true)}
         />
       </div>
+
+      <ModelPanel isOpen={modelPanelOpen} onClose={() => setModelPanelOpen(false)} />
 
       {/* Main chat area */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden pt-14 md:pt-0 pb-16 md:pb-0">

@@ -83,6 +83,19 @@ ingest, but nothing needs it.
 for a lookup or a coaching turn. It classifies correctly and plans an assembler
 anyway. Render skills are stripped in code after the plan comes back.
 
+**The deck renders the assembler's output, so it runs after it.** `proposal_assembler`
+and `wireframe_designer` get one plan group each, in `_SEQUENTIAL_ORDER`. They used to
+share a group, justified as "the deck should not wait for the assembler" — it waited
+anyway (`LLM_MAX_CONCURRENCY=1` serialises the pair) and `previous_outputs` is
+snapshotted before a group runs, so the deck could never see the assembler no matter
+who finished first. It fell back to the raw analysis outputs, and thin input does not
+make a thin deck: extraction is told to skip any slide it has no source for, so it
+returned one cover slide.
+
+Four code paths arrange that plan. The arrangement pass at the end of `_plan` is the
+last word — it used to collapse every sequential skill into a single final group and
+silently undid the other three.
+
 ---
 
 ## Adding a skill
@@ -135,6 +148,34 @@ planner, selectors, four specialists, assembler and synthesis. Six concurrent
 requests draw a 429; a whole run on free tier produced 28 of them and failed four
 skills. Hence concurrency 1 and the long retry ceiling. Before a demo, either buy
 quota or run a session in advance and present that.
+
+**Requests-per-day is the limit that actually stops a demo, and retrying cannot fix
+it.** Measured 2026-07-26: `gemini-3.6-flash` at 25/20 RPD while
+`gemini-3.5-flash-lite` sat at 246/500, and the five skills pinned to 3.6-flash all
+failed while the two on flash-lite sailed through. So `LLM_FALLBACK_MODELS` moves a
+call to the next model once one is spent, and the 429 body is read to tell a
+per-minute limit (wait it out) from a per-day one (switch immediately — six attempts
+across three models would hit the 270s skill timeout before reaching the last).
+
+```
+LLM_FALLBACK_MODELS=gemini-3.5-flash-lite,gemini-3.5-flash
+```
+
+Which model each skill is on, what has been spent, and a picker to move a skill — or
+everything — elsewhere: `GET /models`, `POST /models/select`, and the Model & Quota
+panel behind the CPU icon in the sidebar. `agent_status` events carry the model that
+actually served the call, which is the only way to see a fallback having fired.
+
+The usage figures are **counted by this app**, in `llm/usage.py`. Google exposes no
+API for remaining quota — AI Studio's Rate Limit page is not reachable from code — so
+the ceilings are declared in `config/model_limits.yaml` (editable without a deploy,
+like `gate_fields.yaml`) and every count is a lower bound: the same key used from a
+browser is invisible here. The exception is the `out_of_quota_today` state, which is
+read straight out of a 429 that named a per-day limit.
+
+An override from the panel is in memory only and dies with the container. That is
+deliberate — it exists to get through the next few turns, while `MODEL_<NAME>` in
+`.env.production` stays the source of truth.
 
 ---
 
@@ -213,7 +254,27 @@ Present, unreferenced, and safe to delete when someone has time. Roughly 1,500 l
   session that generated a deck silently stopped being saved.
 - **A degraded artifact must announce itself.** Slide extraction falls back to a bare
   cover-and-closing scaffold and used to report success, so the first sign of trouble
-  was a rep opening a two-page proposal.
+  was a rep opening a two-page proposal. It also returned `content=""`, so the answer
+  writer knew nothing about the deck and invented a seven-slide table of contents for a
+  file that held two. A skill that builds something reports what it actually built.
+- **A skill that returns FAILED is not "completed".** The `agent_status` event said
+  completed whenever the coroutine returned without raising, so a run where all five
+  skills 429'd their way to `RetryError` showed the rep a full column of green ticks and
+  only the final message admitted otherwise.
+- **`LLM_RETRY_ATTEMPTS` governed nothing that mattered.** The non-streaming retry
+  decorator carried a hardcoded 5 attempts and a 30s ceiling, and every skill call is
+  non-streaming — so the one knob documented for a rate-limited tier only ever reached
+  the synthesis handshake. Both paths read the env vars now.
+- **A JSON parse failure is not a provider outage.** Every exception around the planner
+  call was reported to the rep as one, ending the turn with nothing. Gemini writing
+  Vietnamese emits the occasional malformed `\u` escape — two turns in three died that
+  way — so `skills/base.py:loads_lenient` repairs the escapes and a `JSONDecodeError`
+  now falls through to the contextual plan. Only transport errors are an outage.
+- **Never re-import a module-level name inside a function.** A `from checkpoint.manager
+  import get_checkpoint_manager` in one branch of `checkpoint_decision` made the name
+  local for the whole function, so the unconditional call below it raised
+  `UnboundLocalError` and `POST /checkpoint/{id}/decision` returned 500 every time. The
+  UI uses `/workflow/interact`, which is why nobody noticed.
 - **`desired_outputs` is sticky for the session.** Once a proposal is requested, every
   later turn tries to build one unless the intent guard stops it.
 - **Next.js standalone binds to `$HOSTNAME`**, which Docker sets to the container ID —

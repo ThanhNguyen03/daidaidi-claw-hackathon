@@ -875,7 +875,14 @@ async def process_with_central_agent(
     async for event in central_agent.run(state, message, resume=resume):
         etype = event.get("type", "")
         if etype not in ("done",):
-            if etype in ("content", "agent_message", "assistant_message", "question_card"):
+            # A checkpoint IS the turn's output — Chốt 1 and Chốt 2 deliberately hand
+            # the rep a card and nothing else. Leaving them off this list meant a
+            # perfectly successful confirmation stop was followed by "Mình đang gặp sự
+            # cố kỹ thuật", which is both wrong and alarming.
+            if etype in (
+                "content", "agent_message", "assistant_message",
+                "question_card", "checkpoint", "checkpoint_card", "proposal_assets",
+            ):
                 has_content = True
             yield _sse_data(event)
 
@@ -1135,6 +1142,77 @@ async def health_check():
     }
 
 
+class ModelSelectionRequest(BaseModel):
+    """Point a skill — or everything — at a specific model."""
+
+    model: Optional[str] = Field(
+        None, description="Model id to use. Null or empty clears the override."
+    )
+    agent: str = Field(
+        "*",
+        description=(
+            "Skill name to override, or '*' for all of them. A per-skill override "
+            "wins over the global one."
+        ),
+    )
+
+
+@app.get("/models")
+async def list_models():
+    """What model each skill is on, what it will fall back to, and how much of each
+    model's allowance this app has spent.
+
+    The usage numbers are counted locally — Google exposes no API for remaining quota
+    — so the response carries the caveat with it rather than leaving the UI to invent
+    a confidence it does not have.
+    """
+    from llm.greennode import (
+        LLM_FALLBACK_MODELS,
+        MODEL_MAPPING,
+        get_model_overrides,
+        resolve_model,
+    )
+    from llm.usage import get_tracker
+
+    tracker = get_tracker()
+    overrides = get_model_overrides()
+    skill_names = get_skill_registry().all_names() + ["central_agent", "deck_extractor"]
+
+    skills = []
+    for name in skill_names:
+        active = resolve_model(name)
+        skills.append({
+            "skill": name,
+            # What it starts on, what the environment says, and what actually served
+            # the last call — three different things the moment a fallback fires.
+            "model": active,
+            "configured": MODEL_MAPPING.get(name),
+            "overridden": name in overrides or "*" in overrides,
+            "last_used": tracker.last_model_for(name),
+            "chain": [active] + [m for m in LLM_FALLBACK_MODELS if m != active],
+        })
+
+    return {
+        "skills": skills,
+        "overrides": overrides,
+        "fallback_chain": LLM_FALLBACK_MODELS,
+        **tracker.snapshot(),
+    }
+
+
+@app.post("/models/select")
+async def select_model(request: ModelSelectionRequest):
+    """Switch models without a redeploy, for when one has run out of quota mid-demo."""
+    from llm.greennode import get_model_overrides, resolve_model, set_model_override
+
+    set_model_override(request.agent, request.model)
+    return {
+        "agent": request.agent,
+        "model": resolve_model(request.agent),
+        "overrides": get_model_overrides(),
+    }
+
+
 @app.post("/chat")
 async def chat(request: ChatRequest):
     """Chat endpoint - non-streaming."""
@@ -1284,7 +1362,16 @@ async def chat_stream(request: Request, payload: ChatRequest):
                     yield ": keepalive\n\n"
                     continue
                 if chunk != done_chunk:
-                    if '"type": "assistant_message"' in chunk or '"type": "agent_message"' in chunk or '"type": "content"' in chunk:
+                    # Same list as has_content above, for the same reason: a turn whose
+                    # entire output is a card has not failed.
+                    if any(
+                        f'"type": "{t}"' in chunk
+                        for t in (
+                            "assistant_message", "agent_message", "content",
+                            "question_card", "checkpoint", "checkpoint_card",
+                            "proposal_assets",
+                        )
+                    ):
                         assistant_emitted = True
                     # Restore real values on the way out. Only worth the string scan
                     # when this session actually has aliases.
@@ -2188,13 +2275,14 @@ async def checkpoint_decision(
     if not checkpoint or checkpoint.id != checkpoint_id:
         raise HTTPException(status_code=404, detail=f"Checkpoint not found: {checkpoint_id} (session has {checkpoint.id if checkpoint else 'none'})")
 
+    # No local re-import of get_checkpoint_manager here: a function-scoped import makes
+    # the name local for the whole function, so the module-level import at the top became
+    # invisible and the call below raised UnboundLocalError on every request — this route
+    # returned 500 unconditionally.
+    cpm = get_checkpoint_manager()
     if request.auto_approve:
-        from checkpoint.manager import get_checkpoint_manager
-
-        cpm = get_checkpoint_manager()
         cpm.set_auto_approve(session_id, checkpoint.action.type, True)
 
-    cpm = get_checkpoint_manager()
     updated = await cpm.process_decision(checkpoint, request.decision, request.params)
 
     if request.decision == "edit" and request.params:

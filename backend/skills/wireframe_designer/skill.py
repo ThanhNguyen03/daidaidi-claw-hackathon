@@ -26,6 +26,9 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _SKILL_MD = os.path.join(_HERE, "..", "..", "agents", "wireframe_designer_agent", "SKILL.md")
 _ARTIFACTS_DIR = os.path.join(_HERE, "..", "..", "data", "artifacts")
 
+# Below this, the input cannot be a proposal — see the guard in execute().
+_MIN_PROPOSAL_CHARS = 1200
+
 
 class WireframeDesignerSkill(BaseSkill):
     def __init__(self):
@@ -56,9 +59,9 @@ class WireframeDesignerSkill(BaseSkill):
 
         prev = context.previous_outputs or {}
 
-        # wireframe_designer runs in parallel with proposal_assembler, so assembler output
-        # is not yet available. Use the 4 analysis skill outputs directly (no truncation).
-        # If proposal_assembler already ran in a prior turn, prefer its synthesized content.
+        # The assembler runs in the group before this one, so its finished 7-section
+        # proposal is normally here — which is what the extraction prompt is written
+        # against. The four raw analysis outputs are the fallback for when it failed.
         proposal_content = prev.get("proposal_assembler", {}).get("content", "")
         if proposal_content and len(proposal_content) > 100:
             parts.append(f"## PROPOSAL DOCUMENT\n{proposal_content}")
@@ -111,22 +114,58 @@ class WireframeDesignerSkill(BaseSkill):
 
         # Extract slides ONCE — share result between HTML + PPTX to ensure consistency
         extractor = HTMLDeckGenerator()
-        try:
-            slides_data = await extractor._extract_slides_with_retry(proposal_content, brief_dict)
-        except Exception as e:
-            print(f"[WireframeDesigner] Slide extraction error: {e}")
-            slides_data = extractor._fallback_slides(brief_dict)
+        # Extraction is told never to invent content and to skip any slide type its input
+        # does not cover, so thin input does not produce a thin deck — it produces one
+        # cover slide. Measured: a brief-only input came back at 53 tokens, one slide.
+        # A real assembled proposal is upwards of 10k characters, so anything this short
+        # means the analysis upstream failed; say so rather than spend a call on a
+        # rate-limited tier to be told the same thing.
+        if len(proposal_content) < _MIN_PROPOSAL_CHARS:
+            print(
+                f"[WireframeDesigner] input too thin for a deck "
+                f"({len(proposal_content)} chars < {_MIN_PROPOSAL_CHARS}) — "
+                "skipping extraction, reporting degraded"
+            )
+            slides_data = []
+        else:
+            try:
+                slides_data = await extractor._extract_slides_with_retry(proposal_content, brief_dict)
+            except Exception as e:
+                print(f"[WireframeDesigner] Slide extraction error: {e}")
+                slides_data = extractor._fallback_slides(brief_dict)
+        slides_data = extractor._ensure_required_slides(slides_data, brief_dict)
 
         # Extraction failing leaves only the scaffold: a cover and a closing slide and
         # nothing between them. That used to be handed over as if it were a finished
         # deck, so the first sign of trouble was a rep opening a two-page proposal.
         # Say it out loud instead.
         content_slides = [s for s in slides_data if s.get("type") not in ("cover", "closing")]
-        degraded = len(content_slides) == 0
-        if degraded:
+        if not content_slides:
+            # A cover and a closing slide is not a deck. It used to be built, stored and
+            # offered behind "View Deck" and "Download PPTX" anyway, so the rep's first
+            # sign of trouble was opening a two-page proposal. Hand over nothing and say
+            # why: no artifact means no artifact to be misled by.
             print(
-                f"[WireframeDesigner] DEGRADED: no content slides extracted "
-                f"({len(slides_data)} scaffold slide(s) only) — deck has cover + closing only"
+                "[WireframeDesigner] no content slides extracted — not building a deck "
+                f"({len(slides_data)} scaffold slide(s) only)"
+            )
+            return SkillOutput(
+                skill=self.name,
+                status="FAILED",
+                payload={},
+                summary=(
+                    "⚠️ Chưa dựng được deck: bước trích nội dung slide không có gì để "
+                    "trích (thường do hết hạn mức gọi model ở các bước phân tích trước). "
+                    "Chạy lại lệnh tạo proposal sau ít phút."
+                ),
+                content=(
+                    "DECK NOT BUILT — slide-content extraction had no proposal content to "
+                    "work from, usually because the analysis skills were rate-limited. No "
+                    "deck file and no PPTX exist for this turn.\n"
+                    "Tell the rep plainly that the deck could not be built yet and to ask "
+                    "again in a few minutes. Do NOT describe, list or link any slide: "
+                    "there are none, and there is nothing to download."
+                ),
             )
 
         # 1. HTML deck — render only (no extra LLM call)
@@ -158,6 +197,24 @@ class WireframeDesignerSkill(BaseSkill):
             except Exception:
                 pass
 
+        # A factual manifest of what the deck actually contains. Without it the answer
+        # writer has no idea what was built — it was inventing slide lists ("Slide 3:
+        # Phân bổ ngân sách…") for a file that held a cover and a closing slide and
+        # nothing else. Telling a rep their deck has seven slides when it has two is
+        # worse than the empty deck. A deck with no content slides never reaches here;
+        # it returns FAILED above.
+        titles = []
+        for i, s in enumerate(slides_data, 1):
+            label = s.get("title") or s.get("brand") or s.get("type", "slide")
+            titles.append(f"  {i}. [{s.get('type', '?')}] {str(label)[:70]}")
+        manifest = (
+            f"DECK BUILT — {len(slides_data)} slides, available as an HTML deck and "
+            f"a downloadable PPTX via the buttons in the chat.\n"
+            "These are the actual slides. If you describe the deck, describe THESE "
+            "and nothing else — never invent a slide that is not on this list.\n"
+            + "\n".join(titles)
+        )
+
         return SkillOutput(
             skill=self.name,
             status="COMPLETE",
@@ -165,15 +222,8 @@ class WireframeDesignerSkill(BaseSkill):
                 "html_content": html_content,
                 "pptx_bytes": pptx_bytes,
                 "session_id": sid,
-                "degraded": degraded,
                 "slide_count": len(slides_data),
             },
-            summary=(
-                "⚠️ Deck chỉ dựng được trang bìa và trang kết — bước trích nội dung "
-                "slide thất bại (thường do hết hạn mức gọi model). Nội dung proposal "
-                "dạng văn bản vẫn đầy đủ; chạy lại lệnh tạo deck sau ít phút."
-                if degraded
-                else f"Đã tạo proposal deck ({len(slides_data)} slide, HTML + PPTX)"
-            ),
-            content="",  # no visible chat content — assets delivered via proposal_assets event
+            summary=f"Đã tạo proposal deck ({len(slides_data)} slide, HTML + PPTX)",
+            content=manifest,
         )

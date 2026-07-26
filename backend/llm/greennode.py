@@ -37,11 +37,14 @@ from openai import (
 )
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from dotenv import load_dotenv
+
+from llm.usage import get_tracker
 from tenacity import (
+    RetryError,
     retry,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
 
 # Load environment variables
@@ -95,6 +98,27 @@ LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "").strip()
 LLM_RETRY_ATTEMPTS = int(os.getenv("LLM_RETRY_ATTEMPTS", "6"))
 LLM_RETRY_MAX_WAIT_S = int(os.getenv("LLM_RETRY_MAX_WAIT_S", "60"))
 
+# Models to try, in order, once the configured one has spent its rate limit.
+#
+# Retrying is the wrong remedy for half of Gemini's free-tier limits. Requests-per-day
+# is the one that bites: measured on this key, gemini-3.6-flash sat at 25/20 RPD while
+# gemini-3.5-flash-lite was at 246/500 — so the five skills pointed at 3.6-flash could
+# not succeed at any point later that day no matter how long they waited, and the two
+# pointed at flash-lite sailed through. Waiting cannot buy back a daily quota; another
+# model can.
+#
+# A weaker model's answer beats no answer, and the swap is logged, so a thin section in
+# a proposal can be traced to it. Empty string disables fallback entirely. Deliberately
+# excludes gemini-3.1-pro-preview (429s immediately on free tier) and gemini-2.5-flash
+# (404s despite being advertised) — see the model table in CLAUDE.md.
+LLM_FALLBACK_MODELS: list[str] = [
+    m.strip()
+    for m in os.getenv(
+        "LLM_FALLBACK_MODELS", "gemini-3.5-flash-lite,gemini-3.5-flash"
+    ).split(",")
+    if m.strip()
+]
+
 # Per-agent/skill model mapping (from environment)
 MODEL_MAPPING = {
     # Legacy agent names (kept for backward compat)
@@ -123,9 +147,72 @@ MODEL_MAPPING = {
 }
 
 
+_TRANSIENT = (APITimeoutError, APIConnectionError, InternalServerError)
+
+
+def _is_daily_quota(exc: Exception) -> bool:
+    """Is this 429 a requests-per-DAY limit rather than a per-minute one?
+
+    Gemini names the limit it hit in the error body — `GenerateRequestsPerDayPer...`
+    versus `...PerMinute...`. The distinction decides the remedy: a per-minute limit
+    clears in under a minute, a per-day one does not clear until tomorrow, so retrying
+    it spends the caller's whole budget to arrive at the same 429.
+    """
+    text = str(exc).lower().replace(" ", "").replace("_", "")
+    return "perday" in text
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    if isinstance(exc, RateLimitError):
+        # Worth waiting for a per-minute limit; a daily one is handed straight to the
+        # caller so it can switch models instead.
+        return not _is_daily_quota(exc)
+    return isinstance(exc, _TRANSIENT)
+
+
 # =============================================================================
 # Client Class
 # =============================================================================
+
+
+# Runtime model overrides, set from the UI — `"*"` applies to every caller, a skill
+# name to just that one.
+#
+# In memory only, and deliberately: a picker is for getting through the next few
+# turns when a model has run dry, not for redefining the deployment. MODEL_<NAME> in
+# the environment stays the source of truth across a restart.
+_OVERRIDES: dict[str, str] = {}
+_OVERRIDE_LOCK = threading.Lock()
+
+
+def set_model_override(agent: str, model: str | None) -> None:
+    """Point one caller — or everything, with agent="*" — at a specific model.
+    Passing model=None clears that override."""
+    with _OVERRIDE_LOCK:
+        if model:
+            _OVERRIDES[agent] = model
+            print(f"[llm] model override: {agent} -> {model}")
+        elif agent in _OVERRIDES:
+            del _OVERRIDES[agent]
+            print(f"[llm] model override cleared for {agent}")
+
+
+def get_model_overrides() -> dict[str, str]:
+    with _OVERRIDE_LOCK:
+        return dict(_OVERRIDES)
+
+
+def resolve_model(agent: str) -> str:
+    """The model this caller will actually start with: its own override, then the
+    global override, then MODEL_<NAME> from the environment."""
+    with _OVERRIDE_LOCK:
+        if agent in _OVERRIDES:
+            return _OVERRIDES[agent]
+        if "*" in _OVERRIDES:
+            return _OVERRIDES["*"]
+    return MODEL_MAPPING.get(
+        agent, MODEL_MAPPING.get("sales_orchestrator", "MiniMax-M2.5")
+    )
 
 
 @dataclass
@@ -144,6 +231,17 @@ class GreenNodeClient:
         """Access to chat completions API."""
         return self._client.chat
 
+    def model_chain(self) -> list[str]:
+        """Models this call will try, in order.
+
+        Resolved per call rather than at client construction so an override taken
+        from the UI applies to the very next turn — clients are cached and handed out
+        by the factory, and a chain fixed at construction would ignore the picker
+        until a restart.
+        """
+        first = resolve_model(self.agent_name)
+        return [first] + [m for m in LLM_FALLBACK_MODELS if m != first]
+
     def create_completion(
         self,
         messages: list[dict[str, Any]],
@@ -158,8 +256,10 @@ class GreenNodeClient:
         Create a chat completion with retry logic for transient errors.
 
         Retry policy:
-        - 3 attempts with exponential backoff
-        - Retries on: timeout, 5xx errors, rate-limit errors
+        - LLM_RETRY_ATTEMPTS attempts, exponential backoff capped at LLM_RETRY_MAX_WAIT_S
+        - Retries on: timeout, connection failure, 5xx, per-minute rate limits
+        - Does NOT retry a per-day rate limit — falls through to the next model in
+          LLM_FALLBACK_MODELS instead, because tomorrow is not a backoff window
 
         Args:
             messages: List of message dicts with 'role' and 'content'
@@ -173,46 +273,94 @@ class GreenNodeClient:
         Returns:
             ChatCompletion (non-streaming) or Generator of ChatCompletionChunk (streaming)
         """
-        # Streaming can be retried too, as long as it is only the *opening* of the
-        # stream being retried — no chunk has been consumed yet, so nothing is
-        # duplicated. Previously this path had no retry at all, which meant a single
-        # 429 on the synthesis call ended the turn with no answer at all: the most
-        # visible call in the product was also the least protected.
-        if stream:
-            return self._open_stream_with_retry(
-                messages=messages,
-                tools=tools,
-                tool_choice=tool_choice,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                **kwargs,
-            )
+        # Try the configured model, then LLM_FALLBACK_MODELS, moving on only when a
+        # model has spent its whole retry budget on rate limits. Anything else — a bad
+        # request, a 404 model, a malformed reply — raises straight out: another model
+        # would fail the same way, and swallowing it would hide the real error.
+        chain = self.model_chain()
+        tracker = get_tracker()
+        last_error: Exception | None = None
 
-        # Use retry wrapper for non-streaming calls
-        return self._create_completion_with_retry(
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=False,
-            **kwargs,
-        )
+        for i, model in enumerate(chain):
+            try:
+                # Streaming can be retried too, as long as it is only the *opening* of
+                # the stream being retried — no chunk has been consumed yet, so nothing
+                # is duplicated. Previously this path had no retry at all, which meant a
+                # single 429 on the synthesis call ended the turn with no answer at all:
+                # the most visible call in the product was also the least protected.
+                if stream:
+                    opened = self._open_stream_with_retry(
+                        messages=messages,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        model=model,
+                        **kwargs,
+                    )
+                    # The handshake is as far as success can be judged here — the
+                    # tokens are consumed by the caller, long after this returns.
+                    tracker.record_success(model)
+                    return opened
+
+                result = self._create_completion_with_retry(
+                    messages=messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=False,
+                    model=model,
+                    **kwargs,
+                )
+                tracker.record_success(model)
+                return result
+            except (RetryError, RateLimitError) as e:
+                last_error = e
+                # RetryError wraps the 429 that ended the retry loop; the loop only
+                # ends that way for a per-minute limit, so unwrap to tell the two
+                # apart in the panel.
+                inner = (
+                    e.last_attempt.exception()
+                    if isinstance(e, RetryError) and e.last_attempt.failed
+                    else e
+                )
+                tracker.record_rate_limit(
+                    model, daily=_is_daily_quota(inner or e), detail=str(inner or e)
+                )
+                if i + 1 < len(chain):
+                    print(
+                        f"[llm] {self.agent_name}: {model} out of quota after "
+                        f"{LLM_RETRY_ATTEMPTS} attempts — switching to {chain[i + 1]}"
+                    )
+                else:
+                    print(
+                        f"[llm] {self.agent_name}: every model in the chain is out of "
+                        f"quota ({', '.join(chain)})"
+                    )
+            except Exception as e:
+                tracker.record_error(model, str(e))
+                raise
+
+        raise last_error  # type: ignore[misc]  # chain is never empty
 
     @retry(
-        stop=stop_after_attempt(5),
-        # Longer ceiling than the old 10s: a rate limit needs the quota window to roll
-        # over, and giving up after 10s just turns a wait into a failed turn.
-        wait=wait_exponential(multiplier=1.5, min=2, max=30),
+        # LLM_RETRY_ATTEMPTS/LLM_RETRY_MAX_WAIT_S, not the hardcoded 5 and 30 this used
+        # to carry. Every skill call is non-streaming, so those two env vars — documented
+        # as the knob for a rate-limited tier — governed nothing that mattered: raising
+        # them changed only the synthesis handshake while the four specialists still gave
+        # up after five tries and a 30s ceiling.
+        stop=stop_after_attempt(LLM_RETRY_ATTEMPTS),
+        # A rate limit needs the quota window to roll over, and giving up early just
+        # turns a wait into a failed turn.
+        wait=wait_exponential(multiplier=1.5, min=2, max=LLM_RETRY_MAX_WAIT_S),
         # openai raises APITimeoutError/APIConnectionError (not the builtin TimeoutError)
         # on request timeouts and connection failures.
         # RateLimitError was missing despite the docstring claiming it was covered — on a
         # free tier that fires constantly, and an unretried 429 kills the whole turn.
-        retry=retry_if_exception_type(
-            (APITimeoutError, APIConnectionError, RateLimitError, InternalServerError)
-        ),
+        retry=retry_if_exception(_is_retryable),
         before_sleep=lambda retry_state: print(
-            f"[llm] retry {retry_state.attempt_number}/5 after "
+            f"[llm] retry {retry_state.attempt_number}/{LLM_RETRY_ATTEMPTS} after "
             f"{type(retry_state.outcome.exception()).__name__}"
         ),
     )
@@ -240,11 +388,9 @@ class GreenNodeClient:
     @retry(
         stop=stop_after_attempt(LLM_RETRY_ATTEMPTS),
         wait=wait_exponential(multiplier=2, min=4, max=LLM_RETRY_MAX_WAIT_S),
-        retry=retry_if_exception_type(
-            (APITimeoutError, APIConnectionError, RateLimitError, InternalServerError)
-        ),
+        retry=retry_if_exception(_is_retryable),
         before_sleep=lambda retry_state: print(
-            f"[llm] stream retry {retry_state.attempt_number}/5 after "
+            f"[llm] stream retry {retry_state.attempt_number}/{LLM_RETRY_ATTEMPTS} after "
             f"{type(retry_state.outcome.exception()).__name__}"
         ),
     )
@@ -285,6 +431,12 @@ class GreenNodeClient:
             "temperature": temperature,
             "stream": stream,
         }
+        # Counted here rather than in create_completion so retries count too: five
+        # attempts against a rate-limited model are five requests as far as the
+        # provider's allowance is concerned, and a panel that showed one would explain
+        # nothing about why the allowance ran out.
+        get_tracker().record_attempt(str(kwargs.get("model") or self.model_path),
+                                     self.agent_name)
 
         if tools:
             params["tools"] = tools
@@ -377,11 +529,9 @@ class GreenNodeLLM:
         Raises:
             ValueError: If agent_name is not recognized
         """
-        # Fall back to sales_orchestrator model for unknown agents rather than crashing
-        model_path = MODEL_MAPPING.get(
-            agent_name,
-            MODEL_MAPPING.get("sales_orchestrator", "MiniMax-M2.5"),
-        )
+        # Unknown agents fall back to the sales_orchestrator model rather than crashing.
+        # resolve_model also applies any override set from the UI.
+        model_path = resolve_model(agent_name)
 
         return GreenNodeClient(
             agent_name=agent_name,
