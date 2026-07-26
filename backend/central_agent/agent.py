@@ -240,16 +240,28 @@ Example — a pricing lookup. Note: no clarification, one skill, no brief demand
 # Context-aware skill plan builder (uses accumulated brief + history)
 # ---------------------------------------------------------------------------
 
-def _build_contextual_skill_plan(state, message: str) -> list[list[dict[str, str]]]:
+def _build_contextual_skill_plan(
+    state, message: str, intent: str = "brief"
+) -> list[list[dict[str, str]]]:
     """Fallback plan builder used when the planning LLM fails or returns an empty plan.
 
     Priority:
-    1. Prior outputs exist → re-run those same skills (they were contextually chosen)
-    2. History exists but no prior outputs → run all registered non-sequential skills
-    3. Fresh session → run all registered non-sequential skills (safe default)
+    1. Intent is conversational → the single skill that owns the answer
+    2. Prior outputs exist → re-run those same skills (they were contextually chosen)
+    3. History exists but no prior outputs → run all registered non-sequential skills
+    4. Fresh session → run all registered non-sequential skills (safe default)
     """
     from skills.registry import get_skill_registry
     task_short = message[:400]
+
+    # Reusing whatever ran earlier is right for a follow-up on the same brief and
+    # wrong for everything else. In a session that had already produced a proposal,
+    # "đóng vai khách phản biện giúp mình" inherited the assembler and the deck
+    # generator and put an approval card in front of a roleplay request.
+    if intent == "coaching":
+        return [[{"skill": "client_simulator", "task": task_short}]]
+    if intent == "lookup":
+        return [[{"skill": "product_solution", "task": task_short}]]
     # Sequential skills are excluded from the analysis group and injected
     # as their own final parallel group (assembler + wireframe run together).
     _SEQUENTIAL = {"proposal_assembler", "wireframe_designer"}
@@ -781,12 +793,37 @@ class CentralAgent:
         skill_plan: list[list[dict]] = assessment.get("skill_plan") or []
 
         if not skill_plan:
-            skill_plan = _build_contextual_skill_plan(state, message)
+            skill_plan = _build_contextual_skill_plan(state, message, intent)
+
+        # The planner is told not to build deliverables for a lookup or a coaching
+        # turn, and still does — it classified this one "coaching" and then planned an
+        # assembler and a deck anyway. Instruction is not enforcement: strip them here
+        # so a rehearsal request cannot silently spend two minutes rendering a PPTX
+        # nobody asked for.
+        if conversational:
+            stripped = [
+                [s for s in group if s.get("skill") not in _ALWAYS_SEQUENTIAL]
+                for group in skill_plan
+            ]
+            stripped = [g for g in stripped if g]
+            if stripped != skill_plan:
+                dropped = {
+                    s.get("skill")
+                    for group in skill_plan
+                    for s in group
+                    if s.get("skill") in _ALWAYS_SEQUENTIAL
+                }
+                print(f"[plan] intent={intent}: dropped {sorted(dropped)} — no deliverable requested")
+            skill_plan = stripped or _build_contextual_skill_plan(state, message, intent)
 
         # Safety net: inject assembler + wireframe as a paired parallel group if missing.
         # Both run in parallel: assembler synthesizes the text response, wireframe_designer
         # reads the 4 analysis skill outputs directly to build the deck (no assembler wait).
-        if ("proposal" in state.desired_outputs
+        # `desired_outputs` is sticky for the whole session by design, so once a rep
+        # has asked for a proposal every later turn tried to build one — including a
+        # question about pricing or a request to rehearse an objection.
+        if (not conversational
+                and "proposal" in state.desired_outputs
                 and not assessment.get("needs_clarification")
                 and "proposal_assembler" not in state.outputs):
             _pa_in_plan = {s.get("skill") for g in skill_plan for s in g}
@@ -845,10 +882,24 @@ class CentralAgent:
             is_render_group = any(
                 s.get("skill") in ("proposal_assembler", "wireframe_designer") for s in group
             )
-            if is_render_group and "confirm_solution" not in state.confirmed_stages:
+            # Same rule as Chốt 1: a lookup or a coaching turn has no client solution
+            # to approve. The fallback plan reuses whatever skills ran earlier in the
+            # session, so asking to rehearse an objection inside a session that had
+            # already built a proposal dragged the render group back in and put an
+            # approval card in front of a roleplay request.
+            if is_render_group and not conversational and "confirm_solution" not in state.confirmed_stages:
                 merged_now = dict(state.outputs)
                 merged_now.update(all_outputs)
                 checkpoint = _build_solution_checkpoint(state, merged_now)
+
+                # Nothing to approve if the analysis produced nothing — which happens
+                # when the skills were rate-limited. An empty card asking "duyệt hướng
+                # giải pháp?" above three blank rows is worse than no card.
+                preview = checkpoint.preview or {}
+                if not any((preview.get(k) or "").strip() for k in ("strategy", "solution", "compliance")):
+                    print("[checkpoint] CHOT 2 skipped — no analysis content to confirm")
+                    break
+
                 state.checkpoint = checkpoint
                 print("[checkpoint] CHOT 2 raised — awaiting solution confirmation")
                 yield {"type": "checkpoint", "checkpoint": checkpoint.model_dump(mode="json")}
@@ -988,7 +1039,7 @@ class CentralAgent:
         })
         _msg_lower = message.lower()
         _is_deck_request = any(kw in _msg_lower for kw in _DECK_REQUEST_KWS)
-        if _is_deck_request and "wireframe_designer" not in all_outputs:
+        if _is_deck_request and not conversational and "wireframe_designer" not in all_outputs:
             prior_pa = state.outputs.get("proposal_assembler")
             if (prior_pa and _safe_field(prior_pa, "status", "") == "COMPLETE"
                     and _safe_field(prior_pa, "content", "")):
