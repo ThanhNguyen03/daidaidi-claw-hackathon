@@ -414,9 +414,14 @@ export function ChatWindow({
     if (!container) return;
 
     const { scrollTop, scrollHeight, clientHeight } = container;
-    const atBottom = scrollHeight - scrollTop - clientHeight < 150;
-    isAtBottomRef.current = atBottom;
-    setShowScrollButton(!atBottom);
+    const distance = scrollHeight - scrollTop - clientHeight;
+
+    // Asymmetric thresholds. Leaving the bottom is easy — any real scroll up hands
+    // control back to the reader. Re-engaging needs them to come all the way down.
+    // With one 150px threshold, scrolling down through a streaming answer crossed
+    // back into "at bottom" early and the auto-scroll yanked them to the end.
+    isAtBottomRef.current = isAtBottomRef.current ? distance < 220 : distance < 32;
+    setShowScrollButton(distance > 220);
   };
 
   const scrollToBottom = () => {
@@ -496,7 +501,15 @@ export function ChatWindow({
       )}
 
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto min-h-0 relative" ref={messagesContainerRef} onScroll={handleScroll}>
+      {/* overflow-anchor lets the browser hold the reader's position when content
+          above them changes height — which is exactly what happens when a streamed
+          block finishes and re-renders into a diagram or a table. */}
+      <div
+        className="flex-1 overflow-y-auto min-h-0 relative"
+        style={{ overflowAnchor: 'auto' }}
+        ref={messagesContainerRef}
+        onScroll={handleScroll}
+      >
         <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-8 py-3 md:py-4">
         {messages.length === 0 && (
           <div className="py-6 sm:py-10">
@@ -593,7 +606,10 @@ export function ChatWindow({
           />
         )}
 
-        <div ref={messagesEndRef} />
+        {/* The sentinel must opt out of scroll anchoring, or the browser picks this
+            zero-height element at the very bottom as its anchor and cancels out the
+            auto-scroll we do want while streaming. */}
+        <div ref={messagesEndRef} style={{ overflowAnchor: 'none' }} />
         </div>
 
         {/* Scroll to bottom button */}

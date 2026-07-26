@@ -213,15 +213,29 @@ function useDarkMode(): boolean {
   return isDark;
 }
 
-function MermaidDiagram({ chart }: { chart: string }) {
+function MermaidDiagram({ chart, isStreaming = false }: { chart: string; isStreaming?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(`mermaid-diag-${++_mermaidIdCounter}`);
   const isDarkMode = useDarkMode();
+  // Height of the last successful render, held while a re-render is in flight so
+  // the container does not collapse and shove everything below it upward.
+  const lastHeight = useRef<number>(0);
 
   useEffect(() => {
+    // A diagram half-written is not a diagram. While tokens are still arriving
+    // `chart` changes on every one of them, so this effect re-ran per token and
+    // swapped in a differently-sized SVG each time — every swap moved the content
+    // below it, which is the jump people see when scrolling a long answer.
+    // Wait for the message to finish, then render once.
+    if (isStreaming) return;
+
     let cancelled = false;
     (async () => {
       const cleaned = sanitizeMermaid(chart);
+      if (containerRef.current && containerRef.current.offsetHeight > 0) {
+        lastHeight.current = containerRef.current.offsetHeight;
+        containerRef.current.style.minHeight = `${lastHeight.current}px`;
+      }
       try {
         const mermaid = (await import('mermaid')).default;
         mermaid.initialize({
@@ -293,7 +307,24 @@ function MermaidDiagram({ chart }: { chart: string }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [chart, isDarkMode]);
+  }, [chart, isDarkMode, isStreaming]);
+
+  if (isStreaming) {
+    // Same box the finished diagram will occupy, so nothing shifts when it lands.
+    return (
+      <div
+        className="mermaid-diagram my-4 flex items-center justify-center"
+        style={{
+          minHeight: '80px',
+          background: 'var(--color-surface-2)',
+          borderRadius: '8px',
+          padding: '8px',
+        }}
+      >
+        <span className="text-[12px] text-text-muted">Đang dựng sơ đồ…</span>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -969,7 +1000,7 @@ const AGENT_NAMES: Record<string, string> = {
   system: 'System',
 };
 
-export function MessageBubble({ message, isGrouped = false, isStreaming = false }: MessageBubbleProps) {
+function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const agentName = message.agent ? AGENT_NAMES[message.agent] || message.agent : null;
@@ -1091,14 +1122,11 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
 
         // Mermaid diagrams
         if (el.props.className === 'language-mermaid') {
-          if (isStreaming) {
-            return (
-              <pre style={{ backgroundColor: 'var(--color-surface-2)', padding: '1rem', borderRadius: '8px', overflow: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0', whiteSpace: 'pre', overflowX: 'auto' }}>
-                <code>{rawContent}</code>
-              </pre>
-            );
-          }
-          return <MermaidDiagram chart={rawContent} />;
+          // Streaming used to show the raw source in a <pre> that grew line by line
+          // and was then replaced by a much shorter SVG. Everything below it moved up
+          // at that moment — that is the jump. A fixed-height placeholder keeps the
+          // space roughly constant across the swap.
+          return <MermaidDiagram chart={rawContent} isStreaming={isStreaming} />;
         }
 
         // ASCII charts — try on any non-mermaid block regardless of language tag.
@@ -1319,3 +1347,22 @@ export function MessageBubble({ message, isGrouped = false, isStreaming = false 
   );
 }
            
+
+/**
+ * Only the message that is actively streaming needs to re-render as tokens arrive.
+ * Without this, every token re-rendered every message in the thread — re-parsing all
+ * their markdown, re-running the ASCII-chart and pipe-table detectors, and forcing a
+ * full layout pass. On a long answer that is the jitter, and the relayout is what
+ * shifts content under the reader's cursor.
+ */
+export const MessageBubble = React.memo(
+  MessageBubbleInner,
+  (prev, next) =>
+    prev.message.content === next.message.content &&
+    prev.message.role === next.message.role &&
+    prev.message.agent === next.message.agent &&
+    prev.message.timestamp === next.message.timestamp &&
+    prev.isGrouped === next.isGrouped &&
+    prev.isStreaming === next.isStreaming
+);
+MessageBubble.displayName = 'MessageBubble';
