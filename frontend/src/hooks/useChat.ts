@@ -62,6 +62,7 @@ interface UseChatReturn {
   // Actions
   sendMessage: (message: string, brief?: Brief) => Promise<void>;
   answerQuestion: (questionId: string, answer: string) => Promise<void>;
+  answerAllQuestions: (answers: Record<string, string>) => Promise<void>;
   skipQuestion: (questionId: string) => Promise<void>;
   freeTextAnswer: (freeText: string) => Promise<void>;  // Day 3: C.5 §5
   revokeConstraint: (ruleId: string) => Promise<void>;  // Day 4: Revoke constraint
@@ -748,6 +749,44 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     [sessionId, sendMessage]
   );
 
+  // Submit every answer on the card in one request.
+  //
+  // The per-question version advanced the pipeline as soon as the first answer
+  // landed, which discarded the rest of the card. The card asks for several
+  // blocking fields at once precisely because they are needed together, so the
+  // commit has to be together too.
+  const answerAllQuestions = useCallback(
+    async (answers: Record<string, string>) => {
+      if (!sessionId || Object.keys(answers).length === 0) return;
+
+      setIsLoading(true);
+      try {
+        const response = await fetch(`${BACKEND_URL}/workflow/interact`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'answer', session_id: sessionId, answers }),
+        });
+        if (!response.ok) throw new Error('Failed to submit answers');
+
+        const data = await response.json();
+        if (data.brief) setBrief(data.brief);
+
+        const remaining = (data.questions as Question[]) ?? [];
+        setPendingQuestions(remaining);
+
+        if (remaining.length === 0) {
+          // Everything answered — let the pipeline pick up where it stopped.
+          await sendMessage('Tiếp tục');
+        }
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [sessionId, sendMessage]
+  );
+
   // Skip an optional question (Day 3: C.5 §6)
   const skipQuestion = useCallback(
     async (questionId: string) => {
@@ -1111,6 +1150,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     brainState,  // Day 7: Brainstorm state
     sendMessage,
     answerQuestion,
+    answerAllQuestions,
     skipQuestion,
     freeTextAnswer,
     revokeConstraint,  // Day 4

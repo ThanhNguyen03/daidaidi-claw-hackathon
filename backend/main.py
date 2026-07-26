@@ -1536,6 +1536,11 @@ class WorkflowInteractionRequest(BaseModel):
     session_id: Optional[str] = None
     question_id: Optional[str] = None
     answer: Optional[str] = None
+    # Several answers at once, keyed by question id. The card shows every blocking
+    # field together, so the rep fills them in together — submitting one at a time
+    # meant the first pick immediately advanced the pipeline and the rest of the
+    # card was discarded. `question_id`/`answer` still work for single answers.
+    answers: Optional[dict[str, str]] = None
     message: Optional[str] = None
     salesperson_id: Optional[str] = None
     checkpoint_id: Optional[str] = None
@@ -1711,11 +1716,34 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
     Unified FE workflow endpoint.
     """
     if payload.action == "answer":
-        if not payload.session_id or not payload.question_id or payload.answer is None:
-            raise HTTPException(status_code=400, detail="session_id, question_id, and answer are required")
+        if not payload.session_id:
+            raise HTTPException(status_code=400, detail="session_id is required")
+        if not payload.answers and (not payload.question_id or payload.answer is None):
+            raise HTTPException(
+                status_code=400,
+                detail="either answers, or question_id and answer, are required",
+            )
 
         state = await get_session_or_404(payload.session_id)
         orchestrator = get_central_agent()
+
+        # Batch: the whole card submitted in one go.
+        if payload.answers:
+            validation_output = await orchestrator.handle_validation_response(
+                state, dict(payload.answers)
+            )
+            update_session(state)
+            await persist_session_best_effort(state, "workflow.answer batch")
+            remaining_questions = [q for q in state.question_stack if not q.answered]
+            answered = len(payload.answers)
+            print(f"[questions] {answered} answered in one submit, "
+                  f"{len(remaining_questions)} left")
+            return {
+                "status": "ready" if not remaining_questions else "pending",
+                "message": f"Đã ghi nhận {answered} câu trả lời.",
+                "questions": [q.model_dump(mode="json") for q in remaining_questions],
+                **serialize_workflow_state(state),
+            }
 
         if payload.question_id == "desired_output":
             outputs = await orchestrator.extract_desired_outputs(payload.answer)

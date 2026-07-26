@@ -349,6 +349,67 @@ def _build_solution_checkpoint(state, outputs):
     )
 
 
+_VND_UNITS = (
+    ("tỷ", 1_000_000_000), ("ty", 1_000_000_000), ("tỉ", 1_000_000_000),
+    ("triệu", 1_000_000), ("trieu", 1_000_000), ("tr", 1_000_000),
+    ("nghìn", 1_000), ("nghin", 1_000), ("k", 1_000),
+)
+
+
+def _parse_vnd(value: Any) -> Optional[int]:
+    """Read a budget out of the way a Vietnamese rep actually writes one.
+
+    Handles "300 triệu", "1.5 tỷ", "200 - 500 triệu", "Dưới 100 triệu",
+    "500,000,000" and a bare integer. A range collapses to its midpoint: the top
+    of the range risks quoting a client out of the deal, the bottom under-serves
+    them, and the original phrasing is preserved in additional_context anyway so
+    the pricing skill can still see the spread.
+
+    Returns None when there is no number to find — "chưa chốt" is an answer, not
+    a parse failure, and must not be turned into a fabricated figure.
+    """
+    if isinstance(value, (int, float)):
+        return int(value) or None
+
+    text = str(value).lower().strip()
+    if not text:
+        return None
+
+    # Pair each number with the unit written right after it. A single multiplier
+    # for the whole string breaks on mixed ranges: "500 triệu - 1 tỷ" would take
+    # "tỷ" for both and land two orders of magnitude out.
+    unit_pattern = "|".join(re.escape(t) for t, _ in _VND_UNITS)
+    matches = re.findall(rf"(\d[\d.,]*)\s*({unit_pattern})?", text)
+
+    parsed: list[tuple[float, Optional[int]]] = []
+    for raw, unit in matches:
+        cleaned = raw.rstrip(".,")
+        if not cleaned:
+            continue
+        if re.fullmatch(r"\d{1,3}([.,]\d{3})+", cleaned):
+            cleaned = re.sub(r"[.,]", "", cleaned)       # 1.500.000 -> 1500000
+        else:
+            cleaned = cleaned.replace(",", ".")          # 1,5 -> 1.5
+        try:
+            number = float(cleaned)
+        except ValueError:
+            continue
+        factor = next((f for t, f in _VND_UNITS if t == unit), None) if unit else None
+        parsed.append((number, factor))
+
+    if not parsed:
+        return None
+
+    # A bare number in a range borrows the unit of its neighbour: in
+    # "200 - 500 triệu" the 200 is plainly also in millions.
+    known = [f for _, f in parsed if f]
+    fallback = known[0] if known else 1
+    amounts = [n * (f or fallback) for n, f in parsed]
+
+    amount = sum(amounts[:2]) / 2 if len(amounts) >= 2 else amounts[0]
+    return int(amount) or None
+
+
 _GANTT_DATE_RE = re.compile(r'\d{4}-\d{2}-\d{2}')
 _GANTT_YEAR_RE = re.compile(r'\b(\d{4})\b')
 
@@ -1696,18 +1757,28 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
         elif field == "target_audience" and not brief.target_audience:
             brief.target_audience = str(value)
         elif field == "budget_vnd" and not brief.budget_vnd:
-            try:
-                brief.budget_vnd = int(str(value).replace(",", "").replace(".", "").strip())
-            except (ValueError, TypeError):
-                pass
+            # Answers arrive as human phrases — "200 - 500 triệu", "Trên 1 tỷ" — from
+            # the choice chips as much as from typing. int() on those raised and was
+            # swallowed, so a budget the rep had explicitly picked never reached the
+            # brief and the gate kept asking for it.
+            parsed = _parse_vnd(value)
+            if parsed:
+                brief.budget_vnd = parsed
+            # Keep the phrasing either way: a range carries intent that one number
+            # cannot, and "chưa chốt" is itself worth telling the pricing skill.
+            brief.additional_context = (
+                (brief.additional_context or "") + f" Ngân sách khách nói: {value}."
+            ).strip()
         elif field == "timeline" and not brief.timeline:
             brief.timeline = str(value)
         elif field == "additional_context":
             brief.additional_context = ((brief.additional_context or "") + " " + str(value)).strip()
-        elif field == "specific_requirements" and isinstance(value, list):
-            brief.specific_requirements = list(brief.specific_requirements or []) + value
-        elif field == "constraints" and isinstance(value, list):
-            brief.constraints = list(brief.constraints or []) + value
+        elif field in ("specific_requirements", "constraints"):
+            # A chip answers with a string; only the LLM path produces a list. The
+            # list-only check silently dropped every chip for these two fields.
+            incoming = value if isinstance(value, list) else [str(value)]
+            current = list(getattr(brief, field) or [])
+            setattr(brief, field, current + [v for v in incoming if v not in current])
 
     async def _extract_brief_from_text(self, state: SalesCaseState, text: str) -> dict:
         from llm.greennode import get_llm_client

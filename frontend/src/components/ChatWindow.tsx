@@ -20,7 +20,7 @@ interface ChatWindowProps {
   activeCheckpoint: Checkpoint | null;
   mode: ChatMode;
   onSendMessage: (message: string, brief?: Brief) => void;
-  onAnswerQuestion: (questionId: string, answer: string) => void;
+  onAnswerAllQuestions: (answers: Record<string, string>) => void;
   onSkipQuestion?: (questionId: string) => void;
   onFreeTextAnswer?: (freeText: string) => void;
   onApproveCheckpoint: () => void;
@@ -252,7 +252,7 @@ export function ChatWindow({
   activeCheckpoint,
   mode,
   onSendMessage,
-  onAnswerQuestion,
+  onAnswerAllQuestions,
   onSkipQuestion,
   onFreeTextAnswer,
   onApproveCheckpoint,
@@ -444,7 +444,7 @@ export function ChatWindow({
         {pendingQuestions.length > 0 && (
           <QuestionCard
             questions={pendingQuestions}
-            onAnswer={onAnswerQuestion}
+            onAnswerAll={onAnswerAllQuestions}
             onSkip={onSkipQuestion || (() => {})}
             onFreeTextAnswer={onFreeTextAnswer || ((_ft: string) => {})}
             isSubmitting={false}

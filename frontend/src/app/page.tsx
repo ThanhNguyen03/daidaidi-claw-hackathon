@@ -88,7 +88,7 @@ export default function Home() {
     brief,
     artifacts,
     sendMessage,
-    answerQuestion,
+    answerAllQuestions,
     skipQuestion,
     freeTextAnswer,
     revokeConstraint,
@@ -269,7 +269,7 @@ export default function Home() {
           activeCheckpoint={activeCheckpoint}
           mode={mode}
           onSendMessage={sendMessage}
-          onAnswerQuestion={answerQuestion}
+          onAnswerAllQuestions={answerAllQuestions}
           onSkipQuestion={skipQuestion}
           onFreeTextAnswer={freeTextAnswer}
           onApproveCheckpoint={approveCheckpoint}
