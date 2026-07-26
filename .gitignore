@@ -10,7 +10,6 @@
 # AgentBase credentials & cache (NEVER commit — contains IAM secrets / tokens)
 .greennode.json
 .agentbase/
-deploy-be.ps1
 
 # Local fallback data stores (SQLite memory + LanceDB vector store)
 data/
@@ -67,5 +66,5 @@ htmlcov/
 .tox/
 
 # Agent skill system artifacts
-**/SKILL.md
-**/reference/**
+# **/SKILL.md
+# **/reference/**
