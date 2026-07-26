@@ -19,9 +19,25 @@ export const metadata: Metadata = {
   },
 };
 
+// Applied before first paint. React can only add the `dark` class after hydration,
+// which is long enough to show a full-brightness white flash on every load — worse
+// than no dark mode at all in a dim room.
+const THEME_BOOTSTRAP = `
+try {
+  if (localStorage.getItem('theme') !== 'light') {
+    document.documentElement.classList.add('dark');
+  }
+} catch (e) {
+  document.documentElement.classList.add('dark');
+}
+`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={beVietnamPro.variable}>
+    <html lang="en" className={beVietnamPro.variable} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
+      </head>
       <body>{children}</body>
     </html>
   );

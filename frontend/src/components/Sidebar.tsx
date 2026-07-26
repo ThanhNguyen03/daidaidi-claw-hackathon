@@ -69,8 +69,11 @@ const CS_AGENTS: { name: string; display_name: string }[] = [
 const getStatusColorClass = (status: AgentStatus['status']): string => {
   const classes: Record<AgentStatus['status'], string> = {
     idle: 'bg-status-idle',
-    thinking: 'bg-status-thinking',
-    waiting: 'bg-status-waiting',
+    // Only the two live states pulse. Animating everything would make the panel
+    // busy without telling anyone anything; animating just these makes the list a
+    // genuine progress readout during the minute a proposal takes to build.
+    thinking: 'bg-status-thinking agent-active',
+    waiting: 'bg-status-waiting agent-active',
     completed: 'bg-status-completed',
     failed: 'bg-status-failed',
   };

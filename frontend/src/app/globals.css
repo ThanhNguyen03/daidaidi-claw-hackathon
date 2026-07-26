@@ -55,18 +55,64 @@
   --color-accent: #64748b;
 }
 
-/* Dark theme */
+/* Dark theme — the default.
+ *
+ * Cool near-black rather than neutral grey: a blue-violet cast reads as a
+ * machine surface, while #1a1a1a reads as a dimmed document. Surfaces step up
+ * in lightness so panels separate by depth instead of needing heavy borders,
+ * and borders stay low-contrast so the eye follows content, not the chrome. */
 .dark {
-  --color-bg: #1a1a1a;
-  --color-surface: #2a2a2a;
-  --color-surface-2: #3a3a3a;
-  --color-surface-hover: #333333;
-  --color-text: #f9fafb;
-  --color-text-muted: #9ca3af;
-  --color-border: #404040;
-  --color-border-strong: #525252;
-  --color-accent-soft: #1e3a5f;
-  --color-accent-text: #93c5fd;
+  --color-bg: #0a0a12;
+  --color-surface: #12121c;
+  --color-surface-2: #1a1a28;
+  --color-surface-hover: #1f1f30;
+  --color-text: #e8e8f0;
+  --color-text-muted: #8a8aa3;
+  --color-border: #24243a;
+  --color-border-strong: #33334d;
+
+  /* Violet reads as "computed" in a way blue no longer does — blue is the
+   * default of every enterprise dashboard. */
+  --color-accent: #7c6cf5;
+  --color-accent-soft: #191430;
+  --color-accent-text: #b3a8ff;
+
+  --color-status-thinking: #f0b429;
+  --color-status-waiting: #a78bfa;
+  --color-status-completed: #34d399;
+  --color-status-failed: #f87171;
+  --color-status-idle: #565675;
+
+  /* Depth comes from shadow plus a hairline highlight, the way a real raised
+   * surface catches light. Flat shadows on a dark background just look muddy. */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* Mode accents, dark variants. The light-theme values are too dark to read here. */
+.dark [data-mode="chat"],
+.dark[data-mode="chat"] {
+  --color-accent: #7c6cf5;
+}
+
+/* A slow violet aurora behind everything. Fixed, so it does not travel with
+ * scroll — it should feel like the room the app sits in, not part of the page. */
+.dark body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(60rem 40rem at 12% -10%, rgba(124, 108, 245, 0.10), transparent 60%),
+    radial-gradient(50rem 34rem at 100% 0%, rgba(56, 189, 248, 0.06), transparent 55%),
+    radial-gradient(44rem 30rem at 50% 110%, rgba(167, 139, 250, 0.05), transparent 60%);
+}
+
+.dark #__next,
+.dark body > div {
+  position: relative;
+  z-index: 1;
 }
 
 /* Base styles */
@@ -222,6 +268,16 @@ a:hover {
   color: #1e40af;
 }
 
+/* Pale blue on near-black is unreadable — selected text disappeared. */
+.dark ::selection {
+  background-color: rgba(124, 108, 245, 0.38);
+  color: #ffffff;
+}
+
+.dark ::placeholder {
+  color: #63637d;
+}
+
 /* ===== UTILITY EXTENSIONS ===== */
 
 /* Status dot colors */
@@ -311,4 +367,98 @@ a:hover {
 html {
   text-rendering: optimizeLegibility;
   -webkit-text-size-adjust: 100%;
+}
+
+/* ============================================================
+   Dark-theme character
+   Small, cheap touches that make the surface read as an instrument
+   rather than a document. All scoped to .dark so light is untouched.
+   ============================================================ */
+
+/* Frosted chrome. The aurora behind the page shows through the header and the
+   composer, which is what stops large flat panels looking like dead rectangles. */
+.dark header,
+.dark form {
+  background-color: color-mix(in srgb, var(--color-surface) 72%, transparent);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+
+/* The send button is the one control that should look energised. */
+.dark button[type="submit"]:not(:disabled) {
+  box-shadow: 0 0 0 1px rgba(124, 108, 245, 0.45),
+              0 4px 18px -4px rgba(124, 108, 245, 0.55);
+}
+
+/* Agent status dots pulse only while that agent is actually working, so the
+   sidebar reports motion that means something instead of decorating itself. */
+@keyframes agent-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 currentColor; }
+  50%      { opacity: 0.55; box-shadow: 0 0 0 4px transparent; }
+}
+.dark .agent-active {
+  animation: agent-pulse 1.6s ease-in-out infinite;
+}
+
+/* Blinking block caret at the tail of a streaming reply — the standard signal
+   that output is still arriving, and cheaper to read than a spinner. */
+@keyframes caret-blink { 0%, 45% { opacity: 1; } 55%, 100% { opacity: 0; } }
+.streaming-caret::after {
+  content: "▍";
+  margin-left: 1px;
+  color: var(--color-accent);
+  animation: caret-blink 1s step-end infinite;
+}
+
+/* Tables carry the pricing, which is the part people actually scrutinise.
+   Zebra striping and a held header make a long ratecard scannable. */
+.dark table tbody tr:nth-child(even) {
+  background-color: color-mix(in srgb, var(--color-surface-2) 45%, transparent);
+}
+.dark table thead th {
+  background-color: var(--color-surface-2);
+  position: sticky;
+  top: 0;
+}
+
+/* Wide content — ratecards especially — scrolls inside its own box. Without this
+   a long pricing table either clips its right-hand columns or forces the whole
+   page sideways, which is exactly how figures went missing. */
+.markdown-body table,
+.prose table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.markdown-body table td,
+.markdown-body table th,
+.prose table td,
+.prose table th {
+  white-space: normal;
+  min-width: 6rem;
+}
+/* Figures should never wrap mid-number. */
+.markdown-body table td:has(+ td),
+.prose table td {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Dark scrollbars: the light-theme thumb is a bright bar on a near-black page. */
+.dark ::-webkit-scrollbar-thumb {
+  background-color: #2c2c44;
+  border-radius: 8px;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background-color: #3a3a58;
+}
+.dark * {
+  scrollbar-color: #2c2c44 transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dark .agent-active,
+  .streaming-caret::after {
+    animation: none;
+  }
 }

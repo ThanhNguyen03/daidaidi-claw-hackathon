@@ -270,11 +270,46 @@ export function ChatWindow({
   // Track whether user is at the bottom so we only auto-scroll when appropriate
   const isAtBottomRef = useRef(true);
 
+  // Streaming rewrites the last message on every token, so this effect fires dozens
+  // of times a second. `behavior: 'smooth'` starts a new animation on each of those
+  // and each one cancels the last mid-flight — that is the jitter at the end of a
+  // long answer, and it is worst exactly when the message is tall and moving fast.
+  //
+  // While tokens are arriving, jump the container instantly and coalesce to one
+  // adjustment per frame. Only the settled state, once loading stops, animates.
+  const scrollRaf = useRef<number | null>(null);
   useEffect(() => {
-    if (isAtBottomRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!isAtBottomRef.current) return;
+
+    if (isLoading) {
+      if (scrollRaf.current !== null) return;
+      scrollRaf.current = requestAnimationFrame(() => {
+        scrollRaf.current = null;
+        const c = messagesContainerRef.current;
+        if (c) c.scrollTop = c.scrollHeight;
+      });
+      return;
     }
-  }, [messages]);
+
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isLoading]);
+
+  useEffect(
+    () => () => {
+      if (scrollRaf.current !== null) cancelAnimationFrame(scrollRaf.current);
+    },
+    []
+  );
+
+  // Return the caret to the composer once a turn finishes. Without this the rep has
+  // to click back into the box after every single message.
+  const wasLoading = useRef(false);
+  useEffect(() => {
+    if (wasLoading.current && !isLoading) {
+      textareaRef.current?.focus();
+    }
+    wasLoading.current = isLoading;
+  }, [isLoading]);
 
   // Handle scroll to show/hide scroll button
   const handleScroll = () => {
@@ -301,6 +336,9 @@ export function ChatWindow({
       setInput('');
       if (textareaRef.current) {
         textareaRef.current.style.height = '';
+        // Keep the caret in the box on send, not just when the reply lands, so a
+        // rep can fire several messages in a row without reaching for the mouse.
+        textareaRef.current.focus();
       }
     }
   };
@@ -362,7 +400,7 @@ export function ChatWindow({
 
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto min-h-0 relative" ref={messagesContainerRef} onScroll={handleScroll}>
-        <div className="max-w-3xl mx-auto px-3 sm:px-4 md:px-6 py-3 md:py-4">
+        <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-8 py-3 md:py-4">
         {messages.length === 0 && (
           <div className="text-center py-6 sm:py-8 text-text-muted">
             {mode === 'cs' ? (
@@ -440,7 +478,7 @@ export function ChatWindow({
 
       {/* Input area - refined composer */}
       <div className="px-3 sm:px-4 md:px-6 py-2 sm:py-3 bg-bg border-t border-border pb-safe">
-        <div className="flex gap-2 items-end max-w-3xl mx-auto">
+        <div className="flex gap-2 items-end max-w-6xl mx-auto">
           <div className="flex-1 relative">
             <textarea
               ref={textareaRef}

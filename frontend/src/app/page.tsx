@@ -24,8 +24,10 @@ export default function Home() {
   // Mode state
   const [mode, setMode] = useState<ChatMode>('chat');
 
-  // Theme state - persist to localStorage
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  // Theme state - persist to localStorage. Dark is the default: this is a tool
+  // people sit in front of for a whole working session, and the product reads as
+  // an instrument rather than a document.
+  const [isDarkMode, setIsDarkMode] = useState(true);
 
   // Context panel state — open by default only on large screens
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
@@ -37,13 +39,14 @@ export default function Home() {
   const [isConnected, setIsConnected] = useState(false);
   const [sessionCount, setSessionCount] = useState(1);
 
-  // Load theme from localStorage on mount
+  // Load theme from localStorage on mount. Only an explicit "light" overrides the
+  // dark default — the previous version could only ever turn dark ON, so a first
+  // visit always rendered light no matter what the default said.
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === 'dark') {
-      setIsDarkMode(true);
-      document.documentElement.classList.add('dark');
-    }
+    const dark = savedTheme !== 'light';
+    setIsDarkMode(dark);
+    document.documentElement.classList.toggle('dark', dark);
   }, []);
 
   // Open context panel by default on large screens only
