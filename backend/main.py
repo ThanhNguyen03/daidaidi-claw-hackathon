@@ -1305,7 +1305,17 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 wp = wireframe_out.payload if isinstance(wireframe_out.payload, dict) else {}
                 assets: dict = {}
 
-                html_content = wp.get("html_content", "")
+                # Re-emit artifacts produced on an earlier turn. Without this, the
+                # buttons only ever appeared on the turn that built the deck — and
+                # since the PPTX bytes are dropped from state right after being stored
+                # (they break JSON persistence), a later "tải file" produced a deck
+                # link and no PPTX at all. Remembering the ids costs nothing.
+                if wp.get("deck_artifact_id") in _artifact_store:
+                    assets["deck_url"] = f"/artifact/{wp['deck_artifact_id']}"
+                if wp.get("pptx_artifact_id") in _artifact_store:
+                    assets["pptx_url"] = f"/artifact/{wp['pptx_artifact_id']}"
+
+                html_content = "" if assets.get("deck_url") else wp.get("html_content", "")
                 if html_content:
                     deck_id = f"deck_{uuid.uuid4().hex[:10]}"
                     _artifact_store[deck_id] = {
@@ -1316,9 +1326,10 @@ async def chat_stream(request: Request, payload: ChatRequest):
                         "type": "deck",
                         "title": "Proposal Deck (HTML)",
                     }
+                    wp["deck_artifact_id"] = deck_id
                     assets["deck_url"] = f"/artifact/{deck_id}"
 
-                pptx_bytes = wp.get("pptx_bytes")
+                pptx_bytes = None if assets.get("pptx_url") else wp.get("pptx_bytes")
                 if pptx_bytes:
                     pptx_id = f"pptx_{uuid.uuid4().hex[:10]}"
                     client_name = (state.brief.industry if state.brief and state.brief.industry else "Client")
@@ -1346,6 +1357,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
                             "type": "pptx",
                             "title": f"Proposal Deck — {client_name}",
                         }
+                    wp["pptx_artifact_id"] = pptx_id
                     assets["pptx_url"] = f"/artifact/{pptx_id}"
 
                 if assets:

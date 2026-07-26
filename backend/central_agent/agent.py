@@ -898,15 +898,18 @@ class CentralAgent:
                 # Nothing to approve if the analysis produced nothing — which happens
                 # when the skills were rate-limited. An empty card asking "duyệt hướng
                 # giải pháp?" above three blank rows is worse than no card.
+                #
+                # Skip the card, but do NOT skip the work. The first version of this
+                # guard used `break`, which exits the whole group loop — so asking to
+                # export a finished proposal ran no skills at all and answered "các
+                # skill không trả về kết quả" in two seconds.
                 preview = checkpoint.preview or {}
-                if not any((preview.get(k) or "").strip() for k in ("strategy", "solution", "compliance")):
-                    print("[checkpoint] CHOT 2 skipped — no analysis content to confirm")
+                if any((preview.get(k) or "").strip() for k in ("strategy", "solution", "compliance")):
+                    state.checkpoint = checkpoint
+                    print("[checkpoint] CHOT 2 raised — awaiting solution confirmation")
+                    yield {"type": "checkpoint", "checkpoint": checkpoint.model_dump(mode="json")}
                     break
-
-                state.checkpoint = checkpoint
-                print("[checkpoint] CHOT 2 raised — awaiting solution confirmation")
-                yield {"type": "checkpoint", "checkpoint": checkpoint.model_dump(mode="json")}
-                break
+                print("[checkpoint] CHOT 2 skipped — nothing to confirm, running the group")
 
             tasks: dict[asyncio.Task, str] = {}
             for item in group:
