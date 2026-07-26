@@ -1,0 +1,61 @@
+"""
+Compliance Agent Schemas
+========================
+Defines the Compliance agent findings payload and related types.
+"""
+
+from typing import Optional, Literal
+from pydantic import BaseModel, Field
+
+
+class ComplianceFinding(BaseModel):
+    """A single compliance finding from the reviewer."""
+
+    severity: Literal["block", "warn", "info"] = Field(
+        ..., description="Severity of the finding"
+    )
+    policy_ref: str = Field(
+        ..., description="Reference to the policy being checked"
+    )
+    message: str = Field(
+        ..., description="Human-readable finding message"
+    )
+    suggestion: Optional[str] = Field(
+        None, description="Suggested compliant alternative"
+    )
+    details: Optional[dict] = Field(
+        None, description="Additional details about the finding"
+    )
+
+
+class CompliancePayload(BaseModel):
+    """Payload returned by the Compliance agent."""
+
+    findings: list[ComplianceFinding] = Field(
+        default_factory=list,
+        description="List of compliance findings"
+    )
+    overall: Literal["ok", "warn", "block"] = Field(
+        "ok",
+        description="Overall compliance status"
+    )
+    summary: str = Field(
+        "",
+        description="Summary of compliance review"
+    )
+
+    def has_blocking(self) -> bool:
+        """Check if there are any blocking findings."""
+        return any(f.severity == "block" for f in self.findings)
+
+    def has_warnings(self) -> bool:
+        """Check if there are any warning findings."""
+        return any(f.severity == "warn" for f in self.findings)
+
+    def get_blocking_findings(self) -> list[ComplianceFinding]:
+        """Get all blocking findings."""
+        return [f for f in self.findings if f.severity == "block"]
+
+    def get_warnings(self) -> list[ComplianceFinding]:
+        """Get all warning findings."""
+        return [f for f in self.findings if f.severity == "warn"]

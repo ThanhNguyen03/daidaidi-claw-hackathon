@@ -1,0 +1,88 @@
+# Agent Configuration
+# ===================
+# This file defines the available agents and their configurations.
+# Adding/removing agents is done by editing this file.
+#
+# Schema (per DAY_2 §4 + B.6):
+#   name: Display name
+#   model: Env var key (e.g., MODEL_SALES_ORCHESTRATOR)
+#   role: One-line routing description
+#   enabled: true/false
+#   kind: generator | advisory | reviewer (how the orchestrator uses the agent)
+#   hooks: [hook_name, ...] (optional, for reviewer agents)
+#   critical: true/false (B.5 failure policy)
+
+agents:
+  sales_orchestrator:
+    name: "Sales Orchestrator"
+    model: MODEL_SALES_ORCHESTRATOR
+    role: "Supervisor that validates briefs, asks clarifying questions, and routes tasks"
+    enabled: true
+    kind: generator
+    critical: true
+
+  requirement_elicitation:
+    name: "Requirement Elicitation"
+    model: MODEL_REQUIREMENT_ELICITATION
+    role: "Normalize briefs, ask blocking questions, and translate requirements"
+    enabled: true
+    kind: generator
+    critical: true
+
+  market_strategy:
+    name: "Market Strategy"
+    model: MODEL_MARKET_STRATEGY
+    role: "Market analysis and sales strategy"
+    enabled: true
+    kind: generator
+    critical: false
+
+  product_solution:
+    name: "Product Solution"
+    model: MODEL_PRODUCT_SOLUTION
+    role: "Merged product, pricing, and integration solution"
+    enabled: true
+    kind: generator
+    critical: false
+
+  design:
+    name: "Design"
+    model: MODEL_DESIGN
+    role: "Wireframes and visual design"
+    enabled: true
+    kind: generator
+    critical: false
+
+  # A9 — Client simulator (optional reviewer after solution and design)
+  client_simulator:
+    name: "Client Simulator"
+    model: MODEL_CLIENT_SIMULATOR
+    role: "Simulates client pushback: identifies weak points in the proposal, flags objections and risks before AE review"
+    enabled: true
+    kind: reviewer
+    critical: false
+
+  wireframe_designer:
+    name: "Wireframe Designer"
+    model: MODEL_WIREFRAME_DESIGNER
+    role: "Generates AdtimaBox-branded HTML deck and PPTX from proposal — auto-triggered after proposal_assembler"
+    enabled: true
+    kind: generator
+    critical: false
+
+  # Day 2 B.6: Compliance as the first reviewer agent
+  compliance:
+    name: "Compliance"
+    model: MODEL_COMPLIANCE
+    role: "Policy & compliance advisor: flags policy risks in proposals/quotes, suggests compliant alternatives"
+    enabled: true
+    kind: reviewer
+    hooks: [pre_checkpoint_review]
+    critical: false
+
+# Validation agent (used for pre-pass validation - outside agents block)
+validation:
+  name: "Validation"
+  model: MODEL_VALIDATION
+  role: "Fast validation pre-pass"
+  description: "Gemma-4 powered validation to detect missing fields and ambiguities"

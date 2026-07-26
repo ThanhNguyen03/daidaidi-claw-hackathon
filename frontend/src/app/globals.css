@@ -1,0 +1,314 @@
+/**
+ * Global CSS Styles
+ * =================
+ * Theme system + Tailwind CSS foundation.
+ */
+
+@import "tailwindcss";
+
+/* ===== THEME SYSTEM (CSS Variables for Tailwind) ===== */
+@theme {
+  /* Light theme (default) */
+  --color-bg: #faf9f7;
+  --color-surface: #ffffff;
+  --color-surface-2: #f3f4f6;
+  --color-surface-hover: #f9fafb;
+  --color-text: #111827;
+  --color-text-muted: #6b7280;
+  --color-border: #e5e7eb;
+  --color-border-strong: #d1d5db;
+
+  /* Accent */
+  --color-accent: #3b82f6;
+  --color-accent-soft: #eff6ff;
+  --color-accent-text: #1e40af;
+
+  /* Status */
+  --color-status-thinking: #f59e0b;
+  --color-status-waiting: #8b5cf6;
+  --color-status-completed: #10b981;
+  --color-status-failed: #ef4444;
+  --color-status-idle: #6b7280;
+
+  /* Shadows */
+  --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+
+  /* Fonts */
+  --font-sans: sans-serif;
+}
+
+/* Per-mode accent colors */
+[data-mode="planning"] {
+  --color-accent: #3b82f6;
+}
+
+[data-mode="execute"] {
+  --color-accent: #10b981;
+}
+
+[data-mode="brainstorm"] {
+  --color-accent: #8b5cf6;
+}
+
+[data-mode="chat"] {
+  --color-accent: #64748b;
+}
+
+/* Dark theme */
+.dark {
+  --color-bg: #1a1a1a;
+  --color-surface: #2a2a2a;
+  --color-surface-2: #3a3a3a;
+  --color-surface-hover: #333333;
+  --color-text: #f9fafb;
+  --color-text-muted: #9ca3af;
+  --color-border: #404040;
+  --color-border-strong: #525252;
+  --color-accent-soft: #1e3a5f;
+  --color-accent-text: #93c5fd;
+}
+
+/* Base styles */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.55;
+  font-weight: 500;
+  -webkit-font-smoothing: antialiased;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Responsive font size - mobile first, then tablet/desktop */
+@media (min-width: 640px) {
+  html, body {
+    font-size: 16px;
+  }
+}
+
+@media (min-width: 1024px) {
+  html, body {
+    font-size: 18px;
+  }
+}
+
+/* Global headline scale */
+h1,
+h2,
+.text-xl,
+.text-2xl,
+.text-\[18px\],
+.text-\[20px\],
+.text-\[22px\],
+.text-\[24px\] {
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+@media (min-width: 1024px) {
+  h1,
+  h2,
+  .text-xl,
+  .text-2xl,
+  .text-\[18px\],
+  .text-\[20px\],
+  .text-\[22px\],
+  .text-\[24px\] {
+    font-size: 26px;
+  }
+}
+
+h3,
+h4,
+.text-lg {
+  line-height: 1.3;
+}
+
+/* Tailwind text utilities bumped by +2px */
+.text-xs { font-size: 14px !important; }
+.text-sm { font-size: 16px !important; }
+.text-base { font-size: 18px !important; }
+.text-lg { font-size: 20px !important; }
+.text-xl { font-size: 22px !important; }
+.text-2xl { font-size: 24px !important; }
+
+/* Common hardcoded sizes used in the app */
+.text-\[10px\] { font-size: 12px !important; }
+.text-\[11px\] { font-size: 13px !important; }
+.text-\[12px\] { font-size: 14px !important; }
+.text-\[13px\] { font-size: 15px !important; }
+.text-\[14px\] { font-size: 16px !important; }
+.text-\[16px\] { font-size: 18px !important; }
+.text-\[18px\] { font-size: 20px !important; }
+.text-\[22px\] { font-size: 24px !important; }
+
+/* Focus styles */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Disabled states */
+[disabled],
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled,
+[aria-disabled="true"] {
+  opacity: 0.5;
+}
+
+/* Prevent text selection on UI elements */
+button,
+[role="button"] {
+  user-select: none;
+}
+
+/* Custom Scrollbar - ChatGPT/Claude style */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+/* Input placeholder */
+::placeholder {
+  color: #9ca3af;
+}
+
+/* Link */
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Selection */
+::selection {
+  background-color: #bfdbfe;
+  color: #1e40af;
+}
+
+/* ===== UTILITY EXTENSIONS ===== */
+
+/* Status dot colors */
+.status-dot {
+  @apply w-2 h-2 rounded-full;
+}
+
+.status-idle { @apply bg-status-idle; }
+.status-thinking { @apply bg-status-thinking; }
+.status-waiting { @apply bg-status-waiting; }
+.status-completed { @apply bg-status-completed; }
+.status-failed { @apply bg-status-failed; }
+
+/* Smooth transitions */
+.transition-sidebar {
+  @apply transition-all duration-200 ease-in-out;
+}
+
+/* Pill shape */
+.pill {
+  @apply rounded-full;
+}
+
+/* Card styling */
+.card {
+  @apply bg-surface rounded-lg border border-border shadow-card p-4;
+}
+
+/* Gradient accent backgrounds */
+.bg-accent-gradient {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-text) 100%);
+}
+
+/* Safe area insets for mobile devices */
+.safe-area-inset-top {
+  padding-top: env(safe-area-inset-top, 0);
+}
+
+.safe-area-inset-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0));
+}
+
+/* Mobile/Tablet responsive fixes */
+@media (max-width: 767px) {
+  /* Ensure main content doesn't overflow on small screens */
+  .h-screen {
+    height: 100dvh;
+    height: -webkit-fill-available;
+  }
+}
+
+/* Tablet specific (768px - 1023px) */
+@media (min-width: 768px) and (max-width: 1023px) {
+  html, body {
+    font-size: 14px;
+  }
+}
+
+/* Smooth animations for mobile */
+@media (prefers-reduced-motion: no-preference) {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Touch-friendly targets - minimum 44px tap target */
+@media (max-width: 767px) {
+  button,
+  [role="button"],
+  a,
+  input,
+  select {
+    min-height: 44px;
+  }
+
+  /* Larger touch targets for primary actions */
+  button:active {
+    transform: scale(0.97);
+  }
+}
+
+/* Prevent layout shift during font loading */
+html {
+  text-rendering: optimizeLegibility;
+  -webkit-text-size-adjust: 100%;
+}

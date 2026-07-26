@@ -1,0 +1,36 @@
+# Ruff configuration for Python linting and formatting
+# Ruff is a fast Python linter written in Rust
+
+target-version = "py311"
+
+[lint]
+# Enable rules
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+
+# Ignore rules
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "E402",   # module level import not at top (intentional for clarity)
+    "B008",   # do not perform function calls in argument defaults
+    "C901",   # too complex
+]
+
+[lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"main.py" = ["E402"]
+
+[format]
+# Use ruff's formatter (faster than black)
+formatter = "black"
+
+[lint.isort]
+# Known first-party modules
+known-first-party = ["schemas", "llm", "repos", "agents", "validation"]
