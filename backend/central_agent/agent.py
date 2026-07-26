@@ -78,8 +78,41 @@ You receive:
   • Current Message — what the user just sent
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 0 — WHAT KIND OF MESSAGE IS THIS?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Classify the CURRENT message into exactly one `intent`. This decides whether the rep
+gets interrogated or simply answered, so getting it wrong is the most visible error
+you can make.
+
+"lookup" — a question about OUR product that has a factual answer sitting in our
+  knowledge: package contents, prices, what a feature does, what a policy allows,
+  the difference between two packages, lead times.
+  → The rep is asking, not briefing. NEVER ask them for industry, goal or budget to
+    answer one of these. Just answer it.
+  e.g. "Gói Base 3 và Pro 1 khác nhau gì, giá 12 tháng bao nhiêu?"
+       "ZNS tính phí thế nào?"  ·  "Scan Bill có trong CShub không?"
+
+"coaching" — the rep wants to rehearse, handle an objection, or compare against a
+  competitor. About the rep's own performance, not about a client's project.
+  e.g. "Khách chê đắt thì trả lời sao?"  ·  "Đóng vai khách phản biện giúp mình."
+
+"brief" — a client project to analyse: a campaign, a proposal, a solution, a quote
+  for a specific brand. This is the only intent that needs a complete brief.
+  e.g. "Brand FMCG muốn tăng repeat purchase, làm proposal giúp."
+
+"casual" — greeting, thanks, small talk.
+
+Deciding rule: if the message can be answered from what we know about AdtimaBox
+without knowing anything about a particular client, it is "lookup" — not "brief".
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 1 — CLARIFY or EXECUTE?
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For intent "lookup" or "coaching": ALWAYS execute, never clarify. Dispatch the one
+skill that owns the answer — product_solution for packages/pricing/features,
+compliance for policy and legal, client_simulator for coaching — and nothing else.
 
 Count CLARIFICATION ROUNDS USED = number of ASSISTANT turns in Conversation History.
 
@@ -191,11 +224,16 @@ STEP 4 — OUTPUT (valid JSON only, no markdown fences)
 Skills in the same array run in parallel. Arrays run sequentially.
 proposal_assembler must be alone in the last array if included.
 
-Case A — clarify:
-{{"brief_update": {{"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": true, "clarification_message": "<one grouped set of questions in the user's language, under the three headings above, each with its reason>", "desired_outputs": []}}
+Every response MUST include "intent" — one of "lookup", "coaching", "brief", "casual".
+
+Case A — clarify (only ever valid for intent "brief"):
+{{"intent": "brief", "brief_update": {{"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": true, "clarification_message": "<one grouped set of questions in the user's language, under the three headings above, each with its reason>", "desired_outputs": []}}
 
 Case B — execute:
-{{"brief_update": {{"industry": "<or null>", "goal": "<or null>", "target_audience": "<or null>", "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": false, "skill_plan": [[{{"skill": "<name>", "task": "<specific task>"}}]], "desired_outputs": ["proposal"]}}"""
+{{"intent": "<lookup|coaching|brief>", "brief_update": {{"industry": "<or null>", "goal": "<or null>", "target_audience": "<or null>", "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": false, "skill_plan": [[{{"skill": "<name>", "task": "<specific task>"}}]], "desired_outputs": ["proposal"]}}
+
+Example — a pricing lookup. Note: no clarification, one skill, no brief demanded:
+{{"intent": "lookup", "brief_update": {{"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": false, "skill_plan": [[{{"skill": "product_solution", "task": "So sánh gói CShub Base 3 và Pro 1: khác biệt tính năng, hạn mức, và giá 12 tháng của từng gói."}}]], "desired_outputs": []}}"""
 
 
 # ---------------------------------------------------------------------------
@@ -632,10 +670,13 @@ class CentralAgent:
         # it can no longer wave an incomplete brief through. That inversion is the whole
         # point — previously the only thing standing between a half-empty brief and a
         # priced proposal was a sentence in a prompt.
+        intent = self._resolve_intent(assessment, message)
+        print(f"[intent] {intent}")
+
         verdict = gate.evaluate(
             brief=state.brief,
             message=message,
-            intent="brief",
+            intent=intent,
             history=state.messages,
         )
         print(verdict.log_line())
@@ -658,8 +699,15 @@ class CentralAgent:
         # only the short nudge that carried the turn and will often ask for more; that
         # would bounce them straight back to a question they already answered. The gate
         # still applies — it just no longer takes the planner's opinion as a veto.
-        must_clarify = not verdict.may_dispatch or (
-            bool(assessment.get("needs_clarification")) and not resuming
+        # A lookup or a coaching request is answered, never interrogated (BRD §8.3).
+        # The planner sometimes still returns needs_clarification for these; the
+        # classification wins, because asking a rep for their industry before telling
+        # them what a package costs is the single most annoying thing this can do.
+        conversational = intent in ("lookup", "coaching")
+
+        must_clarify = not conversational and (
+            not verdict.may_dispatch
+            or (bool(assessment.get("needs_clarification")) and not resuming)
         )
 
         # Step 3A: Not cleared to dispatch → ask, and only ask
@@ -710,7 +758,9 @@ class CentralAgent:
         # Step 3A2 — CHỐT 1 (BRD §11): before spending any specialist work, show the rep
         # what we think they said and let them correct it. Running the whole pipeline
         # first means an error in the first line is only discovered at the last one.
-        if "confirm_brief" not in state.confirmed_stages:
+        # Only a brief has a brief to confirm. Putting a "is this what you meant"
+        # card in front of a one-line pricing question is pure friction.
+        if not conversational and "confirm_brief" not in state.confirmed_stages:
             checkpoint = _build_brief_checkpoint(state, verdict)
             state.checkpoint = checkpoint
             print(f"[checkpoint] CHOT 1 raised — awaiting brief confirmation")
@@ -1169,6 +1219,51 @@ class CentralAgent:
 
         return result
 
+    # A question about our own product, answerable without knowing anything about a
+    # particular client. Used only when the planner did not classify — the model is
+    # better at this than a word list, but a word list still beats treating a pricing
+    # question as a new brief and interrogating the rep about their industry.
+    _LOOKUP_HINTS = re.compile(
+        r"(giá|bao nhiêu|khác nhau|khác gì|so sánh|gồm những gì|bao gồm|"
+        r"có hỗ trợ|có được|tính phí|chi phí|ratecard|bảng giá|"
+        r"là gì|thế nào|có trong|nằm trong|"
+        r"how much|what.s the (price|difference)|compare|included|pricing)",
+        re.IGNORECASE,
+    )
+    # Naming a specific package or module is a strong signal: nobody writes a client
+    # brief in terms of "Base 3" — they ask about it.
+    _PRODUCT_TERMS = re.compile(
+        r"\b(base\s*[123]|pro\s*[12]|voucher\s*1|cshub|cs hub|zns|zbs|"
+        r"utc|scan bill|lucky draw|mini ?app|open api)\b",
+        re.IGNORECASE,
+    )
+    _COACHING_HINTS = re.compile(
+        r"(đóng vai|phản biện|tập pitch|luyện pitch|khách chê|khách hỏi khó|"
+        r"xử lý từ chối|objection|roleplay|rehearse)",
+        re.IGNORECASE,
+    )
+
+    def _resolve_intent(self, assessment: dict[str, Any], message: str) -> str:
+        """Trust the planner's classification; fall back to keywords when it is absent.
+
+        The gate must know whether this is a brief before it decides to block. Without
+        a classifier every turn was treated as a brief, so "gói Base 3 và Pro 1 khác
+        nhau gì" — a question with a fixed answer in the ratecard — was answered by
+        demanding the rep's industry, goal and timeline.
+        """
+        declared = str(assessment.get("intent") or "").strip().lower()
+        if declared in ("lookup", "coaching", "brief", "casual"):
+            return declared
+
+        if self._COACHING_HINTS.search(message):
+            return "coaching"
+        # Needs both a question shape and a product term: "giá bao nhiêu" alone could
+        # sit inside a real brief, and misclassifying a brief as a lookup skips the
+        # gate — the more expensive direction to be wrong in.
+        if self._LOOKUP_HINTS.search(message) and self._PRODUCT_TERMS.search(message):
+            return "lookup"
+        return "brief"
+
     def _is_vietnamese(self, message: str, state: Optional[SalesCaseState] = None) -> bool:
         """Decide the reply language from the whole conversation, not one message.
 
@@ -1324,8 +1419,32 @@ class CentralAgent:
 
         if not outputs_block.strip():
             if not is_followup:
-                # First call with no skill output — show error
-                msg = "Xin lỗi, mình chưa tổng hợp được kết quả phân tích. Bạn thử gửi lại câu hỏi không?"
+                # Distinguish "the model provider refused us" from "nothing to say".
+                # A rate limit told as "chưa tổng hợp được" reads as the agent being
+                # confused by the question, so the rep rewrites a question that was
+                # perfectly fine — the same mistake as dressing an outage up as a
+                # clarifying question.
+                failures = [
+                    o for o in skill_outputs.values() if getattr(o, "status", "") == "FAILED"
+                ]
+                throttled = any(
+                    "ratelimit" in (getattr(o, "summary", "") or "").lower()
+                    or "429" in (getattr(o, "summary", "") or "")
+                    for o in failures
+                )
+                if throttled:
+                    msg = (
+                        "Hạn mức gọi model đang bị đầy nên mình chưa chạy được phân tích "
+                        "cho câu này. Câu hỏi của bạn không có vấn đề gì — chờ khoảng "
+                        "một phút rồi gửi lại giúp mình."
+                    )
+                elif failures:
+                    msg = (
+                        "Bước phân tích gặp lỗi kỹ thuật nên mình chưa có kết quả. "
+                        "Bạn gửi lại giúp mình nhé — nếu vẫn lỗi thì báo team kỹ thuật."
+                    )
+                else:
+                    msg = "Xin lỗi, mình chưa tổng hợp được kết quả phân tích. Bạn thử gửi lại câu hỏi không?"
                 yield {"type": "content", "content": msg}
                 state.messages.append({
                     "role": "assistant", "content": msg,
