@@ -1,4 +1,4 @@
-﻿---
+---
 name: adtimabox-objection-bank-fmcg
 description: >
   FMCG client objections, split Branch A (B2C consumer, FA-*) and Branch B (B2B internal staff, FB-*),
@@ -12,11 +12,24 @@ Severity: `deal-killer` · `major` · `minor`.
 
 ## PROOF-CLAIM RULE (FMCG — khác Pharma!)
 Các case sau LÀ của Adtima → **ĐƯỢC claim thẳng kèm số**:
+
+**AdtimaBox (CRM / Loyalty / Mini App):**
 - **Red Bull** AI Video Tet 2026: #1 YMI Tet 2026, 175K+ AI video, 47K+ user, 107K+ social conversation.
 - **Coca-Cola**: loyalty point-based trên Zalo Mini App, unique code on-pack, leaderboard, retarget theo nhóm.
 - **Rockstar**: UTC "Quét ngay – Cơ hội túng liền tay", buy → scan → instant reward.
 - **TH Beverage**: O2O sampling (lucky box online → redeem offline).
-- Case-study-advisor: CS-01, CS-02, CS-07, CS-08, CS-09, CS-10, CS-11.
+- **Nestlé – Milo** (UTC QR on-pack): 27% pack growth per trip, 70% scans buổi sáng, 50% user duy trì thói quen tập thể dục.
+- **VinFast** (Zalo Lead Form): Car — 57K+ clicks, ~1,250 leads; E-Motor — 23K+ clicks, ~450 leads.
+- **Surf (Unilever)** Game "Tâm Đầu Ý Hợp" trên Zalo: 3M users reached, 19K arrivals, 26K play-turns.
+
+**Media / Content / Music (non-CShub):**
+- **Surf (Unilever)** Zalo Sticker "Tết Lên Hương": 383K+ turns download (1.5x vs others), 856K+ turns use (2x vs others) trong 1 tháng.
+- **Surf (Unilever)** Music Marketing Zing MP3 (branded song): 56M impressions/ngày, 7M reach/ngày, 200K listens (124% KPI).
+- **Lazada** Audio Ads + Audio Plus Zing MP3: 3.4M impressions, 103K clicks, CTR 1.6x benchmark.
+- **Nutifood** Content ZNews + MOH: 90 articles/videos, 718K views.
+- **UOB** Z-Pro content + ZNews: 16 multi-format articles, 198K views.
+
+**Case-study-advisor:** CS-01, CS-02, CS-07, CS-08, CS-09, CS-10, CS-11.
 
 → Ở FMCG, simulator KHÔNG flag proof-claim như Pharma — đây là proof thật, AE nên dùng tự tin.
 (Vẫn cấm bịa case không có thật hoặc gán số sai cho sai brand.)
@@ -24,8 +37,6 @@ Các case sau LÀ của Adtima → **ĐƯỢC claim thẳng kèm số**:
 ---
 
 ## NHÁNH A — B2C CONSUMER
-
-### OBJ-FA01 — ROI vs media
 
 ```
 OBJECTION: OBJ-FA01
@@ -40,8 +51,6 @@ Strong response direction: định vị Brand Hub là tầng "Reach → Relation
 Likely persona: FA-P01 / FA-P05
 ```
 
-### OBJ-FA02 — MT data block
-
 ```
 OBJECTION: OBJ-FA02
 Bucket: MT data block
@@ -54,8 +63,6 @@ Strong response direction: bridge offline→online — Scan Bill (OCR), UTC on-p
 Likely persona: FA-P03
 ```
 
-### OBJ-FA03 — fraud / gaming
-
 ```
 OBJECTION: OBJ-FA03
 Bucket: fraud / gaming
@@ -67,8 +74,6 @@ Strong response direction: AI OCR phát hiện signal trên bill; unique code d�
   khóa account khi sai nhiều lần (khớp flow UTC/Scan Bill trong solution-designer).
 Likely persona: FA-P03 / FA-P02
 ```
-
-### OBJ-FA04 — reward economics
 
 ```
 OBJECTION: OBJ-FA04
@@ -83,8 +88,6 @@ Strong response direction: reward budget do brand set; thiết kế burn theo ti
 Likely persona: FA-P05 / FA-P03
 ```
 
-### OBJ-FA05 — campaign vs always-on
-
 ```
 OBJECTION: OBJ-FA05
 Bucket: campaign vs always-on
@@ -96,8 +99,6 @@ Strong response direction: campaign instant cho burst; CShub cho giá trị tíc
   sau campaign, campaign sau không phải build lại từ đầu (chính là pain "campaign xong data biến mất").
 Likely persona: FA-P01
 ```
-
-### OBJ-FA06 — cannibalize existing loyalty
 
 ```
 OBJECTION: OBJ-FA06
@@ -112,8 +113,6 @@ Strong response direction: KHÔNG chạy hai loyalty song song mù — định r
 Likely persona: FA-P04
 ```
 
-### OBJ-FA07 — engagement sustainability
-
 ```
 OBJECTION: OBJ-FA07
 Bucket: engagement sustainability
@@ -125,8 +124,6 @@ Strong response direction: leaderboard + daily login + referral + ZNS cá nhân 
   liên tục thay vì one-shot. Proof: Coca-Cola loyalty leaderboard duy trì tương tác dài hạn.
 Likely persona: FA-P02
 ```
-
-### OBJ-FA08 — attribution
 
 ```
 OBJECTION: OBJ-FA08
@@ -140,8 +137,6 @@ Strong response direction: track UTC/scan bill gắn purchase thật; so sánh s
 Likely persona: FA-P02 / FA-P04
 ```
 
-### OBJ-FA09 — data ownership / PDPL
-
 ```
 OBJECTION: OBJ-FA09
 Bucket: data ownership / PDPL
@@ -152,8 +147,6 @@ Severity: major
 Strong response direction: brand = data owner; consent trong onboarding; ISO 27001, data tại VN; export add-on.
 Likely persona: FA-P04
 ```
-
-### OBJ-FA10 — cost / competitor
 
 ```
 OBJECTION: OBJ-FA10
@@ -166,8 +159,6 @@ Strong response direction: anchor — native Zalo + Auto EDA với Zalo DMP (đ�
   >> CẦN INPUT: intel CNV/Pango/Mmenu/Digibird (mạnh/rẻ ở đâu) — chưa có thì KHÔNG bịa điểm yếu đối thủ.
 Likely persona: FA-P05
 ```
-
-### OBJ-FA11 — generic packaged deck
 
 ```
 OBJECTION: OBJ-FA11
@@ -185,8 +176,6 @@ Likely persona: FA-P01 / FA-P02
 
 ## NHÁNH B — B2B INTERNAL STAFF (Perfetti FLEX type)
 
-### OBJ-FB01 — rep adoption
-
 ```
 OBJECTION: OBJ-FB01
 Bucket: rep adoption
@@ -200,8 +189,6 @@ Strong response direction: no-install (Zalo Mini App), học micro/chơi ngắn,
 Likely persona: FB-P01 / FB-P04
 ```
 
-### OBJ-FB02 — ownership / whose budget
-
 ```
 OBJECTION: OBJ-FB02
 Bucket: ownership / whose budget
@@ -213,8 +200,6 @@ Strong response direction: làm rõ sponsor & owner ngay từ đầu (thường 
   phần learning); định rõ RACI để tránh kẹt phê duyệt nội bộ.
 Likely persona: FB-P03 / FB-P01
 ```
-
-### OBJ-FB03 — staff incentive / policy
 
 ```
 OBJECTION: OBJ-FB03
@@ -228,8 +213,6 @@ Strong response direction: cấu trúc reward gắn ghi nhận/đào tạo; quy 
 Likely persona: FB-P03
 ```
 
-### OBJ-FB04 — learning effectiveness
-
 ```
 OBJECTION: OBJ-FB04
 Bucket: learning effectiveness
@@ -242,8 +225,6 @@ Strong response direction: quiz/assessment gắn khóa học, phân nhóm theo t
 Likely persona: FB-P02
 ```
 
-### OBJ-FB05 — integration (LMS/HR)
-
 ```
 OBJECTION: OBJ-FB05
 Bucket: integration (LMS/HR)
@@ -255,8 +236,6 @@ Strong response direction: định rõ ranh giới — Hub là lớp engagement 
   dữ liệu hoàn thành về LMS là add-on, >> cần tech confirm theo từng hệ thống.
 Likely persona: FB-P02
 ```
-
-### OBJ-FB06 — content maintenance
 
 ```
 OBJECTION: OBJ-FB06
@@ -279,8 +258,97 @@ Likely persona: FB-P02
 
 ---
 
+## COMPETITIVE OBJECTIONS — CNV vs PANGO vs ADTIMABOX
+
+> Activate khi client đề cập đối thủ cụ thể. Intel tổng hợp từ website thực tế (tháng 6/2026).
+> ⚠️ Chỉ dùng các fact đã verify — KHÔNG bịa điểm yếu đối thủ.
+
+```
+OBJECTION: OBJ-COMP01
+Bucket: Competitor — CNV pricing
+Trigger: Client nhận báo giá CNV trước khi gặp Adtima
+Client says: "CNV Mini App chỉ 10–30 triệu/năm, đủ tính năng. AdtimaBox đắt gấp 5–10 lần. Giải thích gì?"
+Really testing: Value justification — brand có sẵn sàng trả premium cho enterprise solution không
+Severity: deal-killer
+Strong response direction:
+  1. Segment khác nhau: CNV phục vụ 3,000+ SMEs với SaaS template. AdtimaBox cho MNC cần customization,
+     governance, tích hợp media ecosystem.
+  2. CNV không có Auto EDA với Zalo DMP — analytics từ 75M users chỉ AdtimaBox có.
+  3. CNV không có media/content solution — brand cần Ads+CRM+Content cùng ecosystem phải dùng AdtimaBox.
+  4. Enterprise compliance: ISO 27001, data VN — CNV chưa công bố tương đương.
+  5. Reframe ROI: So sánh total cost (CNV tool + Zalo Ads riêng + analytics riêng) vs AdtimaBox integrated.
+  Proof: Coca-Cola, Red Bull, Nestlé chọn AdtimaBox.
+Likely persona: FA-P05 / FA-P01
+```
+
+```
+OBJECTION: OBJ-COMP02
+Bucket: Competitor — CNV deploy speed
+Trigger: Timeline launch gấp, CNV chào nhanh hơn
+Client says: "CNV triển khai trong 2 tuần. AdtimaBox mất bao lâu? Tôi cần launch trong tháng."
+Really testing: Speed vs customization tradeoff
+Severity: major
+Strong response direction:
+  1. Xác nhận timeline thực tế theo package (>> CẦN INPUT: lead time thực tế per package từ team).
+  2. Timeline gấp → đề xuất bắt đầu với package nhỏ hơn (Base 1/2) rồi scale up.
+  3. Hỏi lại: "Template CNV có match đúng use case của anh/chị không, hay vẫn cần custom?"
+  4. Tradeoff rõ ràng: nhanh hơn = ít customization = phải adapt business process theo tool.
+     AdtimaBox ngược lại: tool adapt theo business của brand.
+Likely persona: FA-P01 / FA-P05
+```
+
+```
+OBJECTION: OBJ-COMP03
+Bucket: Competitor — PangoCDP AI/Data
+Trigger: Client đã biết PangoCDP, dùng Nutifood/Unilever làm tham chiếu
+Client says: "PangoCDP có AI, có Nutifood và Unilever, 65 segments, 55 auto flows. AdtimaBox chỉ là loyalty platform?"
+Really testing: Data sophistication và full-platform capability của AdtimaBox
+Severity: major
+Strong response direction:
+  1. AdtimaBox không chỉ là loyalty — là full Customer Engagement Platform trên Zalo.
+  2. Key differentiator: Auto EDA với Zalo DMP — insight từ 75M Zalo users, Pango không có.
+  3. Positioning khác: Pango = multi-channel CDP (breadth). AdtimaBox = Zalo-native depth + media.
+     Nếu brand muốn maximize Zalo ecosystem → AdtimaBox. Nếu muốn unify tất cả kênh → Pango.
+  4. Adtima cũng có Nutifood (ZNews Content, 718K views) và Unilever (Surf Sticker, Surf Music).
+     Nutifood có thể dùng cả hai cùng lúc cho mục tiêu khác nhau.
+  5. Hỏi lại: Brand muốn data từ tất cả kênh hay muốn go deep trên Zalo ecosystem?
+  Proof: Red Bull Tet 2026 #1 YMI — targeting dựa trên Zalo DMP.
+Likely persona: FA-P03 / FA-P05
+```
+
+```
+OBJECTION: OBJ-COMP04
+Bucket: Competitor — đang dùng competitor
+Trigger: Brand đang dùng CNV hoặc PangoCDP
+Client says: "Tôi đang dùng CNV/PangoCDP rồi. Switch sang AdtimaBox thêm cost và rủi ro migration."
+Really testing: Switching cost vs incremental value
+Severity: major
+Strong response direction:
+  1. Không cần switch toàn bộ — AdtimaBox có thể bổ sung phần thiếu:
+     - Đang dùng CNV? → Thêm Zalo Ads + Content + Auto EDA mà CNV không có.
+     - Đang dùng PangoCDP? → Thêm native Zalo depth + Zalo media ecosystem.
+  2. Identify gap cụ thể trong current solution → pitch vào chỗ thiếu đó trước.
+  3. Nếu muốn migrate hoàn toàn: phân tích switching cost vs long-term ROI cụ thể theo brand.
+  >> CẦN INPUT: Có case migration từ CNV sang AdtimaBox không?
+Likely persona: FA-P01 / FA-P03
+```
+
+---
+
+## COMPETITIVE INTEL QUICK REFERENCE (cập nhật tháng 6/2026)
+
+| Competitor | Pricing (2026) | Client base | Điểm mạnh | Gap vs AdtimaBox |
+|-----------|----------------|-------------|-----------|-----------------|
+| **CNV** | 10.8–30M/năm (Mini App); 20.4–28.8M/năm (Combo CDP) | 3,000+ SME | Rẻ, triển khai nhanh, SaaS | Không có Zalo DMP, không media, chưa ISO 27001 |
+| **PangoCDP** | Contact (chưa public) | 170+ enterprise | AI CDP, Nutifood/Unilever, O2O data | Multi-channel không native Zalo, không media |
+| **AdtimaBox** | 20–297M/package | 100+ MNC brands | Native Zalo + Auto EDA + Full-funnel | Giá cao hơn, lead time dài hơn |
+
+---
+
 ## CÒN THIẾU (cần bạn cung cấp)
 - [ ] **Objection thật** từ pitch FMCG đã chạy (cả 2 nhánh) + win/loss notes.
-- [ ] **Intel đối thủ FMCG**: CNV Loyalty, Pango, Mmenu, Digibird — mạnh/rẻ ở đâu (cho OBJ-FA10).
+- [ ] **Lead time thực tế** per package (để handle OBJ-COMP02).
+- [ ] **Migration case** từ CNV → AdtimaBox nếu có.
+- [ ] **Pitch win/loss vs CNV và Pango**: thắng/thua vì lý do gì.
 - [ ] **Chuẩn margin/ngân sách reward** của brand (cho OBJ-FA04).
 - [ ] Nhánh B bán cho Sales/HR/Trade → chốt để gán sponsor đúng.

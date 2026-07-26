@@ -68,3 +68,6 @@ htmlcov/
 # Agent skill system artifacts
 # **/SKILL.md
 # **/reference/**
+
+# Windows crash dumps from Git-Bash tooling
+*.stackdump

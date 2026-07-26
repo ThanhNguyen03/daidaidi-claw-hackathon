@@ -31,6 +31,11 @@ class ProposalAssemblerSkill(BaseSkill):
     async def execute(self, context: SkillContext) -> SkillOutput:
         system = self._build_system_prompt(context.constraints)
 
+        # Assembly rules + quality checklist live in reference/, pulled in on demand.
+        ref_context = await self.retrieve_reference_context(context, top_k=1)
+        if ref_context:
+            system = system + ref_context
+
         # Build rich context block from all previous skill outputs
         context_block = self._build_assembly_context(context)
         user_msg = f"{context.task}\n\n{context_block}" if context_block else context.task

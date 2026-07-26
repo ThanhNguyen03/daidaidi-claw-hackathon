@@ -1,4 +1,4 @@
-﻿# Vietnamese Data Privacy Law Reference
+# Vietnamese Data Privacy Law Reference
 
 Sources:
 - **Luật Bảo vệ Dữ liệu Cá nhân — Luật số 91/2025/QH15 (PDPL)**

@@ -29,7 +29,7 @@ class MarketStrategySkill(BaseSkill):
 
     async def execute(self, context: SkillContext) -> SkillOutput:
         # Retrieve reference knowledge from agents/market_strategy_agent/reference/
-        ref_context = await self.retrieve_reference_context(context.task, top_k=3)
+        ref_context = await self.retrieve_reference_context(context, top_k=3)
 
         system = self._build_system_prompt(context.constraints)
         if ref_context:

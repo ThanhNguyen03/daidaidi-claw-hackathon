@@ -1,4 +1,4 @@
-﻿---
+---
 name: zalo-compliance-legal
 description: >
   Use this skill when acting as A4 — Compliance & Policy Agent in the Adtima proposal

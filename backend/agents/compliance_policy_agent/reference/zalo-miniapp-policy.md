@@ -1,4 +1,4 @@
-﻿# Zalo Mini App Policy Reference
+# Zalo Mini App Policy Reference
 
 Source: developers.zalo.me (official) — Last verified: June 2026
 

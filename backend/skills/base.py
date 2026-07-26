@@ -48,6 +48,9 @@ class SkillContext(BaseModel):
     previous_outputs: dict[str, dict] = Field(default_factory=dict)
     constraints: list[FeedbackRule] = Field(default_factory=list)
     session_id: str = ""
+    # One knowledge.RequestLedger shared by every skill in this turn, so a
+    # document read for one agent is not read again for the next (BRD §5.2).
+    ledger: Optional[Any] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -82,6 +85,7 @@ class BaseSkill(ABC):
         self.description = description
         self.model_key = model_key
         self._skill_content = self._load_file(skill_md_path) if skill_md_path else f"# {name}\n\n{description}"
+        self._catalog = None  # parsed lazily by reference_catalog
 
     def _load_file(self, path: str) -> str:
         if path and os.path.exists(path):
@@ -271,36 +275,38 @@ TIMELINES:
 
         return "\n\n".join(parts)
 
-    async def retrieve_reference_context(self, query: str, top_k: int = 3) -> str:
+    @property
+    def reference_catalog(self):
+        """The reference files this skill declares in its SKILL.md, parsed once."""
+        if self._catalog is None:
+            from knowledge.loader import parse_catalog
+
+            self._catalog = parse_catalog(self._skill_content)
+            names = [e.filename for e in self._catalog]
+            print(f"[knowledge] {self.name}: catalog {names or '(none declared)'}")
+        return self._catalog
+
+    async def retrieve_reference_context(
+        self, context: "SkillContext", top_k: int = 3
+    ) -> str:
+        """Select and load the reference documents this task needs.
+
+        Progressive disclosure: SKILL.md carries only the role, the workflow and a
+        catalog of what is available; the bodies are pulled in on demand. Everything
+        goes through knowledge.loader so the §14 log can account for what reached
+        the prompt.
+
+        A failed *selection* degrades to the agent's primary references. A failed
+        *read* propagates — BRD §5.6 requires stopping over improvising.
         """
-        Retrieve relevant knowledge from the agent's reference/ directory via RAG.
-        Returns a formatted context block to inject into the system prompt.
-        This uses the same KB vector store that ingest_all_agents() populates at startup.
-        """
-        try:
-            from repos.kb_repo import get_kb_repo
-            kb = get_kb_repo()
-            results = await kb.search(
-                query,
-                top_k=top_k,
-                filters={"agent": self.name, "type": "knowledge"},
-            )
-            if not results:
-                # Also try the agent name variations (e.g. market_strategy_agent)
-                alt_name = self.name + "_agent"
-                results = await kb.search(
-                    query,
-                    top_k=top_k,
-                    filters={"agent": alt_name, "type": "knowledge"},
-                )
-            if results:
-                parts = ["\n\n" + "=" * 60, "REFERENCE KNOWLEDGE:", "=" * 60]
-                for r in results:
-                    parts.append(f"\n[{r.source}]\n{r.content}")
-                return "\n".join(parts)
-        except Exception as e:
-            print(f"Warning: KB reference search failed for {self.name}: {e}")
-        return ""
+        from knowledge import loader
+
+        catalog = self.reference_catalog
+        if not catalog:
+            return ""
+
+        chosen = await loader.select(self.name, context.task, catalog)
+        return loader.load(self.name, chosen[:top_k], ledger=context.ledger)
 
     async def _call_llm(
         self,

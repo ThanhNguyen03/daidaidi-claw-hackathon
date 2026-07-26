@@ -1,4 +1,4 @@
-﻿---
+---
 name: adtimabox-buyer-personas-fmcg
 description: >
   FMCG buyer personas for the client-simulator, split into two branches: Branch A (B2C consumer

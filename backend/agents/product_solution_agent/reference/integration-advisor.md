@@ -1,8 +1,8 @@
-﻿---
+---
 
 name: adtimabox-integration
 description: >
-  AdtimaBox integration advisor — activate when a client mentions an existing tech platform (POS, CRM, e-commerce, loyalty, messaging) and the agent needs to assess how it interacts with AdtimaBox. For known platforms, load the specific platform skill (platform-haravan, platform-kiotviet). For unknown platforms, this skill provides a research and assessment framework. Triggers: "client uses \[platform]", "they already have loyalty", "have their own CRM", "currently using \[software]".
+AdtimaBox integration advisor — activate when a client mentions an existing tech platform (POS, CRM, e-commerce, loyalty, messaging) and the agent needs to assess how it interacts with AdtimaBox. For known platforms, load the specific platform skill (platform-haravan, platform-kiotviet). For unknown platforms, this skill provides a research and assessment framework. Triggers: "client uses [platform]", "they already have loyalty", "have their own CRM", "currently using [software]".
 ---
 
 # AdtimaBox Integration Advisor
@@ -38,10 +38,10 @@ These AdtimaBox always owns — no 3rd party replaces them:
 **Step 1: Web search**
 
 ```
-"\[platform name] Zalo ZNS integration"
-"\[platform name] loyalty Vietnam"
-"\[platform name] API webhook"
-"\[platform name] CRM member management Vietnam"
+"[platform name] Zalo ZNS integration"
+"[platform name] loyalty Vietnam"
+"[platform name] API webhook"
+"[platform name] CRM member management Vietnam"
 ```
 
 **Step 2: Answer 5 key questions**
@@ -65,10 +65,10 @@ These AdtimaBox always owns — no 3rd party replaces them:
 **Step 4: Output**
 
 ```
-PLATFORM ASSESSMENT: \[Platform name]
-Source: \[URL searched]
+PLATFORM ASSESSMENT: [Platform name]
+Source: [URL searched]
 
-What \[platform] does in client's current flow: ...
+What [platform] does in client's current flow: ...
 What AdtimaBox REPLACES: ...
 What AdtimaBox ADDS: ...
 Overlap to clarify: ...
@@ -83,7 +83,7 @@ Needs tech confirmation: ...
 **Pattern A — Platform as data source, AdtimaBox as Zalo engagement layer**
 
 ```
-\[POS/CRM/E-commerce] → pushes transaction/member data via API
+[POS/CRM/E-commerce] → pushes transaction/member data via API
 → AdtimaBox: loyalty + messaging + MiniApp
 ```
 

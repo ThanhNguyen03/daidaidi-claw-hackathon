@@ -1,4 +1,4 @@
-﻿# Zalo Ads & ZBS Policy Reference
+# Zalo Ads & ZBS Policy Reference
 
 Source: ads.zalo.me + zalo.solutions (official) — Last verified: June 2026
 

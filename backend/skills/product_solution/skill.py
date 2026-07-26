@@ -29,7 +29,7 @@ class ProductSolutionSkill(BaseSkill):
 
     async def execute(self, context: SkillContext) -> SkillOutput:
         # Retrieve reference knowledge: platform guides, pricing ratecard, integration patterns
-        ref_context = await self.retrieve_reference_context(context.task, top_k=4)
+        ref_context = await self.retrieve_reference_context(context, top_k=4)
 
         system = self._build_system_prompt(context.constraints)
         if ref_context:

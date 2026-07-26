@@ -1,4 +1,4 @@
-﻿---
+---
 name: adtimabox-objection-bank-pharma
 description: >
   Pharma client objections by bucket. Seeds the client-simulator's questions and weak-point flags.
@@ -19,8 +19,6 @@ Severity: `deal-killer` = không trả lời được thì mất deal · `major`
 
 ---
 
-### OBJ-P01 — adoption
-
 ```
 OBJECTION: OBJ-P01
 Bucket: adoption
@@ -37,8 +35,6 @@ Strong response direction: nhấn no-install — quét QR tại quầy là vào 
 Likely persona: P-01
 ```
 
-### OBJ-P02 ⚠️ — compliance / OA ban risk
-
 ```
 OBJECTION: OBJ-P02 ⚠️
 Bucket: compliance / OA ban risk
@@ -52,8 +48,6 @@ Strong response direction: nội dung thuốc/TPCN cần Giấy xác nhận nộ
   >> Do NOT promise: KHÔNG hứa "OA chắc chắn không bị khóa". Chỉ cam kết quy trình giảm rủi ro + tư vấn.
 Likely persona: P-02
 ```
-
-### OBJ-P03 ⚠️ — data ownership / liability
 
 ```
 OBJECTION: OBJ-P03 ⚠️
@@ -69,8 +63,6 @@ Strong response direction: AdtimaBox — ISO 27001, dữ liệu lưu tại VN, a
 Likely persona: P-03 / P-04
 ```
 
-### OBJ-P04 ⚠️ — integration feasibility
-
 ```
 OBJECTION: OBJ-P04 ⚠️
 Bucket: integration feasibility
@@ -83,8 +75,6 @@ Strong response direction: AdtimaBox có API + add-on integration (inbound/outbo
   >> Do NOT promise: KHÔNG khẳng định "real-time được" tại bàn. Trả lời: "pattern khả thi, cần tech confirm về volume".
 Likely persona: P-03
 ```
-
-### OBJ-P05 ⚠️ — anti-bribery / medical ethics
 
 ```
 OBJECTION: OBJ-P05 ⚠️
@@ -100,8 +90,6 @@ Strong response direction: với HCP/ETC, KHÔNG đề xuất quà vật chất 
 Likely persona: P-04
 ```
 
-### OBJ-P06 — cost vs free channel
-
 ```
 OBJECTION: OBJ-P06
 Bucket: cost vs free channel
@@ -116,8 +104,6 @@ Strong response direction: chat free = không có owned data, không segment, kh
 Likely persona: P-05
 ```
 
-### OBJ-P07 — hidden cost
-
 ```
 OBJECTION: OBJ-P07
 Bucket: hidden cost
@@ -130,8 +116,6 @@ Strong response direction: bóc tách trước: CShub recurring + Maintenance 5M
 Likely persona: P-05
 ```
 
-### OBJ-P08 — internal adoption / change mgmt
-
 ```
 OBJECTION: OBJ-P08
 Bucket: internal adoption / change mgmt
@@ -143,8 +127,6 @@ Strong response direction: định vị Mini App là CÔNG CỤ tăng năng su�
   qua referral/assisted order), không thay thế MR. Kèm change management + KPI mới cho MR.
 Likely persona: P-01
 ```
-
-### OBJ-P09 ⚠️ — HCP data / consent
 
 ```
 OBJECTION: OBJ-P09 ⚠️
@@ -159,8 +141,6 @@ Strong response direction: consent form trong onboarding (opt-in, T&C), align Ng
 Likely persona: P-02 / P-04
 ```
 
-### OBJ-P10 — ROI / payback
-
 ```
 OBJECTION: OBJ-P10
 Bucket: ROI / payback
@@ -174,8 +154,6 @@ Strong response direction: model từ chi phí MR giảm + tần suất đặt h
 Likely persona: P-05
 ```
 
-### OBJ-P11 ⚠️ — credibility / proof-claim
-
 ```
 OBJECTION: OBJ-P11 ⚠️
 Bucket: credibility / proof-claim
@@ -188,8 +166,6 @@ Strong response direction: phân định rõ ngay từ slide — case Adtima (CS
   >> Do NOT claim: bất kỳ case nào ngoài CS-01…CS-11 là của Adtima. Nếu lỡ claim, P-04 phát hiện → mất niềm tin toàn bộ deck.
 Likely persona: P-04 / P-03
 ```
-
-### OBJ-P12 ⚠️ — compliance / Luật Dược 2024
 
 ```
 OBJECTION: OBJ-P12 ⚠️
@@ -206,8 +182,6 @@ Strong response direction: phân luồng theo loại thuốc — OTC: đặt hà
 Likely persona: P-04 / P-02
 ```
 
-### OBJ-P13 — data asset risk (MR turnover)
-
 ```
 OBJECTION: OBJ-P13
 Bucket: data asset risk (MR turnover)
@@ -223,8 +197,6 @@ Strong response direction: AdtimaBox CÓ module quản lý MR (xác nhận từ 
 Likely persona: P-01 / P-03
 ```
 
-### OBJ-P14 ⚠️ — integration / HIS fragmentation
-
 ```
 OBJECTION: OBJ-P14 ⚠️
 Bucket: integration / HIS fragmentation
@@ -238,8 +210,6 @@ Strong response direction: giai đoạn đầu KHÔNG ép tích hợp sâu HIS �
 Likely persona: P-03
 ```
 
-### OBJ-P15 — competitor (pharma-specific)
-
 ```
 OBJECTION: OBJ-P15
 Bucket: competitor (pharma-specific)
@@ -251,8 +221,6 @@ Strong response direction: [CẦN INPUT — xem file competitive-defense-pharma]
               với Zalo DMP + ISO 27001/data VN + enterprise-grade. KHÔNG bịa điểm yếu đối thủ khi chưa có intel.
 Likely persona: P-05 / P-02
 ```
-
-### OBJ-P16 — compliance / OA verification
 
 ```
 OBJECTION: OBJ-P16
