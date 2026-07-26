@@ -1,0 +1,52 @@
+# =============================================================================
+# GitLab CI — deploy to the team server (zah-28.123c.vn)
+# =============================================================================
+# The job just runs deploy/deploy.sh, so CI and a laptop deploy follow the exact
+# same path. Nothing here is a second implementation that can drift.
+#
+# Required CI/CD variable (Settings -> CI/CD -> Variables):
+#   DEPLOY_SSH_KEY   type: File, Protected: off, Masked: off
+#                    the PRIVATE half of a keypair whose public half sits in
+#                    /home/zah19-team28/.ssh/authorized_keys on the server
+#
+# PREREQUISITE: the runner must be able to reach 118.102.2.128:2222 outbound.
+# Run the `deploy:check-reachability` job first — if it fails, this GitLab
+# instance's runners are walled off from the server and you should deploy from
+# a laptop with `bash deploy/deploy.sh` instead.
+
+stages:
+  - verify
+  - deploy
+
+default:
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache bash openssh-client curl tar coreutils
+
+# Cheap pre-flight: does a runner even have a route to the box?
+deploy:check-reachability:
+  stage: verify
+  when: manual
+  allow_failure: true
+  script:
+    - |
+      if nc -z -w 10 118.102.2.128 2222; then
+        echo "OK — runner can reach the server on 2222"
+      else
+        echo "BLOCKED — this runner cannot reach 118.102.2.128:2222."
+        echo "Deploy from a laptop instead: bash deploy/deploy.sh"
+        exit 1
+      fi
+
+deploy:server:
+  stage: deploy
+  when: manual                 # hackathon demo box — never redeploy mid-pitch
+  environment:
+    name: hackathon
+    url: https://zah-28.123c.vn
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - cp "$DEPLOY_SSH_KEY" ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+    - bash deploy/deploy.sh
