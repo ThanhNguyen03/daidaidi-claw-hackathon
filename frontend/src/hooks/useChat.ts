@@ -378,7 +378,17 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           return;
         }
         if (currentModeRef.current === myMode) {
-          setError((e as Error).message);
+          // "network error" / "Failed to fetch" is what the browser reports when a
+          // stream is cut, which says nothing about whether the work survived — and
+          // the rep's own connection is usually fine. Name the likely cause and the
+          // action instead of echoing the browser's wording.
+          const raw = (e as Error).message || '';
+          const dropped = /network|failed to fetch|load failed|terminated/i.test(raw);
+          setError(
+            dropped
+              ? 'Mất kết nối tới máy chủ giữa chừng. Lượt vừa rồi có thể vẫn đang chạy — gửi lại tin nhắn sau ít giây là tiếp tục được.'
+              : raw
+          );
         }
       } finally {
         modeAbortControllers.current[myMode] = null;

@@ -5,6 +5,7 @@ Entry point for the multi-agent sales assistant backend.
 Provides REST API and SSE streaming endpoints.
 """
 
+import asyncio
 import os
 import json
 import uuid
@@ -354,6 +355,54 @@ def _json_default(value: Any) -> Any:
 def _sse_data(payload: dict[str, Any]) -> str:
     """Serialize a server-sent event payload safely."""
     return f"data: {json.dumps(payload, default=_json_default)}\n\n"
+
+
+# Sentinel yielded by _with_heartbeat when the wrapped stream has gone quiet.
+_HEARTBEAT = object()
+SSE_HEARTBEAT_S = float(os.getenv("SSE_HEARTBEAT_S", "10"))
+
+
+async def _with_heartbeat(source: AsyncGenerator[str, None], interval: float = SSE_HEARTBEAT_S):
+    """Yield from `source`, emitting a sentinel whenever it is silent for `interval`.
+
+    A turn can spend minutes inside one skill — retrying against a rate limit, or
+    just waiting on a slow completion — and during that time the SSE stream sends
+    nothing at all. An idle HTTP/2 stream gets reset somewhere in the middle
+    (nginx logged "upstream prematurely closed connection"), and the browser
+    surfaces that to the rep as a bare "network error" on a request that was in
+    fact still working.
+
+    An SSE comment line is invisible to EventSource consumers and to our own
+    parser, which only reads `data:` lines — it exists purely to keep bytes moving.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    _DONE = object()
+
+    async def pump():
+        try:
+            async for item in source:
+                await queue.put(item)
+        except Exception as exc:  # surface it on the consuming side
+            await queue.put(exc)
+        finally:
+            await queue.put(_DONE)
+
+    task = asyncio.create_task(pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=interval)
+            except asyncio.TimeoutError:
+                yield _HEARTBEAT
+                continue
+            if item is _DONE:
+                return
+            if isinstance(item, Exception):
+                raise item
+            yield item
+    finally:
+        if not task.done():
+            task.cancel()
 
 
 # =============================================================================
@@ -1228,7 +1277,12 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 print(f"Warning: profile frustration check failed (non-fatal): {_mem_e}")
 
             done_chunk = _sse_data({'type': 'done'})
-            async for chunk in process_with_central_agent(state, safe_message, resume=payload.resume):
+            async for chunk in _with_heartbeat(
+                process_with_central_agent(state, safe_message, resume=payload.resume)
+            ):
+                if chunk is _HEARTBEAT:
+                    yield ": keepalive\n\n"
+                    continue
                 if chunk != done_chunk:
                     if '"type": "assistant_message"' in chunk or '"type": "agent_message"' in chunk or '"type": "content"' in chunk:
                         assistant_emitted = True
