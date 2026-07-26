@@ -50,6 +50,25 @@ bypass_intents:
 # Phrases by which a rep explicitly accepts running on assumptions (§8.2).
 # This is the ONLY thing that downgrades a block, and it never deletes the
 # missing field — it converts it into a labelled assumption.
+# The rep telling us they cannot answer. Distinct from "proceed anyway": this does
+# NOT open the gate on its own, it only stops us repeating the same question. The
+# system responds by naming what it would assume and asking them to accept it.
+dont_know_phrases:
+  - không biết
+  - ko biết
+  - khong biet
+  - chưa biết
+  - chua biet
+  - không rõ
+  - chưa rõ
+  - chưa có thông tin
+  - chưa hỏi khách
+  - phải hỏi lại khách
+  - i don't know
+  - dont know
+  - not sure
+  - no idea
+
 proceed_anyway_phrases:
   - cứ làm đi
   - cứ chạy đi

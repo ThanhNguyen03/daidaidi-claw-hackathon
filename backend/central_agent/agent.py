@@ -561,6 +561,20 @@ class CentralAgent:
         )
         print(verdict.log_line())
 
+        # Step 2c: the model provider is down. Say so. Every skill uses the same
+        # client, so nothing useful can happen this turn, and dressing the outage up
+        # as a clarifying question just makes the rep retype their brief.
+        if assessment.get("llm_failed"):
+            msg = self._service_error_message(message)
+            print(f"[CentralAgent] reporting provider outage to user")
+            yield {"type": "content", "content": msg}
+            state.messages.append({
+                "role": "assistant", "content": msg, "agent": "central_agent",
+                "kind": "service_error", "timestamp": datetime.now().isoformat(),
+            })
+            yield {"type": "done"}
+            return
+
         must_clarify = bool(assessment.get("needs_clarification")) or not verdict.may_dispatch
 
         # Step 3A: Not cleared to dispatch → ask, and only ask
@@ -574,10 +588,21 @@ class CentralAgent:
                     f"{m.field}" for m in verdict.missing if m.blocking
                 )
                 print(f"[gate] blocked dispatch — no specialist agent ran. missing: {blocking}")
+
+            # Asking the identical question again teaches the rep nothing. If the last
+            # turn was already a clarification and this one added no new field — or the
+            # rep just told us they don't know — change tack and offer the assumption
+            # route instead of repeating (BRD §10.1: infer, then confirm).
+            stuck = self._consecutive_clarifications(state) >= 1
+            if (stuck or gate.said_dont_know(message)) and not verdict.may_dispatch:
+                clarification_msg = self._escalated_clarification(message, verdict)
+                print("[CentralAgent] repeat clarification detected — offering assumption route")
+
             yield {"type": "content", "content": clarification_msg}
             state.messages.append({
                 "role": "assistant", "content": clarification_msg,
-                "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+                "agent": "central_agent", "kind": "clarification",
+                "timestamp": datetime.now().isoformat(),
             })
             yield {"type": "done"}
             return
@@ -863,10 +888,16 @@ class CentralAgent:
         try:
             return await self._plan(state, message)
         except Exception as e:
-            print(f"[CentralAgent] Assessment LLM failed ({e}), defaulting to execute mode")
+            # Flag it. Previously this returned a normal "execute" result, so a dead
+            # provider was indistinguishable from a real plan — the turn fell through
+            # to the canned clarification and the rep saw the same paragraph every
+            # time with no hint that anything was wrong.
+            print(f"[CentralAgent] Assessment LLM failed ({e}) — cannot plan this turn")
             return {
                 "brief_update": {},
                 "needs_clarification": False,
+                "llm_failed": True,
+                "llm_error": str(e),
                 "skill_plan": _build_contextual_skill_plan(state, message),
             }
 
@@ -1025,6 +1056,82 @@ class CentralAgent:
             result["skill_plan"] = cleaned
 
         return result
+
+    @staticmethod
+    def _consecutive_clarifications(state: SalesCaseState) -> int:
+        """How many clarification turns we have just sent in a row.
+
+        Counts back from the end, stopping at the first assistant turn that was not a
+        clarification. Used to notice we are asking the same thing twice.
+        """
+        count = 0
+        for m in reversed(state.messages):
+            if m.get("role") != "assistant":
+                continue
+            if m.get("kind") == "clarification":
+                count += 1
+                continue
+            break
+        return count
+
+    def _escalated_clarification(self, message: str, verdict) -> str:
+        """Second attempt at the same question — offer to proceed on assumptions.
+
+        A rep who did not answer the first time usually cannot: the information sits
+        with their client. Repeating the question strands them. Naming what we would
+        assume and how to accept it gives them a way forward (BRD §8.2).
+        """
+        vi = bool(self._VI_CHARS.search(message) or self._VI_TOKENS.search(message))
+        missing = [m for m in verdict.missing if m.blocking] or verdict.missing
+
+        if vi:
+            lines = [
+                "Nếu giờ chưa có mấy thông tin này thì không sao — mình vẫn chạy được, "
+                "chỉ là sẽ chạy trên giả định và ghi rõ chỗ nào đang đoán.",
+                "",
+                "**Mình sẽ giả định:**",
+            ]
+            for m in missing:
+                lines.append(f"- **{m.field}** — chưa có, mình lấy mặc định phổ biến nhất cho tình huống này")
+            lines += [
+                "",
+                'Bạn nhắn **"cứ làm đi"** là mình chạy luôn với giả định trên. '
+                "Còn nếu tiện hỏi khách thì chỉ cần ngành hàng và mục tiêu là đủ để mình "
+                "ra được phán quyết khả thi chính xác.",
+            ]
+            return "\n".join(lines)
+
+        lines = [
+            "No problem if you don't have these yet — I can still run, I'll just work "
+            "from assumptions and label every one of them.",
+            "",
+            "**I would assume:**",
+        ]
+        for m in missing:
+            lines.append(f"- **{m.field}** — not given, I'll take the most common default")
+        lines += [
+            "",
+            'Reply **"just do it"** and I\'ll go ahead on those. If you can check with the '
+            "client, industry and objective alone are enough for an accurate feasibility call.",
+        ]
+        return "\n".join(lines)
+
+    def _service_error_message(self, message: str) -> str:
+        """Told plainly, because a fake question wastes the rep's time."""
+        vi = bool(self._VI_CHARS.search(message) or self._VI_TOKENS.search(message))
+        if vi:
+            return (
+                "Mình đang không kết nối được tới dịch vụ mô hình nên chưa xử lý được "
+                "yêu cầu này. Đây là sự cố hệ thống, không phải do brief của bạn thiếu "
+                "gì cả — bạn thử lại sau ít phút giúp mình nhé. Nếu vẫn lỗi thì báo team "
+                "kỹ thuật kiểm tra API key."
+            )
+        return (
+            "I can't reach the model service right now, so I couldn't process this. "
+            "That's a system problem, not anything missing from your brief — please try "
+            "again in a few minutes, and if it persists, ask the tech team to check the "
+            "API key."
+        )
 
     def _fallback_clarification(self, message: str) -> str:
         """Fallback clarification message when LLM fails to generate one."""

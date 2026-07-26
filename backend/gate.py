@@ -140,6 +140,19 @@ def said_proceed_anyway(text: str, history: Optional[list[dict]] = None) -> bool
     return any(p in haystack for p in phrases)
 
 
+def said_dont_know(text: str) -> bool:
+    """Did the rep just tell us they cannot answer?
+
+    Deliberately does NOT open the gate — only "cứ làm đi" does that. This exists so
+    the system stops repeating a question the rep already said they can't answer, and
+    instead offers to proceed on named assumptions.
+    """
+    policy = load_policy()
+    phrases = [p.lower() for p in policy.get("dont_know_phrases", [])]
+    haystack = (text or "").lower()
+    return any(p in haystack for p in phrases)
+
+
 def _conditional_applies(entry: dict, brief: Any, text: str) -> bool:
     triggers = [t.lower() for t in entry.get("when_any_of", [])]
     if not triggers:
