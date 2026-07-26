@@ -1287,6 +1287,13 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 if assets:
                     yield _sse_data({"type": "proposal_assets", **assets})
 
+                # The raw PPTX has been copied into the artifact store; drop it from
+                # session state. It is binary, and SalesCaseState is serialised to JSON
+                # on every save — leaving it there failed persistence outright with
+                # "invalid utf-8 sequence", so any session that produced a deck silently
+                # stopped being saved from that point on.
+                wp.pop("pptx_bytes", None)
+
             # Save final state to in-memory store
             update_session(state)
 

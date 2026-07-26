@@ -724,6 +724,18 @@ class CentralAgent:
                 if not skill:
                     print(f"[CentralAgent] Skill not found: {skill_name}, skipping")
                     continue
+
+                # Approving a confirmation stop means "carry on", not "start over".
+                # The planner rebuilds the full plan on the resume turn, so without this
+                # the analysis skills all ran a second time — wasted minutes, and on a
+                # rate-limited tier it burned the quota the deck extractor needed next,
+                # which is how a proposal ended up with only a cover and a closing slide.
+                # Re-running is what a *rejection* is for (BRD §11.3).
+                if resuming and skill_name not in _ALWAYS_SEQUENTIAL:
+                    prior = state.outputs.get(skill_name)
+                    if prior is not None and _safe_field(prior, "status", "") == "COMPLETE":
+                        print(f"[CentralAgent] {skill_name}: reusing result from before the checkpoint")
+                        continue
                 # Merge prior session outputs with current-run group outputs so skills
                 # can build on previous analysis when handling follow-up questions.
                 merged_previous = {

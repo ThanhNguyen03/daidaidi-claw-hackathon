@@ -577,8 +577,10 @@ class HTMLDeckGenerator:
         from llm.greennode import get_llm_client
         from skills.base import strip_think_blocks, extract_json_block
 
-        # Use design model (minimax) — better at strict JSON-only output, no thinking mode issues
-        client = get_llm_client("design")
+        # Dedicated slot rather than the design skill's model, so this call can be
+        # pointed at something light. It fires at the same moment as the 16k-token
+        # proposal assembler, and that pair is what exhausts a rate-limited tier.
+        client = get_llm_client("deck_extractor")
         brand_hint = (brief or {}).get("industry", "")
         # Second attempt: shorter input to reduce LLM confusion on retry.
         # First attempt: up to 80k chars (4 skill outputs at ~15k each + brief = ~65k).

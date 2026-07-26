@@ -117,6 +117,18 @@ class WireframeDesignerSkill(BaseSkill):
             print(f"[WireframeDesigner] Slide extraction error: {e}")
             slides_data = extractor._fallback_slides(brief_dict)
 
+        # Extraction failing leaves only the scaffold: a cover and a closing slide and
+        # nothing between them. That used to be handed over as if it were a finished
+        # deck, so the first sign of trouble was a rep opening a two-page proposal.
+        # Say it out loud instead.
+        content_slides = [s for s in slides_data if s.get("type") not in ("cover", "closing")]
+        degraded = len(content_slides) == 0
+        if degraded:
+            print(
+                f"[WireframeDesigner] DEGRADED: no content slides extracted "
+                f"({len(slides_data)} scaffold slide(s) only) — deck has cover + closing only"
+            )
+
         # 1. HTML deck — render only (no extra LLM call)
         html_content = ""
         try:
@@ -153,7 +165,15 @@ class WireframeDesignerSkill(BaseSkill):
                 "html_content": html_content,
                 "pptx_bytes": pptx_bytes,
                 "session_id": sid,
+                "degraded": degraded,
+                "slide_count": len(slides_data),
             },
-            summary="Đã tạo proposal deck (HTML + PPTX)",
+            summary=(
+                "⚠️ Deck chỉ dựng được trang bìa và trang kết — bước trích nội dung "
+                "slide thất bại (thường do hết hạn mức gọi model). Nội dung proposal "
+                "dạng văn bản vẫn đầy đủ; chạy lại lệnh tạo deck sau ít phút."
+                if degraded
+                else f"Đã tạo proposal deck ({len(slides_data)} slide, HTML + PPTX)"
+            ),
             content="",  # no visible chat content — assets delivered via proposal_assets event
         )

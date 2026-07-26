@@ -87,6 +87,14 @@ _INFLIGHT = threading.BoundedSemaphore(LLM_MAX_CONCURRENCY)
 # GreenNode MAAS among them, and Gemini itself 400s on the value "none".
 LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "").strip()
 
+# Retry budget. Tunable because how long it takes a quota window to roll over is a
+# property of the plan you are on, not of this code. Measured on Gemini's free tier:
+# a full proposal run produced 28 rate-limit errors and seven calls exhausted every
+# attempt, which failed four skills and left the deck with only a cover and a closing
+# slide. Waiting longer is the only free remedy; the real fix is paid quota.
+LLM_RETRY_ATTEMPTS = int(os.getenv("LLM_RETRY_ATTEMPTS", "6"))
+LLM_RETRY_MAX_WAIT_S = int(os.getenv("LLM_RETRY_MAX_WAIT_S", "60"))
+
 # Per-agent/skill model mapping (from environment)
 MODEL_MAPPING = {
     # Legacy agent names (kept for backward compat)
@@ -105,6 +113,13 @@ MODEL_MAPPING = {
     "predict_agent": os.getenv("MODEL_PREDICT_AGENT", "minimax/minimax-m2.5"),
     # Synthesis skill (default to minimax; override via MODEL_PROPOSAL_ASSEMBLER)
     "proposal_assembler": os.getenv("MODEL_PROPOSAL_ASSEMBLER", "minimax/minimax-m2.5"),
+    # Slide extraction for the deck. Separated from "design" so it can be pointed at a
+    # lighter model: it runs concurrently with the 16k-token proposal assembler, and on
+    # a rate-limited tier those two together were reliably the pair that drew the 429 —
+    # which silently degraded the deck to just a cover and a closing slide.
+    "deck_extractor": os.getenv(
+        "MODEL_DECK_EXTRACTOR", os.getenv("MODEL_DESIGN", "minimax/minimax-m2.5")
+    ),
 }
 
 
@@ -223,8 +238,8 @@ class GreenNodeClient:
         )
 
     @retry(
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=1.5, min=2, max=30),
+        stop=stop_after_attempt(LLM_RETRY_ATTEMPTS),
+        wait=wait_exponential(multiplier=2, min=4, max=LLM_RETRY_MAX_WAIT_S),
         retry=retry_if_exception_type(
             (APITimeoutError, APIConnectionError, RateLimitError, InternalServerError)
         ),
