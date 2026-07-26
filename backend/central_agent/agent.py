@@ -644,7 +644,7 @@ class CentralAgent:
         # client, so nothing useful can happen this turn, and dressing the outage up
         # as a clarifying question just makes the rep retype their brief.
         if assessment.get("llm_failed"):
-            msg = self._service_error_message(message)
+            msg = self._service_error_message(message, state)
             print(f"[CentralAgent] reporting provider outage to user")
             yield {"type": "content", "content": msg}
             state.messages.append({
@@ -666,7 +666,7 @@ class CentralAgent:
         if must_clarify:
             clarification_msg = (
                 assessment.get("clarification_message")
-                or self._fallback_clarification(message)
+                or self._fallback_clarification(message, state)
             )
             if not verdict.may_dispatch and verdict.missing:
                 blocking = ", ".join(
@@ -680,7 +680,7 @@ class CentralAgent:
             # route instead of repeating (BRD §10.1: infer, then confirm).
             stuck = self._consecutive_clarifications(state) >= 1
             if (stuck or gate.said_dont_know(message)) and not verdict.may_dispatch:
-                clarification_msg = self._escalated_clarification(message, verdict)
+                clarification_msg = self._escalated_clarification(message, verdict, state)
                 print("[CentralAgent] repeat clarification detected — offering assumption route")
 
             yield {"type": "content", "content": clarification_msg}
@@ -1169,6 +1169,25 @@ class CentralAgent:
 
         return result
 
+    def _is_vietnamese(self, message: str, state: Optional[SalesCaseState] = None) -> bool:
+        """Decide the reply language from the whole conversation, not one message.
+
+        System-generated nudges — "Continue", "Tiếp tục" — carry the turn after a
+        checkpoint or a question card, and judging on those alone answered a
+        Vietnamese rep in English. Their own earlier messages are the real signal.
+        """
+        if self._VI_CHARS.search(message) or self._VI_TOKENS.search(message):
+            return True
+        if state is None:
+            return False
+        for m in reversed(state.messages):
+            if m.get("role") != "user":
+                continue
+            text = m.get("content") or ""
+            if self._VI_CHARS.search(text) or self._VI_TOKENS.search(text):
+                return True
+        return False
+
     @staticmethod
     def _consecutive_clarifications(state: SalesCaseState) -> int:
         """How many clarification turns we have just sent in a row.
@@ -1186,14 +1205,14 @@ class CentralAgent:
             break
         return count
 
-    def _escalated_clarification(self, message: str, verdict) -> str:
+    def _escalated_clarification(self, message: str, verdict, state=None) -> str:
         """Second attempt at the same question — offer to proceed on assumptions.
 
         A rep who did not answer the first time usually cannot: the information sits
         with their client. Repeating the question strands them. Naming what we would
         assume and how to accept it gives them a way forward (BRD §8.2).
         """
-        vi = bool(self._VI_CHARS.search(message) or self._VI_TOKENS.search(message))
+        vi = self._is_vietnamese(message, state)
         missing = [m for m in verdict.missing if m.blocking] or verdict.missing
 
         if vi:
@@ -1228,9 +1247,9 @@ class CentralAgent:
         ]
         return "\n".join(lines)
 
-    def _service_error_message(self, message: str) -> str:
+    def _service_error_message(self, message: str, state=None) -> str:
         """Told plainly, because a fake question wastes the rep's time."""
-        vi = bool(self._VI_CHARS.search(message) or self._VI_TOKENS.search(message))
+        vi = self._is_vietnamese(message, state)
         if vi:
             return (
                 "Mình đang không kết nối được tới dịch vụ mô hình nên chưa xử lý được "
@@ -1245,9 +1264,9 @@ class CentralAgent:
             "API key."
         )
 
-    def _fallback_clarification(self, message: str) -> str:
+    def _fallback_clarification(self, message: str, state=None) -> str:
         """Fallback clarification message when LLM fails to generate one."""
-        lang = "vi" if (self._VI_CHARS.search(message) or self._VI_TOKENS.search(message)) else "en"
+        lang = "vi" if self._is_vietnamese(message, state) else "en"
         if lang == "vi":
             return (
                 "Để mình có thể tư vấn giải pháp phù hợp nhất, bạn có thể chia sẻ thêm một chút:\n\n"

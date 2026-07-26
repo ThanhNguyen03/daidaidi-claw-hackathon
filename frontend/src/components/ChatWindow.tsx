@@ -31,6 +31,48 @@ interface ChatWindowProps {
   onToggleMobileSidebar?: () => void;
 }
 
+// Openers for an empty chat. Written as briefs a rep would actually paste, not as
+// feature names — "làm proposal" teaches nothing about what to put in one, whereas
+// a filled-in example shows the shape of a brief that gets a good answer first try.
+const SALES_STARTERS = [
+  {
+    icon: '🥤',
+    label: 'Brief FMCG đầy đủ',
+    prompt:
+      'Brand nước giải khát FMCG, muốn tăng mua lại qua loyalty trên Zalo. Ngân sách 300 triệu, chạy Q4. Làm proposal giúp mình.',
+  },
+  {
+    icon: '💊',
+    label: 'Ngành dược, cần soát pháp lý',
+    prompt:
+      'Khách dược phẩm muốn làm chương trình tích điểm cho nhà thuốc. Kiểm giúp mình phần pháp lý và đề xuất giải pháp.',
+  },
+  {
+    icon: '💰',
+    label: 'Hỏi nhanh giá gói',
+    prompt: 'Gói CShub Base 3 và Pro 1 khác nhau gì, giá 12 tháng bao nhiêu?',
+  },
+  {
+    icon: '🛡️',
+    label: 'Tập phản biện trước khi pitch',
+    prompt:
+      'Mai mình pitch cho khách FMCG đang so sánh với CNV Loyalty. Đóng vai khách và phản biện giúp mình.',
+  },
+];
+
+const CS_STARTERS = [
+  {
+    icon: '📖',
+    label: 'Tra hướng dẫn',
+    prompt: 'Khách hỏi tại sao không export được data thành viên, giải thích giúp mình.',
+  },
+  {
+    icon: '🐞',
+    label: 'Báo lỗi để tạo ticket',
+    prompt: 'Khách báo voucher đã phát nhưng không thấy trong ví, mình cần tạo ticket.',
+  },
+];
+
 // Checkpoint Card Component
 function CheckpointCard({
   checkpoint,
@@ -402,18 +444,53 @@ export function ChatWindow({
       <div className="flex-1 overflow-y-auto min-h-0 relative" ref={messagesContainerRef} onScroll={handleScroll}>
         <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-8 py-3 md:py-4">
         {messages.length === 0 && (
-          <div className="text-center py-6 sm:py-8 text-text-muted">
-            {mode === 'cs' ? (
-              <>
-                <p className="text-base sm:text-[16px] text-text mb-1.5 sm:mb-2">CSHub Support Assistant 🎧</p>
-                <p className="text-xs sm:text-[12px]">Tra cứu hướng dẫn sử dụng CSHub, hoặc intake bug để tạo Jira ticket.</p>
-              </>
-            ) : (
-              <>
-                <p className="text-base sm:text-[16px] text-text mb-1.5 sm:mb-2">Welcome to AdtimaBox Sales Agent! 👋</p>
-                <p className="text-xs sm:text-[12px]">I&apos;m your multi-agent sales assistant. How can I help you today?</p>
-              </>
-            )}
+          <div className="py-6 sm:py-10">
+            <div className="mb-6 text-center text-text-muted">
+              {mode === 'cs' ? (
+                <>
+                  <p className="mb-1.5 text-base text-text sm:text-[16px]">CSHub Support Assistant 🎧</p>
+                  <p className="text-xs sm:text-[12px]">
+                    Tra cứu hướng dẫn sử dụng CSHub, hoặc intake bug để tạo Jira ticket.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="mb-1.5 text-base text-text sm:text-[16px]">
+                    Chào bạn 👋 Mình là AdtimaBox Sales Agent
+                  </p>
+                  <p className="text-xs sm:text-[12px]">
+                    Mô tả brief của khách, mình lo phần chiến lược, giải pháp, pháp lý và báo giá.
+                  </p>
+                </>
+              )}
+            </div>
+
+            {/* An empty box with a blinking cursor tells a rep nothing about what this
+                thing can do. These are real openers: one click sends, and the shape of
+                the list doubles as the answer to "what am I supposed to type here". */}
+            <div className="mx-auto grid max-w-3xl gap-2 sm:grid-cols-2">
+              {(mode === 'cs' ? CS_STARTERS : SALES_STARTERS).map((s) => (
+                <button
+                  key={s.prompt}
+                  type="button"
+                  disabled={isLoading}
+                  onClick={() => onSendMessage(s.prompt)}
+                  className="group rounded-xl border border-border bg-surface/60 p-3.5 text-left transition-all hover:border-accent hover:bg-accent-soft/40 active:scale-[0.99] disabled:opacity-50"
+                >
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className="text-base">{s.icon}</span>
+                    <span className="text-[13px] font-semibold text-text group-hover:text-accent-text">
+                      {s.label}
+                    </span>
+                  </div>
+                  <p className="text-[12px] leading-snug text-text-muted">{s.prompt}</p>
+                </button>
+              ))}
+            </div>
+
+            <p className="mt-4 text-center text-[11px] text-text-muted">
+              Hoặc gõ brief của bạn bên dưới — thiếu gì mình sẽ hỏi lại.
+            </p>
           </div>
         )}
 
