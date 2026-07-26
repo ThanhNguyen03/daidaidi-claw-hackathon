@@ -27,6 +27,10 @@ services:
       - PORT=8000
       - HOST=0.0.0.0
       - DEBUG=false
+      # The §14 audit trail (gate state, PII counts, which documents were loaded)
+      # goes to stdout. Block buffering would hold those lines back for minutes,
+      # which is useless when you are trying to see why a turn behaved oddly.
+      - PYTHONUNBUFFERED=1
       # nginx is the only client uvicorn ever sees. Without this, every request
       # looks like it comes from the docker bridge gateway and slowapi's
       # per-IP rate limit (10/min) would be shared by ALL demo users at once.
@@ -60,6 +64,11 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      # Next.js standalone binds to $HOSTNAME, and Docker sets that to the container
+      # ID — which resolves to the container's own IP, so the server listened on
+      # 172.x only and nothing inside could reach it on localhost. The published port
+      # still worked, so the only visible symptom was a permanently failing healthcheck.
+      - HOSTNAME=0.0.0.0
       - NEXT_PUBLIC_API_URL=https://zah-28.123c.vn/api
     ports:
       - "127.0.0.1:3000:3000"
@@ -67,7 +76,9 @@ services:
       - backend
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
+      # 127.0.0.1, not localhost: busybox wget resolves localhost to ::1 first and the
+      # server only listens on IPv4, so the probe was refused while the app was fine.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
