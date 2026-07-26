@@ -60,7 +60,7 @@ interface UseChatReturn {
   } | null;
 
   // Actions
-  sendMessage: (message: string, brief?: Brief) => Promise<void>;
+  sendMessage: (message: string, brief?: Brief, resume?: boolean) => Promise<void>;
   answerQuestion: (questionId: string, answer: string) => Promise<void>;
   answerAllQuestions: (answers: Record<string, string>) => Promise<void>;
   skipQuestion: (questionId: string) => Promise<void>;
@@ -262,7 +262,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
   // Send message with SSE streaming
   const sendMessage = useCallback(
-    async (message: string, brief?: Brief) => {
+    async (message: string, brief?: Brief, resume = false) => {
       // Capture origin mode first — everything below is scoped to this mode.
       const myMode = mode;
 
@@ -290,7 +290,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       const isCs = mode === 'cs';
       const requestBody = isCs
         ? JSON.stringify({ message, session_id: sessionId, salesperson_id: salespersonId })
-        : JSON.stringify({ message, session_id: sessionId, salesperson_id: salespersonId, mode, brief });
+        : JSON.stringify({ message, session_id: sessionId, salesperson_id: salespersonId, mode, brief, resume });
 
       try {
         response = await fetch(`${BACKEND_URL}${isCs ? '/cs/chat/stream' : '/chat/stream'}`, {
@@ -776,7 +776,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
         if (remaining.length === 0) {
           // Everything answered — let the pipeline pick up where it stopped.
-          await sendMessage('Tiếp tục');
+          await sendMessage('Tiếp tục', undefined, true);
         }
       } catch (e) {
         setError((e as Error).message);
@@ -1005,7 +1005,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       // Approving has to restart it — otherwise the card just disappears and the
       // rep is left staring at a conversation that stopped for no visible reason.
       if (data.resume) {
-        await sendMessage('Tiếp tục');
+        await sendMessage('Tiếp tục', undefined, true);
       }
     } catch (e) {
       setError((e as Error).message);

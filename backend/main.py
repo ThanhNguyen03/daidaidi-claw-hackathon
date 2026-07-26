@@ -163,6 +163,15 @@ class ChatRequest(BaseModel):
     )
     brief: Optional[Brief] = Field(None, description="Initial brief data")
     context: Optional[dict] = Field(None, description="Additional context")
+    resume: bool = Field(
+        False,
+        description=(
+            "This turn is the UI nudging a paused pipeline back to life after a "
+            "checkpoint approval or a question card, not something the rep typed. "
+            "Inferring it from the text does not work: the nudge reads as small talk "
+            "and got answered with a greeting."
+        ),
+    )
 
 
 class ChatResponse(BaseModel):
@@ -786,6 +795,7 @@ def _extract_agent_content(agent_name: str, output) -> str:
 async def process_with_central_agent(
     state: SalesCaseState,
     message: str,
+    resume: bool = False,
 ) -> AsyncGenerator[str, None]:
     """
     Process message using the central agent + skills system.
@@ -813,7 +823,7 @@ async def process_with_central_agent(
     central_agent = get_central_agent()
 
     has_content = False
-    async for event in central_agent.run(state, message):
+    async for event in central_agent.run(state, message, resume=resume):
         etype = event.get("type", "")
         if etype not in ("done",):
             if etype in ("content", "agent_message", "assistant_message", "question_card"):
@@ -1218,7 +1228,7 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 print(f"Warning: profile frustration check failed (non-fatal): {_mem_e}")
 
             done_chunk = _sse_data({'type': 'done'})
-            async for chunk in process_with_central_agent(state, safe_message):
+            async for chunk in process_with_central_agent(state, safe_message, resume=payload.resume):
                 if chunk != done_chunk:
                     if '"type": "assistant_message"' in chunk or '"type": "agent_message"' in chunk or '"type": "content"' in chunk:
                         assistant_emitted = True

@@ -615,7 +615,7 @@ class CentralAgent:
         return any(kw in haystack for kw in self._PROPOSAL_INTENT_KWS)
 
     async def run(
-        self, state: SalesCaseState, message: str
+        self, state: SalesCaseState, message: str, resume: bool = False
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Process a user message.
@@ -639,13 +639,22 @@ class CentralAgent:
         # nudge after approval, and "Tiếp tục" is exactly the shape the casual-chat
         # detector matches — so the pipeline greeted the rep instead of carrying on.
         # The approved checkpoint sitting on the session is the real signal.
-        resuming = bool(
+        # The caller says so explicitly. Inferring it from an approved checkpoint
+        # covered the two confirmation stops but not the question card, which pauses
+        # without one — so answering the card and being nudged with "Tiếp tục" landed
+        # in the casual-chat branch and the rep got greeted instead of an analysis.
+        resuming = bool(resume) or bool(
             state.checkpoint
             and state.checkpoint.status == "APPROVED"
             and state.checkpoint.action.type in ("confirm_brief", "confirm_solution")
         )
         if resuming:
-            print(f"[checkpoint] resuming after {state.checkpoint.action.type}")
+            reason = (
+                state.checkpoint.action.type
+                if state.checkpoint and state.checkpoint.status == "APPROVED"
+                else "question card answered"
+            )
+            print(f"[resume] continuing after {reason}")
             state.checkpoint = None  # consumed; a later stop will raise a fresh one
 
         # Step 1: Quick check — is this just a greeting/casual chat?
