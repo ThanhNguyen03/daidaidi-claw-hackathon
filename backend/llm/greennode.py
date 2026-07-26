@@ -24,10 +24,17 @@ Usage:
 
 import os
 import json
+import threading
 from typing import Optional, Generator, Any
 from dataclasses import dataclass
 
-from openai import APIConnectionError, APITimeoutError, OpenAI
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    InternalServerError,
+    OpenAI,
+    RateLimitError,
+)
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from dotenv import load_dotenv
 from tenacity import (
@@ -55,6 +62,30 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 # below central_agent's per-skill wall-clock budget (_SKILL_TIMEOUT_S, currently 270s) but high
 # enough that a real (non-hung) completion isn't killed mid-generation.
 LLM_REQUEST_TIMEOUT_S = float(os.getenv("LLM_REQUEST_TIMEOUT_S", "240.0"))
+
+# Cap on in-flight completions across the whole process.
+#
+# A full proposal turn fans out — planner, a knowledge selector per skill, four
+# specialists in parallel, then assembler and synthesis. Measured against Gemini's
+# free tier, six simultaneous requests already draws a 429. Retrying after the fact
+# helps, but not colliding in the first place is cheaper and keeps latency honest.
+#
+# Enforced with a threading semaphore rather than an asyncio one because every call
+# site funnels through run_in_executor, so the blocking happens on worker threads.
+LLM_MAX_CONCURRENCY = int(os.getenv("LLM_MAX_CONCURRENCY", "3"))
+_INFLIGHT = threading.BoundedSemaphore(LLM_MAX_CONCURRENCY)
+
+# Reasoning budget, sent as OpenAI's `reasoning_effort`.
+#
+# Gemini 3.x thinks by default, and its thinking tokens are drawn from the same
+# max_tokens budget as the answer. Measured on gemini-3.6-flash with this project's
+# planner prompt: default thinking never returned inside 150s, and gemini-3.5-flash
+# came back with finish_reason "length" having spent the whole budget without
+# producing an answer. "low" returns in ~11s and finishes cleanly.
+#
+# Empty string disables the parameter entirely, for providers that reject it —
+# GreenNode MAAS among them, and Gemini itself 400s on the value "none".
+LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "").strip()
 
 # Per-agent/skill model mapping (from environment)
 MODEL_MAPPING = {
@@ -127,17 +158,18 @@ class GreenNodeClient:
         Returns:
             ChatCompletion (non-streaming) or Generator of ChatCompletionChunk (streaming)
         """
-        # For streaming, we cannot retry easily as the generator would be consumed
-        # NOTE: If you need retry on streaming, consider using a non-streaming call first
-        # then convert to streaming, or handle retries at a higher level
+        # Streaming can be retried too, as long as it is only the *opening* of the
+        # stream being retried — no chunk has been consumed yet, so nothing is
+        # duplicated. Previously this path had no retry at all, which meant a single
+        # 429 on the synthesis call ended the turn with no answer at all: the most
+        # visible call in the product was also the least protected.
         if stream:
-            return self._create_completion_no_retry(
+            return self._open_stream_with_retry(
                 messages=messages,
                 tools=tools,
                 tool_choice=tool_choice,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                stream=True,
                 **kwargs,
             )
 
@@ -153,13 +185,20 @@ class GreenNodeClient:
         )
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
+        stop=stop_after_attempt(5),
+        # Longer ceiling than the old 10s: a rate limit needs the quota window to roll
+        # over, and giving up after 10s just turns a wait into a failed turn.
+        wait=wait_exponential(multiplier=1.5, min=2, max=30),
         # openai raises APITimeoutError/APIConnectionError (not the builtin TimeoutError)
-        # on request timeouts and connection failures — retry on those.
-        retry=retry_if_exception_type((APITimeoutError, APIConnectionError)),
+        # on request timeouts and connection failures.
+        # RateLimitError was missing despite the docstring claiming it was covered — on a
+        # free tier that fires constantly, and an unretried 429 kills the whole turn.
+        retry=retry_if_exception_type(
+            (APITimeoutError, APIConnectionError, RateLimitError, InternalServerError)
+        ),
         before_sleep=lambda retry_state: print(
-            f"Retrying... attempt {retry_state.attempt_number}"
+            f"[llm] retry {retry_state.attempt_number}/5 after "
+            f"{type(retry_state.outcome.exception()).__name__}"
         ),
     )
     def _create_completion_with_retry(
@@ -180,6 +219,38 @@ class GreenNodeClient:
             temperature=temperature,
             max_tokens=max_tokens,
             stream=stream,
+            **kwargs,
+        )
+
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1.5, min=2, max=30),
+        retry=retry_if_exception_type(
+            (APITimeoutError, APIConnectionError, RateLimitError, InternalServerError)
+        ),
+        before_sleep=lambda retry_state: print(
+            f"[llm] stream retry {retry_state.attempt_number}/5 after "
+            f"{type(retry_state.outcome.exception()).__name__}"
+        ),
+    )
+    def _open_stream_with_retry(
+        self,
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]] = None,
+        tool_choice: Optional[str | dict] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs,
+    ) -> Generator[ChatCompletionChunk, None, None]:
+        """Open a stream, retrying only the handshake — safe because no chunk has
+        been read yet, so a retry cannot duplicate output."""
+        return self._create_completion_no_retry(
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True,
             **kwargs,
         )
 
@@ -206,10 +277,20 @@ class GreenNodeClient:
             params["tool_choice"] = tool_choice
         if max_tokens:
             params["max_tokens"] = max_tokens
+        if LLM_REASONING_EFFORT:
+            params["reasoning_effort"] = LLM_REASONING_EFFORT
 
         params.update(kwargs)
 
-        return self._client.chat.completions.create(**params)
+        # Every completion in the process passes through here, so this is the one
+        # place the concurrency cap can be applied without threading a limiter
+        # through the orchestrator, the skills and the knowledge selector.
+        #
+        # For a stream, the semaphore is released as soon as the generator is handed
+        # back rather than when it finishes: holding a slot for the whole token
+        # stream would serialise the one call the user is actually watching.
+        with _INFLIGHT:
+            return self._client.chat.completions.create(**params)
 
     async def async_create_completion(
         self,

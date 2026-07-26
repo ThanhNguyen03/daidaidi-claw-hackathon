@@ -49,6 +49,9 @@ AGENTS_DIR = os.path.abspath(os.path.join(_HERE, "..", "agents"))
 # small enough that the system prompt does not crowd out the conversation.
 KNOWLEDGE_CHAR_BUDGET = int(os.getenv("KNOWLEDGE_CHAR_BUDGET", "48000"))
 
+# Catalogs this size or smaller skip the selector call and load everything.
+SELECTOR_MIN_CATALOG = int(os.getenv("KNOWLEDGE_SELECTOR_MIN_CATALOG", "2"))
+
 # Logical skill name -> directory under backend/agents. Mirrors
 # tools/ingest.py:AGENT_SOURCE_PRIORITY so both paths agree on where an agent lives.
 AGENT_DIRS: dict[str, list[str]] = {
@@ -268,8 +271,13 @@ async def select(agent: str, task: str, catalog: list[ReferenceEntry]) -> list[s
     """
     if not catalog:
         return []
-    if len(catalog) == 1:
-        return [catalog[0].filename]
+    # Below this many references, choosing costs more than just taking them all: the
+    # selector is itself a model call, and on a rate-limited tier the extra request is
+    # more expensive than the extra tokens. Only fan out when there is a real choice.
+    if len(catalog) <= SELECTOR_MIN_CATALOG:
+        names = [e.filename for e in catalog]
+        print(f"[knowledge] {agent}: {len(names)} ref(s) declared — loading all, no selector call")
+        return names
 
     listing = "\n".join(f"- {e.filename}: {e.purpose}" for e in catalog)
     user_msg = f"TASK:\n{task[:1500]}\n\nAVAILABLE DOCUMENTS:\n{listing}"

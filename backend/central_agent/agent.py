@@ -531,8 +531,23 @@ class CentralAgent:
         if self._detect_proposal_intent(state, message) and "proposal" not in state.desired_outputs:
             state.desired_outputs.append("proposal")
 
+        # Is this turn the continuation of an approved confirmation stop?
+        #
+        # Resuming must not depend on what the rep typed. The frontend sends a short
+        # nudge after approval, and "Tiếp tục" is exactly the shape the casual-chat
+        # detector matches — so the pipeline greeted the rep instead of carrying on.
+        # The approved checkpoint sitting on the session is the real signal.
+        resuming = bool(
+            state.checkpoint
+            and state.checkpoint.status == "APPROVED"
+            and state.checkpoint.action.type in ("confirm_brief", "confirm_solution")
+        )
+        if resuming:
+            print(f"[checkpoint] resuming after {state.checkpoint.action.type}")
+            state.checkpoint = None  # consumed; a later stop will raise a fresh one
+
         # Step 1: Quick check — is this just a greeting/casual chat?
-        if self._is_casual(message):
+        if not resuming and self._is_casual(message):
             response = await self._casual_reply(message)
             yield {"type": "content", "content": response}
             state.messages.append({
@@ -575,7 +590,13 @@ class CentralAgent:
             yield {"type": "done"}
             return
 
-        must_clarify = bool(assessment.get("needs_clarification")) or not verdict.may_dispatch
+        # On a resume the rep has just approved this brief on screen. The planner sees
+        # only the short nudge that carried the turn and will often ask for more; that
+        # would bounce them straight back to a question they already answered. The gate
+        # still applies — it just no longer takes the planner's opinion as a veto.
+        must_clarify = not verdict.may_dispatch or (
+            bool(assessment.get("needs_clarification")) and not resuming
+        )
 
         # Step 3A: Not cleared to dispatch → ask, and only ask
         if must_clarify:

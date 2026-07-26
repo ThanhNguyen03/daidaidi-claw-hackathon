@@ -215,11 +215,23 @@ class CheckpointManager:
         else:
             raise ValueError(f"Invalid decision: {decision}")
 
+    # Confirmation stops (BRD §11) gate the pipeline rather than producing an
+    # artifact, so approving one has no side effect to execute. They are listed here
+    # instead of being given no-op handlers, so that a *generating* action with a
+    # missing handler still fails loudly.
+    _NO_SIDE_EFFECT_ACTIONS = {"confirm_brief", "confirm_solution"}
+
     async def _approve(self, checkpoint: Checkpoint) -> Checkpoint:
         """
         Process APPROVE decision.
         Executes the side-effecting action.
         """
+        if checkpoint.action.type in self._NO_SIDE_EFFECT_ACTIONS:
+            checkpoint.status = "APPROVED"
+            checkpoint.decided_at = datetime.now()
+            checkpoint.updated_at = datetime.now()
+            return checkpoint
+
         handler = self._handlers.get(checkpoint.action.type)
         if not handler:
             raise ValueError(f"No handler registered for: {checkpoint.action.type}")
