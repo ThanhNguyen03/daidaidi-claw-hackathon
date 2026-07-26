@@ -12,6 +12,7 @@ import { Sidebar } from '../components/Sidebar';
 import { ChatWindow } from '../components/ChatWindow';
 import { ContextPanel } from '../components/ContextPanel';
 import { MobileNav } from '../components/MobileNav';
+import { AttentionField } from '../components/AttentionField';
 import { useChat } from '../hooks/useChat';
 import type { ChatMode } from '../lib/types';
 import { getApiBaseUrl } from '../lib/api';
@@ -20,6 +21,7 @@ export default function Home() {
   // Identity state (demo mode - simple name input)
   const [isIdentified, setIsIdentified] = useState(false);
   const [salespersonName, setSalespersonName] = useState('');
+  const [isBooting, setIsBooting] = useState(false);
 
   // Mode state
   const [mode, setMode] = useState<ChatMode>('chat');
@@ -130,11 +132,13 @@ export default function Home() {
     }
   }, [isIdentified, salespersonName, loadConstraints, loadProfile]);
 
-  // Handle identity submission
+  // Handle identity submission. The boot animation runs first, then the app
+  // mounts — 950ms, matched to the CSS keyframes in globals.css (.tf-lock).
   const handleIdentify = (e: React.FormEvent) => {
     e.preventDefault();
-    if (salespersonName.trim()) {
-      setIsIdentified(true);
+    if (salespersonName.trim() && !isBooting) {
+      setIsBooting(true);
+      setTimeout(() => setIsIdentified(true), 950);
     }
   };
 
@@ -153,10 +157,26 @@ export default function Home() {
   // If not identified, show welcome screen
   if (!isIdentified) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-bg p-4 md:p-6">
-        <div className="bg-surface p-5 sm:p-6 md:p-8 rounded-lg shadow-card max-w-sm sm:max-w-md w-full border border-border mx-2 sm:mx-4">
+      <div
+        className={`tf-stage min-h-screen flex items-center justify-center bg-bg p-4 md:p-6 ${
+          isBooting ? 'tf-booting' : ''
+        }`}
+      >
+        <AttentionField />
+
+        {/* Boot overlay: three rings propagating outward, then a horizontal wipe. */}
+        {isBooting && (
+          <>
+            <span className="tf-ring" />
+            <span className="tf-ring" />
+            <span className="tf-ring" />
+            <span className="tf-wipe" />
+          </>
+        )}
+
+        <div className="tf-card p-5 sm:p-6 md:p-8 rounded-2xl max-w-sm sm:max-w-md w-full mx-2 sm:mx-4">
           <div className="text-center mb-5 sm:mb-6">
-            <div className="w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-3 sm:mb-4 bg-accent rounded-2xl flex items-center justify-center">
+            <div className="tf-mark w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-3 sm:mb-4 bg-accent rounded-2xl flex items-center justify-center">
               <span className="text-3xl sm:text-4xl">🤖</span>
             </div>
             <h1 className="text-xl sm:text-[22px] font-bold text-text mb-1.5 sm:mb-2">AdtimaBox Sales Agent</h1>
@@ -174,27 +194,35 @@ export default function Home() {
                 value={salespersonName}
                 onChange={(e) => setSalespersonName(e.target.value)}
                 placeholder="Enter your name..."
-                className="w-full px-4 py-3 sm:py-3.5 border border-border rounded-lg text-sm sm:text-[13px] bg-surface text-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+                autoFocus
+                disabled={isBooting}
+                className="w-full px-4 py-3 sm:py-3.5 border border-border rounded-lg text-sm sm:text-[13px] bg-surface/60 text-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
                 autoComplete="off"
               />
             </div>
 
             <button
               type="submit"
-              disabled={!salespersonName.trim()}
+              disabled={!salespersonName.trim() || isBooting}
               className={`w-full py-3 sm:py-3.5 rounded-lg font-medium text-sm ${
-                salespersonName.trim()
+                salespersonName.trim() && !isBooting
                   ? 'bg-accent text-white hover:opacity-90 active:scale-[0.98] transition-all'
                   : 'bg-text-muted/50 text-white/70 cursor-not-allowed'
               }`}
             >
-              Start Chatting
+              {isBooting ? 'Initializing…' : 'Start Chatting'}
             </button>
           </form>
 
-          <p className="text-[11px] sm:text-xs text-text-muted text-center mt-4">
-            Demo mode — no authentication required
-          </p>
+          {isBooting ? (
+            <p className="tf-boot-line text-[11px] sm:text-xs text-accent-text text-center mt-4 font-mono tracking-wide">
+              ▸ 7 agents online · knowledge base linked
+            </p>
+          ) : (
+            <p className="text-[11px] sm:text-xs text-text-muted text-center mt-4">
+              Demo mode — no authentication required
+            </p>
+          )}
         </div>
       </div>
     );
