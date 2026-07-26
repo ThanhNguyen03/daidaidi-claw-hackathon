@@ -610,10 +610,13 @@ class CentralAgent:
         "tổng hợp", "làm deck", "tạo deck", "xuất deck", "xuất proposal",
         "bản trình bày", "bản đề xuất", "tài liệu đề xuất",
         "bản báo cáo", "làm tài liệu", "kế hoạch chi tiết",
+        "xuất file", "xuất ra file", "tạo file", "tải file", "tải về", "gửi file",
+        "file trình bày", "powerpoint", "pptx", "ppt",
         # English
         "deck", "slides", "presentation", "pitch deck", "pitch",
         "quotation", "quote", "estimate", "pricing doc",
         "make deck", "generate deck", "create deck", "build deck",
+        "export", "download",
     })
 
     def _detect_proposal_intent(self, state: SalesCaseState, message: str) -> bool:
@@ -1032,10 +1035,17 @@ class CentralAgent:
 
         # Step 3D: Deck-only shortcut — user explicitly requests deck but proposal_assembler
         # was not re-run this turn. If prior assembled content exists, generate deck from it.
+        # "xuất file" was in neither this list nor the proposal-intent one, so asking
+        # for a file fell through to the generic responder — which answered that it
+        # was a chat model and could not produce files, while the deck generator sat
+        # right there. Keyword lists always have holes; the durable fix is the
+        # capability statement in SKILL.md, and this widening is the cheap half.
         _DECK_REQUEST_KWS = frozenset({
-            "deck", "slide", "slides", "pptx", "html deck",
+            "deck", "slide", "slides", "pptx", "html deck", "powerpoint",
             "làm deck", "tạo deck", "xuất deck", "update deck",
             "làm lại deck", "tạo lại deck", "regenerate deck",
+            "xuất file", "xuất ra file", "xuất ra", "tạo file", "gửi file",
+            "tải file", "tải về", "download", "export", "file trình bày",
         })
         _msg_lower = message.lower()
         _is_deck_request = any(kw in _msg_lower for kw in _DECK_REQUEST_KWS)
@@ -1532,6 +1542,8 @@ Format rules:
 - Use ## for section headers, ### for sub-sections
 - Be specific to this brief/brand — no generic filler
 - Do NOT mention "skill", "agent", "module", or internal pipeline names
+- This system produces a branded HTML deck and a downloadable PPTX. Never claim it
+  cannot generate files; the only honest limits are Word, Excel and email.
 
 OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
 
@@ -1603,6 +1615,14 @@ Your job: respond ONLY to what they asked about in the Current Request.
 - Start directly with the content — no "As I mentioned before..." preamble.
 - Language: match the user's language (Vietnamese if they wrote in Vietnamese).
 - Do NOT mention "skill", "agent", "module", or internal pipeline names.
+
+YOU PRODUCE REAL FILES. This system generates an AdtimaBox-branded HTML deck and a
+downloadable PPTX, delivered as "View Deck" and "Download PPTX" buttons in the chat.
+Claiming "mình là AI chạy trên nền tảng chat nên không xuất được file" is FALSE and a
+rep may repeat it to a client. If asked to export or download in any wording, say you
+build it — and if it does not exist yet, say what triggers it:
+  "**Tiếp theo:** nói *làm proposal* là mình dựng bản đầy đủ kèm deck HTML và file PPTX."
+The only honest limits: no Word (.docx), no Excel, no email.
 
 ALWAYS CLOSE WITH WHAT HAPPENS NEXT. Never end on an explanation and leave the rep
 guessing whether it is their turn. Finish with a short `**Tiếp theo:**` line that says
