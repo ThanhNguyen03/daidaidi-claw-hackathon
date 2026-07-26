@@ -1,5 +1,8 @@
-# Claude Code
-.claude
+# Claude Code — ignore only the machine-local settings. The rest of .claude/ is
+# shared context: blanket-ignoring the directory meant anything written there for
+# the team never left the machine that wrote it.
+.claude/settings.local.json
+.claude/*.local.json
 .codex
 
 # Environment
