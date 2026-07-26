@@ -248,6 +248,50 @@ def evaluate(
     )
 
 
+def build_questions(verdict: GateVerdict, limit: int = 4) -> list[dict]:
+    """Turn the gate's missing-field list into pickable questions.
+
+    Built from the policy file rather than asked of a model: the gate already
+    knows precisely what is missing, so a second model call would only add a
+    failure mode and latency to a decision that is already made. It also means the
+    rep still gets usable choices on the turn the provider is having a bad day.
+
+    `options` are suggestions. The UI always pairs them with a free-text field —
+    a closed list would quietly push briefs toward whatever we happened to guess.
+    """
+    policy = load_policy()
+
+    prompts: dict[str, dict] = {}
+    for bucket in ("required", "conditional", "nice_to_have"):
+        for entry in policy.get(bucket, []):
+            prompts[entry["field"]] = entry
+
+    # Blocking fields first: those are the ones stopping the pipeline.
+    ordered = [m for m in verdict.missing if m.blocking] + [
+        m for m in verdict.missing if not m.blocking
+    ]
+
+    questions: list[dict] = []
+    for missing in ordered[:limit]:
+        entry = prompts.get(missing.field, {})
+        options = entry.get("options") or []
+        if not options:
+            continue  # nothing to pick from; the prose message already asks
+        questions.append(
+            {
+                "id": f"q_{missing.field}",
+                "text": entry.get("ask") or f"Cho mình biết {missing.field}?",
+                "target_field": missing.field,
+                "options": list(options),
+                "is_mandatory": missing.blocking,
+                "priority": 1 if missing.blocking else 3,
+                "asked_count": 0,
+                "answered": False,
+            }
+        )
+    return questions
+
+
 def assumption_notice(verdict: GateVerdict) -> str:
     """Text appended to a skill task when running on assumptions, so the output
     declares what it guessed instead of presenting guesses as fact."""

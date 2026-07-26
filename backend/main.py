@@ -1586,7 +1586,10 @@ async def answer_question(request: Request, payload: AnswerQuestionRequest):
 
     # Get updated questions
     question_manager = get_question_manager()
-    remaining_questions = question_manager.stack.next_batch()
+    # Read from the session, not the process-global stack: questions are raised
+    # per session by the gate and never registered with that manager, so it was
+    # always empty and the card lost its remaining questions after one answer.
+    remaining_questions = [q for q in state.question_stack if not q.answered]
 
     # Build response based on validation status
     if validation_output.status == "COMPLETE":
@@ -1631,7 +1634,10 @@ async def skip_question(request: Request, payload: SkipQuestionRequest):
     except Exception as exc:
         print(f"Warning: failed to persist session after skip_question: {exc}")
 
-    remaining_questions = question_manager.stack.next_batch()
+    # Read from the session, not the process-global stack: questions are raised
+    # per session by the gate and never registered with that manager, so it was
+    # always empty and the card lost its remaining questions after one answer.
+    remaining_questions = [q for q in state.question_stack if not q.answered]
 
     if should_dispatch:
         return {
@@ -1676,7 +1682,10 @@ async def answer_free_text(request: ChatRequest):
 
     # Get updated questions
     question_manager = get_question_manager()
-    remaining_questions = question_manager.stack.next_batch()
+    # Read from the session, not the process-global stack: questions are raised
+    # per session by the gate and never registered with that manager, so it was
+    # always empty and the card lost its remaining questions after one answer.
+    remaining_questions = [q for q in state.question_stack if not q.answered]
 
     if validation_output.status == "COMPLETE":
         return {
@@ -1729,7 +1738,8 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
         await persist_session_best_effort(state, "workflow.answer")
 
         question_manager = get_question_manager()
-        remaining_questions = question_manager.stack.next_batch()
+        # Read from the session, not the process-global stack.
+        remaining_questions = [q for q in state.question_stack if not q.answered]
         return {
             "status": "ready" if validation_output.status == "COMPLETE" else "pending",
             "message": "All questions answered. Ready to proceed."
@@ -1752,7 +1762,8 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
         update_session(state)
         await persist_session_best_effort(state, "workflow.skip_question")
 
-        remaining_questions = question_manager.stack.next_batch()
+        # Read from the session, not the process-global stack.
+        remaining_questions = [q for q in state.question_stack if not q.answered]
         return {
             "status": "ready" if should_dispatch else "pending",
             "message": "Optional question skipped. Ready to proceed."
@@ -1775,7 +1786,8 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
         await persist_session_best_effort(state, "workflow.answer_free_text")
 
         question_manager = get_question_manager()
-        remaining_questions = question_manager.stack.next_batch()
+        # Read from the session, not the process-global stack.
+        remaining_questions = [q for q in state.question_stack if not q.answered]
         return {
             "status": "ready" if validation_output.status == "COMPLETE" else "pending",
             "message": "Answers mapped successfully. Ready to proceed."

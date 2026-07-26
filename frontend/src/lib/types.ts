@@ -40,6 +40,10 @@ export interface Question {
   answered: boolean;
   answer?: string;
   was_helpful?: boolean;
+  /** Suggested answers, rendered as chips. Never a closed set — the card always
+   *  pairs them with a free-text box. Backend has carried this field all along;
+   *  the type was simply missing it, so the options were dropped on arrival. */
+  options?: string[];
 }
 
 // =============================================================================

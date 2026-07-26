@@ -129,6 +129,9 @@ When CLARIFYING:
   • Be warm and direct — frame as "để đưa ra đề xuất chính xác nhất, mình cần thêm..."
   • Do NOT ask for info already in Conversation History or Accumulated Brief
   • Match the user's language (Vietnamese if they wrote in Vietnamese)
+  • END with what unblocks it, concretely: which field you need and what you will do
+    once you have it. The rep must never have to guess whose turn it is.
+    e.g. "**Tiếp theo:** cho mình ngành hàng và mục tiêu là mình chạy phân tích ngay."
 
 When EXECUTING:
   • Skills will flag "cần xác nhận thêm" for unknowns — that is fine
@@ -620,6 +623,21 @@ class CentralAgent:
                 print("[CentralAgent] repeat clarification detected — offering assumption route")
 
             yield {"type": "content", "content": clarification_msg}
+
+            # Alongside the prose, hand over pickable answers for the fields the gate
+            # is actually blocking on. Typing "FMCG" costs a rep more than tapping it,
+            # and free text arrives in a hundred spellings that the extractor then has
+            # to normalise. The card always carries a free-text option too — a closed
+            # list would quietly steer briefs toward whatever we guessed.
+            questions = gate.build_questions(verdict)
+            if questions:
+                state.question_stack = [
+                    Question(**q) for q in questions
+                ]
+                print(f"[gate] offering {len(questions)} pickable question(s): "
+                      f"{[q['target_field'] for q in questions]}")
+                yield {"type": "question_card", "questions": questions}
+
             state.messages.append({
                 "role": "assistant", "content": clarification_msg,
                 "agent": "central_agent", "kind": "clarification",
@@ -1327,6 +1345,14 @@ Your job: respond ONLY to what they asked about in the Current Request.
 - Language: match the user's language (Vietnamese if they wrote in Vietnamese).
 - Do NOT mention "skill", "agent", "module", or internal pipeline names.
 
+ALWAYS CLOSE WITH WHAT HAPPENS NEXT. Never end on an explanation and leave the rep
+guessing whether it is their turn. Finish with a short `**Tiếp theo:**` line that says
+either what you need from them to continue, or what you can produce next and how to
+ask for it. One or two sentences — concrete, not "let me know if you need anything".
+  Good:  **Tiếp theo:** cho mình ngân sách dự kiến là mình ra được báo giá chi tiết.
+  Good:  **Tiếp theo:** nói "làm proposal" là mình dựng bản đầy đủ kèm deck PPTX.
+  Bad:   Hy vọng thông tin trên hữu ích cho bạn!
+
 OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
 TABLES: Markdown pipe tables — NEVER ASCII box-drawing for tables.
 BAR CHARTS: ``` plain block, ┌─╠═─┘ box, "NN%  Label" per line — NEVER █ block chars.
@@ -1578,11 +1604,22 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
         free_text = answers.get("free_text")
         if free_text:
             self._apply_brief_update(state, await self._extract_brief_from_text(state, free_text))
-        state.validation_status = "READY"
-        state.question_stack = []
+
+        # Drop only what was actually answered. Clearing the whole stack meant
+        # answering the first of three questions silently discarded the other two,
+        # so the rep tapped one chip and the rest of the card vanished.
+        remaining = [q for q in state.question_stack if not q.answered]
+        state.question_stack = [] if free_text else remaining
+
+        status = "READY" if not state.question_stack else "PENDING"
+        state.validation_status = status
         return AgentOutput(
-            agent="central_agent", status="COMPLETE", payload={},
-            summary="Ready to proceed.", confidence=0.9, questions=[],
+            agent="central_agent",
+            status="COMPLETE",
+            payload={},
+            summary="Ready to proceed." if status == "READY" else "More answers needed.",
+            confidence=0.9,
+            questions=[q.model_dump(mode="json") for q in state.question_stack],
         )
 
     async def extract_desired_outputs(self, answer: str) -> list[str]:

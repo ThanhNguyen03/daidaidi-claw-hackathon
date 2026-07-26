@@ -1,12 +1,20 @@
-﻿/**
- * Question Card Component
- * =======================
- * Displays questions to the user in a distinct card.
- * Uses plain CSS values to avoid theme override issues.
+/**
+ * Question Card
+ * =============
+ * What the agent shows when the gate is blocking on a missing field.
+ *
+ * Each question carries suggested answers as chips plus a free-text box. The
+ * chips are there because typing "FMCG - Thực phẩm & Đồ uống" costs a rep far
+ * more than tapping it, and because free text arrives in a dozen spellings that
+ * extraction then has to normalise. The free-text box is there because a closed
+ * list would quietly steer every brief toward whatever options we guessed.
+ *
+ * Colours come from theme variables. The previous version hardcoded a white card
+ * with dark grey text, which is invisible against the dark theme.
  */
 
 import React, { useState } from 'react';
-import { HelpCircle, Check, SkipForward, Send } from 'lucide-react';
+import { HelpCircle, Check, SkipForward, Send, Pencil } from 'lucide-react';
 import type { Question } from '../lib/types';
 
 interface QuestionCardProps {
@@ -27,273 +35,183 @@ export function QuestionCard({
   isSubmitting = false,
 }: QuestionCardProps) {
   const [freeText, setFreeText] = useState('');
-  const [inlineAnswers, setInlineAnswers] = useState<Record<string, string>>({});
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  // Which questions have had "Khác" opened. Tracked separately from the draft
+  // text so the box stays open while it is still empty.
+  const [customOpen, setCustomOpen] = useState<Record<string, boolean>>({});
 
-  const handleInlineAnswer = (questionId: string, answer: string) => {
-    setInlineAnswers((prev) => ({ ...prev, [questionId]: answer }));
+  const busy = disabled || isSubmitting;
+
+  const submit = (question: Question, answer: string) => {
+    if (!answer.trim() || busy) return;
+    onAnswer(question.id, answer.trim());
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[question.id];
+      return next;
+    });
+    setCustomOpen((prev) => ({ ...prev, [question.id]: false }));
   };
 
-  const submitInlineAnswer = (question: Question) => {
-    const answer = inlineAnswers[question.id];
-    if (answer?.trim()) {
-      onAnswer(question.id, answer);
-      setInlineAnswers((prev) => {
-        const next = { ...prev };
-        delete next[question.id];
-        return next;
-      });
-    }
-  };
+  if (!questions || questions.length === 0) return null;
 
-  const handleFreeTextSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (freeText.trim()) {
-      onFreeTextAnswer(freeText);
-      setFreeText('');
-    }
-  };
-
-  if (!questions || questions.length === 0) {
-    return null;
-  }
-
-  // Responsive styles
-  const containerStyle: React.CSSProperties = {
-    backgroundColor: '#ffffff',
-    border: '1px solid #e5e7eb',
-    borderRadius: '12px',
-    padding: '16px',
-    marginBottom: '16px',
-    zIndex: 99999,
-    position: 'relative',
-  };
-
-  const headerStyle: React.CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    marginBottom: '16px',
-    color: '#4f46e5',
-  };
-
-  const questionItemStyle: React.CSSProperties = {
-    padding: '14px',
-    backgroundColor: '#f9fafb',
-    border: '1px solid #e5e7eb',
-    borderRadius: '8px',
-  };
-
-  const questionTextStyle: React.CSSProperties = {
-    fontSize: '16px',
-    color: '#374151',
-    lineHeight: 1.6,
-    wordBreak: 'break-word',
-  };
-
-  const inputStyle: React.CSSProperties = {
-    flex: 1,
-    padding: '10px 14px',
-    borderRadius: '8px',
-    border: '1px solid #d1d5db',
-    backgroundColor: '#ffffff',
-    color: '#374151',
-    fontSize: '16px',
-    cursor: 'text',
-    width: '100%',
-    pointerEvents: 'auto',
-  };
-
-  const buttonStyle: React.CSSProperties = {
-    padding: '10px 14px',
-    borderRadius: '8px',
-    backgroundColor: '#4f46e5',
-    color: '#ffffff',
-    border: 'none',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    fontSize: '16px',
-    fontWeight: 500,
-    whiteSpace: 'nowrap',
-  };
+  const blocking = questions.filter((q) => q.is_mandatory).length;
 
   return (
-    <div
-      className="question-card-container"
-      style={containerStyle}
-    >
-      {/* Header */}
-      <div style={headerStyle}>
+    <div className="relative mb-4 rounded-xl border border-accent/35 bg-surface/70 p-4 shadow-card backdrop-blur">
+      <div className="mb-1 flex items-center gap-2 text-accent-text">
         <HelpCircle size={18} />
-        <span style={{ fontWeight: 600, fontSize: '16px' }}>Need some information to proceed</span>
+        <span className="text-sm font-semibold">Chọn nhanh hoặc tự nhập</span>
       </div>
+      <p className="mb-4 text-[12px] text-text-muted">
+        {blocking > 0
+          ? `${blocking} thông tin bắt buộc còn thiếu — có cái này mình mới chạy phân tích được.`
+          : 'Trả lời giúp mình mấy ý sau để đề xuất sát hơn.'}
+      </p>
 
-      {/* Questions list */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        {questions.map((question, index) => (
-          <div key={question.id} style={questionItemStyle}>
-            {/* Question number + text */}
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '10px' }}>
-              <span
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  width: '24px',
-                  height: '24px',
-                  borderRadius: '50%',
-                  backgroundColor: '#4f46e5',
-                  color: '#ffffff',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  flexShrink: 0,
-                }}
-              >
-                {index + 1}
-              </span>
-              <span style={questionTextStyle}>{question.text}</span>
-            </div>
+      <div className="flex flex-col gap-3">
+        {questions.map((question, index) => {
+          const isCustom = customOpen[question.id];
+          const draft = drafts[question.id] ?? '';
+          const options = question.options ?? [];
 
-            {/* Tags */}
-            <div style={{ marginLeft: '34px', marginBottom: '10px' }}>
-              {question.is_mandatory ? (
+          return (
+            <div
+              key={question.id}
+              className="rounded-lg border border-border bg-surface-2/60 p-3.5"
+            >
+              <div className="mb-2.5 flex items-start gap-2.5">
                 <span
-                  style={{
-                    display: 'inline-flex',
-                    padding: '3px 8px',
-                    borderRadius: '4px',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    textTransform: 'uppercase',
-                    backgroundColor: '#fee2e2',
-                    color: '#dc2626',
-                  }}
+                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
+                    question.is_mandatory
+                      ? 'bg-accent text-white'
+                      : 'bg-surface-hover text-text-muted'
+                  }`}
                 >
-                  Required
+                  {index + 1}
                 </span>
-              ) : (
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    padding: '3px 8px',
-                    borderRadius: '4px',
-                    fontSize: '12px',
-                    fontWeight: 500,
-                    backgroundColor: '#e0e7ff',
-                    color: '#4f46e5',
-                  }}
-                >
-                  Optional
-                </span>
-              )}
-            </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm leading-snug text-text">{question.text}</p>
+                  {!question.is_mandatory && (
+                    <span className="text-[11px] text-text-muted">không bắt buộc</span>
+                  )}
+                </div>
+              </div>
 
-            {/* Inline answer input */}
-            <div style={{ marginLeft: '34px', position: 'relative', zIndex: 100 }}>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <input
-                  type="text"
-                  id={`answer-${question.id}`}
-                  name={`answer-${question.id}`}
-                  value={inlineAnswers[question.id] || ''}
-                  onChange={(e) => handleInlineAnswer(question.id, e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !isSubmitting) {
-                      submitInlineAnswer(question);
-                    }
-                  }}
-                  placeholder="Type your answer..."
-                  disabled={isSubmitting}
-                  autoComplete="off"
-                  style={{
-                    ...inputStyle,
-                    cursor: isSubmitting ? 'not-allowed' : 'text',
-                    minWidth: '120px',
-                    flex: '1 1 140px',
-                  }}
-                />
-                <button
-                  type="button"
-                  aria-label="Send answer"
-                  onClick={() => submitInlineAnswer(question)}
-                  disabled={isSubmitting || !inlineAnswers[question.id]?.trim()}
-                  style={{
-                    ...buttonStyle,
-                    opacity: (isSubmitting || !inlineAnswers[question.id]?.trim()) ? 0.5 : 1,
-                    cursor: (isSubmitting || !inlineAnswers[question.id]?.trim()) ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  <Check size={16} />
-                  <span className="hidden sm:inline">{isSubmitting ? 'Sending...' : 'Send'}</span>
-                </button>
-                {!question.is_mandatory && (
+              {/* Suggested answers */}
+              {options.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {options.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => submit(question, option)}
+                      className="rounded-full border border-border bg-surface px-3 py-1.5 text-[12px] text-text transition-all hover:border-accent hover:bg-accent-soft hover:text-accent-text active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {option}
+                    </button>
+                  ))}
+
                   <button
                     type="button"
-                    aria-label="Skip this question"
-                    onClick={() => onSkip(question.id)}
-                    disabled={isSubmitting}
-                    style={{
-                      padding: '10px',
-                      borderRadius: '8px',
-                      backgroundColor: '#f3f4f6',
-                      color: '#6b7280',
-                      border: '1px solid #d1d5db',
-                      cursor: isSubmitting ? 'not-allowed' : 'pointer',
-                      opacity: isSubmitting ? 0.5 : 1,
-                    }}
-                    title="Skip question"
+                    disabled={busy}
+                    onClick={() =>
+                      setCustomOpen((prev) => ({ ...prev, [question.id]: !prev[question.id] }))
+                    }
+                    className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] transition-all active:scale-[0.97] disabled:opacity-50 ${
+                      isCustom
+                        ? 'border-accent bg-accent-soft text-accent-text'
+                        : 'border-dashed border-border-strong text-text-muted hover:border-accent hover:text-accent-text'
+                    }`}
                   >
-                    <SkipForward size={16} />
+                    <Pencil size={12} />
+                    Khác…
                   </button>
-                )}
-              </div>
+                </div>
+              )}
+
+              {/* Free text — always reachable, either as the "Khác" box or as the
+                  only input when a question ships without suggestions. */}
+              {(isCustom || options.length === 0) && (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    autoFocus={isCustom}
+                    value={draft}
+                    disabled={busy}
+                    onChange={(e) =>
+                      setDrafts((prev) => ({ ...prev, [question.id]: e.target.value }))
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        submit(question, draft);
+                      }
+                    }}
+                    placeholder="Nhập câu trả lời của bạn…"
+                    className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-text outline-none transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy || !draft.trim()}
+                    onClick={() => submit(question, draft)}
+                    className="flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-white transition-all hover:opacity-90 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Check size={14} />
+                    Gửi
+                  </button>
+                </div>
+              )}
+
+              {!question.is_mandatory && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onSkip(question.id)}
+                  className="mt-2 flex items-center gap-1 text-[11px] text-text-muted transition-colors hover:text-text disabled:opacity-50"
+                >
+                  <SkipForward size={11} />
+                  Bỏ qua câu này
+                </button>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      {/* Free text answer */}
-      <div style={{ marginTop: '16px', paddingTop: '14px', borderTop: '1px solid #e5e7eb' }}>
-        <form onSubmit={handleFreeTextSubmit}>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <input
-              type="text"
-              id="free-text-answer"
-              name="freeTextAnswer"
-              value={freeText}
-              onChange={(e) => setFreeText(e.target.value)}
-              placeholder="Or answer everything in one message..."
-              disabled={isSubmitting}
-              style={{
-                ...inputStyle,
-                flex: '1 1 180px',
-                minWidth: '150px',
-                cursor: isSubmitting ? 'not-allowed' : 'text',
-              }}
-            />
-            <button
-              type="submit"
-              aria-label="Send free text answer"
-              disabled={isSubmitting || !freeText.trim()}
-              style={{
-                ...buttonStyle,
-                opacity: (isSubmitting || !freeText.trim()) ? 0.5 : 1,
-                cursor: (isSubmitting || !freeText.trim()) ? 'not-allowed' : 'pointer',
-              }}
-            >
-              <Send size={16} />
-              <span className="hidden sm:inline">{isSubmitting ? 'Sending...' : 'Send'}</span>
-            </button>
-          </div>
-          <p style={{ fontSize: '14px', color: '#6b7280', marginTop: '8px' }}>
-            I'll automatically map your answer to the right fields.
-          </p>
-        </form>
-      </div>
+      {/* One box for answering everything at once, for reps who would rather type
+          a sentence than work through the cards. */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!freeText.trim() || busy) return;
+          onFreeTextAnswer(freeText.trim());
+          setFreeText('');
+        }}
+        className="mt-3 border-t border-border pt-3"
+      >
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={freeText}
+            disabled={busy}
+            onChange={(e) => setFreeText(e.target.value)}
+            placeholder="Hoặc trả lời tất cả trong một câu…"
+            className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-text outline-none transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
+          />
+          <button
+            type="submit"
+            disabled={busy || !freeText.trim()}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-[13px] font-medium text-text transition-all hover:border-accent hover:text-accent-text active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Send size={14} />
+            {isSubmitting ? 'Đang gửi…' : 'Gửi'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
 
 export default QuestionCard;
-
