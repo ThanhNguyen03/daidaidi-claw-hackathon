@@ -164,8 +164,36 @@ function CheckpointCard({
     return <pre className="whitespace-pre-wrap m-0">{String(preview)}</pre>;
   };
 
+  // Chốt 1 exists so the rep can correct what we misread, which means Edit has to
+  // actually edit. It used to open a panel reading "Edit functionality available"
+  // and submit an empty object.
+  const briefGroups = (checkpoint.action.preview as { groups?: Record<string, Array<Record<string, string>>> } | undefined)
+    ?.groups;
+  const editableFields = briefGroups
+    ? ['said', 'inferred', 'assumed'].flatMap((k) => briefGroups[k] ?? [])
+    : [];
+
+  const [edits, setEdits] = useState<Record<string, string>>({});
+
+  const startEditing = () => {
+    // Seed from what is on screen so the rep changes one line instead of retyping
+    // the brief. "(chưa có — sẽ phỏng đoán)" is a placeholder, not a value.
+    setEdits(
+      Object.fromEntries(
+        editableFields.map((f) => [f.field, f.value.startsWith('(') ? '' : f.value])
+      )
+    );
+    setIsEditing(true);
+  };
+
   const handleEditSubmit = () => {
-    onEdit({});
+    const changed = Object.fromEntries(
+      Object.entries(edits).filter(([field, value]) => {
+        const original = editableFields.find((f) => f.field === field)?.value ?? '';
+        return value.trim() && value.trim() !== original;
+      })
+    );
+    onEdit(changed);
     setIsEditing(false);
   };
 
@@ -215,9 +243,36 @@ function CheckpointCard({
 
           {/* Edit mode */}
           {isEditing && (
-            <div className="mb-4 p-3 bg-surface rounded">
-              <p className="text-xs text-text-muted mb-2">Edit parameters and re-preview:</p>
-              <p className="text-xs text-text-muted">Edit functionality available — modify parameters and submit to re-preview.</p>
+            <div className="mb-4 rounded-lg bg-surface p-3">
+              {editableFields.length > 0 ? (
+                <>
+                  <p className="mb-3 text-[12px] text-text-muted">
+                    Sửa dòng nào sai, để trống nghĩa là bỏ trường đó.
+                  </p>
+                  <div className="flex flex-col gap-2.5">
+                    {editableFields.map((f) => (
+                      <label key={f.field} className="flex flex-col gap-1">
+                        <span className="text-[11px] font-medium text-text-muted">{f.label}</span>
+                        <input
+                          type="text"
+                          value={edits[f.field] ?? ''}
+                          onChange={(e) =>
+                            setEdits((prev) => ({ ...prev, [f.field]: e.target.value }))
+                          }
+                          placeholder={
+                            f.field === 'budget_vnd'
+                              ? 'vd: 300 triệu, 200 - 500 triệu, 1.5 tỷ'
+                              : 'Để trống nếu chưa có'
+                          }
+                          className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[13px] text-text outline-none transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-text-muted">Không có trường nào để sửa ở bước này.</p>
+              )}
             </div>
           )}
 
@@ -242,7 +297,7 @@ function CheckpointCard({
                   onClick={handleEditSubmit}
                   className="flex items-center gap-1 px-4 py-2 bg-accent text-white rounded-md text-[12px] font-medium hover:opacity-90"
                 >
-                  <Check size={16} /> Re-preview
+                  <Check size={16} /> Lưu & xem lại
                 </button>
                 <button
                   onClick={() => setIsEditing(false)}
@@ -265,7 +320,7 @@ function CheckpointCard({
                   <Check size={16} /> Approve
                 </button>
                 <button
-                  onClick={() => setIsEditing(true)}
+                  onClick={startEditing}
                   className="flex items-center gap-1 px-4 py-2 border border-border text-text-muted rounded-md text-[12px] hover:bg-surface-hover"
                 >
                   <Edit size={16} /> Edit

@@ -1069,26 +1069,34 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         if (!response.ok) throw new Error('Failed to edit checkpoint');
         const data = await response.json();
 
-        if (data.checkpoint) {
-          setActiveCheckpoint(data.checkpoint);
-        } else {
-          setActiveCheckpoint(null);
-        }
+        if (data.brief) setBrief(data.brief);
 
-        const msg: Message = {
-          role: 'assistant',
-          content: 'Parameters updated. Please review the new preview and approve.',
-          agent: 'sales_orchestrator',
-          timestamp: new Date().toISOString(),
-        };
-        setMessages((prev) => [...prev, msg]);
+        if (data.resume) {
+          // The correction is in the brief; the stop was cleared server-side. Re-run
+          // so the card comes back showing what was fixed — leaving a stale card on
+          // screen next to an "updated" notice tells the rep nothing about whether
+          // their edit took.
+          setActiveCheckpoint(null);
+          await sendMessage('Tiếp tục', undefined, true);
+        } else {
+          setActiveCheckpoint(data.checkpoint ?? null);
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: 'assistant',
+              content: 'Đã cập nhật. Bạn xem lại rồi duyệt giúp mình nhé.',
+              agent: 'sales_orchestrator',
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+        }
       } catch (e) {
         setError((e as Error).message);
       } finally {
         setIsLoading(false);
       }
     },
-    [sessionId, activeCheckpoint]
+    [sessionId, activeCheckpoint, sendMessage]
   );
 
   // Clear error

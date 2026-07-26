@@ -1849,13 +1849,41 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
             cpm.set_auto_approve(payload.session_id, checkpoint.action.type, True)
 
         updated = await cpm.process_decision(checkpoint, payload.decision, payload.params)
+
         if payload.decision == "edit" and payload.params:
-            new_payload = await _recompute_preview(state, payload.params)
-            if new_payload:
-                updated.preview = new_payload
-                updated.action.parameters.update(payload.params)
-                if "total_vnd" in new_payload:
-                    updated.action.description = f"Generate quotation for {new_payload['total_vnd']:,} VND"
+            if checkpoint.action.type == "confirm_brief":
+                # Correcting the brief IS the point of Chốt 1 — the rep is fixing what
+                # we misread. Overwrite rather than merge: _apply_field only fills
+                # blanks, and here the existing value is precisely what is wrong.
+                from central_agent.agent import _parse_vnd
+
+                if state.brief is None:
+                    state.brief = Brief()
+                corrected: list[str] = []
+                for field, raw in payload.params.items():
+                    if field not in Brief.model_fields:
+                        continue
+                    text = str(raw).strip()
+                    if not text:
+                        continue
+                    if field == "budget_vnd":
+                        parsed = _parse_vnd(text)
+                        if parsed is None:
+                            continue
+                        setattr(state.brief, field, parsed)
+                    elif field in ("specific_requirements", "constraints"):
+                        setattr(state.brief, field, [p.strip() for p in text.split(",") if p.strip()])
+                    else:
+                        setattr(state.brief, field, text)
+                    corrected.append(field)
+                print(f"[checkpoint] confirm_brief edited: {corrected or 'nothing changed'}")
+            else:
+                new_payload = await _recompute_preview(state, payload.params)
+                if new_payload:
+                    updated.preview = new_payload
+                    updated.action.parameters.update(payload.params)
+                    if "total_vnd" in new_payload:
+                        updated.action.description = f"Generate quotation for {new_payload['total_vnd']:,} VND"
 
         # BRD §11.2-§11.4 — what a decision invalidates.
         # Approving clears the stop for the rest of the session. Editing or rejecting
@@ -1890,7 +1918,11 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
             "auto_approve_enabled": payload.auto_approve,
             "confirmed_stages": state.confirmed_stages,
             # Tells the FE to resume the pipeline rather than just close the card.
-            "resume": payload.decision == "approve" and stage in ("confirm_brief", "confirm_solution"),
+            # An edit resumes too: confirmed_stages was cleared above, so the next
+            # turn re-raises the same stop with the corrected brief and the rep sees
+            # their fix reflected before anything is built on it (BRD §11.2).
+            "resume": stage in ("confirm_brief", "confirm_solution")
+            and payload.decision in ("approve", "edit"),
             **serialize_workflow_state(state),
         }
 
