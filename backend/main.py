@@ -52,6 +52,9 @@ from memory.profile import get_profile_manager
 # Import checkpoint (Day 5)
 from checkpoint.manager import get_checkpoint_manager
 
+# PII masking — system component, must run before any model sees the message (BRD §3)
+from pii.masking import get_masker, forget_session as forget_masked_session
+
 # Import generation (Day 6)
 from generation.pptx import create_pptx_generator
 from generation.userflow import create_userflow_generator
@@ -92,13 +95,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Warning: skill registry init failed (non-fatal): {e}")
 
-    # Startup: index agent knowledge into the KB vector store (for RAG reference lookups)
-    print("Starting up: indexing agent knowledge into the KB vector store...")
-    try:
-        from tools.ingest import ingest_all_agents
-        await ingest_all_agents(force=False)
-    except Exception as e:
-        print(f"Warning: knowledge ingest failed (non-fatal): {e}")
+    # Knowledge reaches prompts through knowledge/loader.py, which reads the files
+    # each SKILL.md declares. The vector index is no longer on that path, so it is
+    # off by default: it cost an embedding round-trip per document at every boot and
+    # failed closed *and silently* — a 401 left the knowledge base empty with nothing
+    # but a warning on stdout. Set KB_VECTOR_ENABLED=true to index anyway.
+    if os.getenv("KB_VECTOR_ENABLED", "false").lower() == "true":
+        print("Starting up: indexing agent knowledge into the KB vector store...")
+        try:
+            from tools.ingest import ingest_all_agents
+            await ingest_all_agents(force=False)
+        except Exception as e:
+            print(f"Warning: knowledge ingest failed (non-fatal): {e}")
+    else:
+        print("Knowledge: static lookup via knowledge/loader.py (vector index disabled)")
 
     yield  # App runs here
 
@@ -1156,13 +1166,22 @@ async def chat_stream(request: Request, payload: ChatRequest):
     state.visited = []
     state.hop_depth = 0
 
+    # ---- PII masking: system component, runs before anything reads the message ----
+    # BRD §3/§4[A]. Everything downstream — intent classification, the planner, every
+    # skill, and the persisted transcript — sees aliases. Real values are restored
+    # only on the way back out to the rep. There is no code path that skips this.
+    masker = get_masker(state.session_id)
+    mask_result = masker.mask(payload.message)
+    print(mask_result.log_line())          # counts and kinds only, never values (§14)
+    safe_message = mask_result.text
+
     async def event_generator():
         try:
             # Send session info + current brief so FE can immediately sync state
             initial_brief = _brief_to_dict(state.brief)
             yield _sse_data({'type': 'session', 'session_id': state.session_id, 'brief': initial_brief})
 
-            # Send user message event
+            # Echo the rep's own words back to their screen, not the aliased form.
             yield _sse_data({'type': 'user_message', 'content': payload.message})
             assistant_emitted = False
 
@@ -1172,9 +1191,9 @@ async def chat_stream(request: Request, payload: ChatRequest):
 
             # Check if message contains feedback (non-critical, swallow errors)
             try:
-                if feedback_extractor.is_feedback_message(payload.message):
+                if feedback_extractor.is_feedback_message(safe_message):
                     rule = feedback_extractor.extract(
-                        payload.message,
+                        safe_message,
                         {"salesperson_id": state.salesperson_id}
                     )
                     if rule:
@@ -1193,17 +1212,19 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 profile = await memory_repo.load_profile(state.salesperson_id)
                 if not profile:
                     profile = profile_manager.create_profile(state.salesperson_id)
-                if profile_manager.detect_frustration(profile, payload.message):
+                if profile_manager.detect_frustration(profile, safe_message):
                     await memory_repo.save_profile(profile)
             except Exception as _mem_e:
                 print(f"Warning: profile frustration check failed (non-fatal): {_mem_e}")
 
             done_chunk = _sse_data({'type': 'done'})
-            async for chunk in process_with_central_agent(state, payload.message):
+            async for chunk in process_with_central_agent(state, safe_message):
                 if chunk != done_chunk:
                     if '"type": "assistant_message"' in chunk or '"type": "agent_message"' in chunk or '"type": "content"' in chunk:
                         assistant_emitted = True
-                    yield chunk
+                    # Restore real values on the way out. Only worth the string scan
+                    # when this session actually has aliases.
+                    yield masker.unmask(chunk) if masker.has_aliases() else chunk
 
             if not assistant_emitted:
                 yield _sse_data({
@@ -1436,6 +1457,9 @@ async def delete_session(session_id: str):
     """Delete a session."""
     if session_id in _session_store:
         del _session_store[session_id]
+        # The alias table dies with the session — it is the only place raw PII
+        # still exists in this process (BRD §13).
+        forget_masked_session(session_id)
         return {"status": "deleted", "session_id": session_id}
 
     raise HTTPException(status_code=404, detail="Session not found")
@@ -1776,6 +1800,28 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
                 if "total_vnd" in new_payload:
                     updated.action.description = f"Generate quotation for {new_payload['total_vnd']:,} VND"
 
+        # BRD §11.2-§11.4 — what a decision invalidates.
+        # Approving clears the stop for the rest of the session. Editing or rejecting
+        # rewinds only as far as it has to: a correction at Chốt 1 means extraction was
+        # wrong, so the solution built on it is void too; a change of direction at Chốt 2
+        # leaves the strategy and compliance work standing.
+        stage = updated.action.type
+        if stage in ("confirm_brief", "confirm_solution"):
+            if payload.decision == "approve":
+                if stage not in state.confirmed_stages:
+                    state.confirmed_stages.append(stage)
+                print(f"[checkpoint] {stage} approved — cleared for this session")
+            else:
+                state.confirmed_stages = [
+                    s for s in state.confirmed_stages if s != stage
+                ]
+                if stage == "confirm_brief":
+                    # Everything downstream rested on the brief we got wrong.
+                    state.confirmed_stages = []
+                    state.outputs.pop("proposal_assembler", None)
+                    state.outputs.pop("wireframe_designer", None)
+                print(f"[checkpoint] {stage} {payload.decision} — rerunning from that step")
+
         state.checkpoint = updated
         update_session(state)
         await persist_session_best_effort(state, "workflow.checkpoint_decision")
@@ -1785,6 +1831,9 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
             "checkpoint": updated.model_dump(),
             "clarifying_question": clarifying_question,
             "auto_approve_enabled": payload.auto_approve,
+            "confirmed_stages": state.confirmed_stages,
+            # Tells the FE to resume the pipeline rather than just close the card.
+            "resume": payload.decision == "approve" and stage in ("confirm_brief", "confirm_solution"),
             **serialize_workflow_state(state),
         }
 

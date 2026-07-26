@@ -25,6 +25,8 @@ from functools import partial
 import random
 from typing import Any, AsyncGenerator, Optional
 
+import gate
+from knowledge.loader import RequestLedger
 from schemas.state import (
     AgentOutput,
     Brief,
@@ -113,11 +115,20 @@ GENERAL QUESTION or VAGUE REQUEST:
   → EXECUTE if any context exists
 
 When CLARIFYING:
-  • Ask exactly 2-3 focused questions about the MOST critical missing info
+  • Infer everything you reasonably can first. Fill it in, mark it as inferred, and ask
+    the rep to CONFIRM — never ask a question you could have answered yourself.
+  • Ask only what genuinely cannot be inferred.
+  • Put it all in ONE turn under three headings:
+        Mình tự suy ra  ·  Cần bạn cho biết  ·  Cần hỏi lại khách
+    That last split lets the rep send the client one email instead of three.
+  • Give the reason for each question.
+  • Never ask a question whose answer depends on another question in the same batch.
+  • There is NO cap on the number of questions. Stop when you have enough to reach a
+    feasibility verdict — not at some fixed count. A rep does not know what they do
+    not know, so a cap drops exactly the questions they would never have thought of.
   • Be warm and direct — frame as "để đưa ra đề xuất chính xác nhất, mình cần thêm..."
   • Do NOT ask for info already in Conversation History or Accumulated Brief
   • Match the user's language (Vietnamese if they wrote in Vietnamese)
-  • Do NOT list more than 3 questions
 
 When EXECUTING:
   • Skills will flag "cần xác nhận thêm" for unknowns — that is fine
@@ -178,7 +189,7 @@ Skills in the same array run in parallel. Arrays run sequentially.
 proposal_assembler must be alone in the last array if included.
 
 Case A — clarify:
-{{"brief_update": {{"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": true, "clarification_message": "<2-3 warm focused questions in user's language>", "desired_outputs": []}}
+{{"brief_update": {{"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": true, "clarification_message": "<one grouped set of questions in the user's language, under the three headings above, each with its reason>", "desired_outputs": []}}
 
 Case B — execute:
 {{"brief_update": {{"industry": "<or null>", "goal": "<or null>", "target_audience": "<or null>", "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": false, "skill_plan": [[{{"skill": "<name>", "task": "<specific task>"}}]], "desired_outputs": ["proposal"]}}"""
@@ -228,6 +239,111 @@ def _build_contextual_skill_plan(state, message: str) -> list[list[dict[str, str
         {"skill": s, "task": f"Analyze and provide insights for: {task_short}"}
         for s in core_skills
     ]]
+
+
+# ---------------------------------------------------------------------------
+# Confirmation stops (BRD §11)
+# ---------------------------------------------------------------------------
+
+def _classify_brief_sources(state, verdict) -> dict[str, list[dict]]:
+    """Split the working brief into what the rep said, what we inferred, and what we
+    are assuming (BRD §12.2 — every item carries its origin).
+
+    "Said" is anything that appears verbatim in the rep's own turns; everything else
+    the extractor produced is an inference. Fields the gate flagged as missing but
+    which we are proceeding on are assumptions.
+    """
+    said_text = " ".join(
+        (m.get("content") or "").lower()
+        for m in state.messages
+        if m.get("role") == "user"
+    )
+
+    labels = {
+        "industry": "Ngành hàng",
+        "goal": "Mục tiêu",
+        "target_audience": "Đối tượng mục tiêu",
+        "budget_vnd": "Ngân sách",
+        "timeline": "Thời gian",
+        "specific_requirements": "Yêu cầu cụ thể",
+        "constraints": "Ràng buộc",
+    }
+
+    assumed_fields = set(getattr(verdict, "assumptions", []) or [])
+    groups: dict[str, list[dict]] = {"said": [], "inferred": [], "assumed": []}
+
+    for fieldname, label in labels.items():
+        value = getattr(state.brief, fieldname, None) if state.brief else None
+        if value in (None, "", [], {}):
+            if fieldname in assumed_fields:
+                groups["assumed"].append(
+                    {"field": fieldname, "label": label, "value": "(chưa có — sẽ phỏng đoán)"}
+                )
+            continue
+        shown = ", ".join(str(v) for v in value) if isinstance(value, list) else str(value)
+        bucket = "said" if shown.lower()[:40] in said_text else "inferred"
+        groups[bucket].append({"field": fieldname, "label": label, "value": shown})
+
+    return groups
+
+
+def _build_brief_checkpoint(state, verdict):
+    """Chốt 1 card: the brief as understood, grouped by where each item came from."""
+    import uuid as _uuid
+
+    from schemas.state import Checkpoint, CheckpointAction
+
+    groups = _classify_brief_sources(state, verdict)
+    counts = {k: len(v) for k, v in groups.items()}
+
+    return Checkpoint(
+        id=f"cp_brief_{_uuid.uuid4().hex[:10]}",
+        action=CheckpointAction(
+            type="confirm_brief",
+            description=(
+                "Mình hiểu brief như dưới đây. Bạn xác nhận giúp trước khi mình "
+                "chạy phân tích — sửa bây giờ rẻ hơn sửa sau khi đã có proposal."
+            ),
+            parameters={"gate_state": verdict.state.value},
+            preview={"groups": groups, "counts": counts},
+        ),
+        preview={"groups": groups, "counts": counts},
+    )
+
+
+def _build_solution_checkpoint(state, outputs):
+    """Chốt 2 card: the direction and feasibility verdict, before anything is rendered."""
+    import uuid as _uuid
+
+    from schemas.state import Checkpoint, CheckpointAction
+
+    def _head(name: str, limit: int = 900) -> str:
+        out = outputs.get(name)
+        text = getattr(out, "content", "") if out else ""
+        return text[:limit]
+
+    return Checkpoint(
+        id=f"cp_solution_{_uuid.uuid4().hex[:10]}",
+        action=CheckpointAction(
+            type="confirm_solution",
+            description=(
+                "Đây là hướng giải pháp và phán quyết khả thi. Duyệt thì mình dựng "
+                "proposal đầy đủ; muốn đổi hướng thì nói, phần chiến lược và pháp lý "
+                "vẫn giữ nguyên."
+            ),
+            parameters={},
+            preview={
+                "strategy": _head("market_strategy"),
+                "solution": _head("product_solution"),
+                "compliance": _head("compliance", 500),
+            },
+        ),
+        preview={
+            "strategy": _head("market_strategy"),
+            "solution": _head("product_solution"),
+            "compliance": _head("compliance", 500),
+        },
+    )
 
 
 _GANTT_DATE_RE = re.compile(r'\d{4}-\d{2}-\d{2}')
@@ -430,12 +546,34 @@ class CentralAgent:
         assessment = await self._assess_and_plan(state, message)
         self._apply_brief_update(state, assessment.get("brief_update") or {})
 
-        # Step 3A: Brief incomplete → ask clarifying questions
-        if assessment.get("needs_clarification"):
+        # Step 2b: THE GATE (BRD §8). The model above extracted information and has an
+        # opinion about whether that is enough; this decides. Pure code, no bypass.
+        #
+        # The planner's `needs_clarification` is now advisory: it can ask for more, but
+        # it can no longer wave an incomplete brief through. That inversion is the whole
+        # point — previously the only thing standing between a half-empty brief and a
+        # priced proposal was a sentence in a prompt.
+        verdict = gate.evaluate(
+            brief=state.brief,
+            message=message,
+            intent="brief",
+            history=state.messages,
+        )
+        print(verdict.log_line())
+
+        must_clarify = bool(assessment.get("needs_clarification")) or not verdict.may_dispatch
+
+        # Step 3A: Not cleared to dispatch → ask, and only ask
+        if must_clarify:
             clarification_msg = (
                 assessment.get("clarification_message")
                 or self._fallback_clarification(message)
             )
+            if not verdict.may_dispatch and verdict.missing:
+                blocking = ", ".join(
+                    f"{m.field}" for m in verdict.missing if m.blocking
+                )
+                print(f"[gate] blocked dispatch — no specialist agent ran. missing: {blocking}")
             yield {"type": "content", "content": clarification_msg}
             state.messages.append({
                 "role": "assistant", "content": clarification_msg,
@@ -444,7 +582,18 @@ class CentralAgent:
             yield {"type": "done"}
             return
 
-        # Step 3B: Brief clear → execute skills
+        # Step 3A2 — CHỐT 1 (BRD §11): before spending any specialist work, show the rep
+        # what we think they said and let them correct it. Running the whole pipeline
+        # first means an error in the first line is only discovered at the last one.
+        if "confirm_brief" not in state.confirmed_stages:
+            checkpoint = _build_brief_checkpoint(state, verdict)
+            state.checkpoint = checkpoint
+            print(f"[checkpoint] CHOT 1 raised — awaiting brief confirmation")
+            yield {"type": "checkpoint", "checkpoint": checkpoint.model_dump(mode="json")}
+            yield {"type": "done"}
+            return
+
+        # Step 3B: Cleared → execute skills
         skill_plan: list[list[dict]] = assessment.get("skill_plan") or []
 
         if not skill_plan:
@@ -488,6 +637,14 @@ class CentralAgent:
         skill_registry = get_skill_registry()
         all_outputs: dict[str, SkillOutput] = {}
 
+        # One ledger for the whole turn: a reference read for the strategy agent is not
+        # read again for the product agent, and the §14 log can account for the total.
+        ledger = RequestLedger(request_id=f"{state.session_id}:{len(state.messages)}")
+
+        # When the gate let this run on assumptions, every skill is told what is being
+        # assumed so the output declares it rather than passing a guess off as fact.
+        assumption_note = gate.assumption_notice(verdict)
+
         def _safe_field(v: Any, field: str, default: Any) -> Any:
             """Safely read a field from either a dict or an object (handles old DB records)."""
             if isinstance(v, dict):
@@ -497,6 +654,21 @@ class CentralAgent:
         for group in skill_plan:
             if not group:
                 continue
+
+            # CHỐT 2 (BRD §11): the analysis is done, the render is not. Stop here and
+            # show the direction — a proposal built on the wrong direction is the most
+            # expensive thing this system can produce.
+            is_render_group = any(
+                s.get("skill") in ("proposal_assembler", "wireframe_designer") for s in group
+            )
+            if is_render_group and "confirm_solution" not in state.confirmed_stages:
+                merged_now = dict(state.outputs)
+                merged_now.update(all_outputs)
+                checkpoint = _build_solution_checkpoint(state, merged_now)
+                state.checkpoint = checkpoint
+                print("[checkpoint] CHOT 2 raised — awaiting solution confirmation")
+                yield {"type": "checkpoint", "checkpoint": checkpoint.model_dump(mode="json")}
+                break
 
             tasks: dict[asyncio.Task, str] = {}
             for item in group:
@@ -521,7 +693,7 @@ class CentralAgent:
                     for k, v in all_outputs.items()
                 })
                 ctx = SkillContext(
-                    task=task_desc,
+                    task=task_desc + assumption_note,
                     brief=state.brief,
                     # Keep a wider rolling window here because the session transcript
                     # is the primary source of cross-turn context for re-entrant skills.
@@ -529,6 +701,7 @@ class CentralAgent:
                     previous_outputs=merged_previous,
                     constraints=state.constraints,
                     session_id=state.session_id,
+                    ledger=ledger,
                 )
                 t = asyncio.create_task(
                     asyncio.wait_for(skill.execute(ctx), timeout=_SKILL_TIMEOUT_S)
@@ -589,6 +762,7 @@ class CentralAgent:
                         previous_outputs=merged_auto,
                         constraints=state.constraints,
                         session_id=state.session_id,
+                        ledger=ledger,
                     )
                     yield {"type": "agent_status", "agent": auto_skill, "status": "thinking"}
                     try:
@@ -641,6 +815,7 @@ class CentralAgent:
                         previous_outputs=merged_deck,
                         constraints=state.constraints,
                         session_id=state.session_id,
+                        ledger=ledger,
                     )
                     yield {"type": "agent_status", "agent": "wireframe_designer", "status": "thinking"}
                     try:
@@ -660,6 +835,10 @@ class CentralAgent:
                     except Exception as e:
                         print(f"[CentralAgent] Deck-only wireframe_designer error: {e}")
                         yield {"type": "agent_status", "agent": "wireframe_designer", "status": "failed"}
+
+        # §14: one line per turn accounting for the knowledge that reached the prompts.
+        print(f"[knowledge] turn {ledger.request_id}: {ledger.summary()}")
+        print(f"[agents] ran: {', '.join(all_outputs.keys()) or 'none'}")
 
         # Step 4: Synthesize final response
         if all_outputs:
@@ -718,6 +897,13 @@ class CentralAgent:
             if name not in _EXCLUDE_FROM_PLAN
         )
         system_prompt = _PLANNING_SYSTEM_TEMPLATE.format(skill_catalog=skill_catalog)
+
+        # Prepend the orchestrator's own SKILL.md — identity, greeting behaviour,
+        # elicitation stance and routing rules. It was being loaded at import and then
+        # never used, so none of it had reached a prompt; the planner was running on the
+        # template alone.
+        if _CENTRAL_SKILL:
+            system_prompt = f"{_CENTRAL_SKILL}\n\n---\n\n{system_prompt}"
 
         brief_block = self._format_brief(state.brief)
         history_block = self._format_history(state.messages[-_RECENT_HISTORY_WINDOW:])

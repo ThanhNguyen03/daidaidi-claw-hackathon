@@ -961,12 +961,19 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         setMessages((prev) => [...prev, msg]);
       }
       setActiveCheckpoint(null);
+
+      // The confirmation stops (Chốt 1 / Chốt 2) pause the pipeline mid-run.
+      // Approving has to restart it — otherwise the card just disappears and the
+      // rep is left staring at a conversation that stopped for no visible reason.
+      if (data.resume) {
+        await sendMessage('Tiếp tục');
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setIsLoading(false);
     }
-  }, [sessionId, activeCheckpoint]);
+  }, [sessionId, activeCheckpoint, sendMessage]);
 
   const rejectCheckpoint = useCallback(async () => {
     if (!sessionId || !activeCheckpoint) return;

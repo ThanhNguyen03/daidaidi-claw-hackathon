@@ -83,6 +83,11 @@ export interface ValidationReport {
 
 export interface CheckpointAction {
   type:
+    // Confirmation stops: the pipeline pauses so the rep can correct course
+    // before work is spent on the wrong thing. Keep in sync with
+    // backend/schemas/state.py CheckpointAction.type.
+    | 'confirm_brief'
+    | 'confirm_solution'
     | 'generate_pptx'
     | 'generate_wireframe'
     | 'generate_userflow'

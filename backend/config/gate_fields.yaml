@@ -1,0 +1,64 @@
+# Gate field policy (BRD §8)
+# ==========================
+# Read by backend/gate.py. Deliberately data, not code: the *rule* that a gate
+# exists is code and cannot be bypassed; *which fields* it guards is knowledge
+# that sales and BA can edit without a deploy.
+#
+# The gate blocks on "expensive to fix late", not on completeness (§8.4).
+# Technical feasibility, legal exposure, budget and timeline are expensive.
+# Insight quality, phrasing and illustrative numbers are cheap — never block on those.
+
+# Missing any of these -> CHAN_HOI_LAI. Nothing downstream runs.
+required:
+  - field: industry
+    why: >
+      Compliance rules and the whole case-study corpus are keyed by industry.
+      Guessing it means the legal verdict is a guess, and that is the single
+      most expensive thing to discover late.
+  - field: goal
+    why: >
+      Determines whether this is a short campaign or a long-term platform, which
+      changes the package, the price and the architecture. Wrong here means the
+      entire proposal is wrong.
+
+# Required only when a trigger applies. Same blocking force as `required`.
+conditional:
+  - field: budget_vnd
+    when_any_of: [quote, pricing, proposal]
+    why: A quotation with no budget anchor gets rebuilt from scratch after the first client call.
+  - field: target_audience
+    when_any_of: [pharma, hcp, b2b]
+    why: >
+      Regulated audiences (doctors, pharmacists) carry different advertising-law
+      duties than consumers. Getting this wrong is a legal problem, not a wording one.
+
+# Absence is noted and labelled, never blocks.
+nice_to_have:
+  - field: timeline
+    why: Shifts lead-time and phasing, but is cheap to revise later.
+  - field: specific_requirements
+    why: Sharpens the solution; its absence only makes the proposal more generic.
+  - field: constraints
+    why: Usually surfaces during solution design anyway.
+
+# Intents that skip the gate entirely (§8.3). A rep asking "what does ZNS cost"
+# or rehearsing an objection is not building a brief.
+bypass_intents:
+  - lookup
+  - coaching
+
+# Phrases by which a rep explicitly accepts running on assumptions (§8.2).
+# This is the ONLY thing that downgrades a block, and it never deletes the
+# missing field — it converts it into a labelled assumption.
+proceed_anyway_phrases:
+  - cứ làm đi
+  - cứ chạy đi
+  - làm luôn đi
+  - làm tạm đi
+  - cứ tạm vậy
+  - bỏ qua đi
+  - không cần hỏi thêm
+  - proceed anyway
+  - just do it
+  - go ahead anyway
+  - skip the questions

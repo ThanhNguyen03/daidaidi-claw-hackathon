@@ -48,12 +48,55 @@ function CheckpointCard({
 
   const hasBlocking = checkpoint.compliance_findings?.some(f => f.severity === 'block');
 
+  // Chốt 1 sends the brief split by where each item came from. Showing that split is
+  // the whole value of the stop: a rep skims "inferred" and "assumed" for the one line
+  // that is wrong, which is much faster than re-reading a brief they already wrote.
+  const SOURCE_GROUPS: { key: string; label: string; hint: string; tone: string }[] = [
+    { key: 'said', label: 'Bạn đã nói', hint: 'lấy nguyên từ tin nhắn của bạn', tone: 'text-text' },
+    { key: 'inferred', label: 'Mình tự suy ra', hint: 'suy từ ngữ cảnh — kiểm giúp', tone: 'text-accent-text' },
+    { key: 'assumed', label: 'Đang phỏng đoán', hint: 'chưa có dữ liệu, mình sẽ giả định', tone: 'text-amber-600' },
+  ];
+
+  const formatBriefGroups = (groups: Record<string, Array<Record<string, string>>>) => (
+    <div className="space-y-3">
+      {SOURCE_GROUPS.map(({ key, label, hint, tone }) => {
+        const items = groups[key] || [];
+        if (items.length === 0) return null;
+        return (
+          <div key={key} className="bg-surface rounded overflow-hidden">
+            <div className="px-3 py-1.5 border-b border-border flex items-baseline gap-2">
+              <span className={`text-[12px] font-semibold ${tone}`}>{label}</span>
+              <span className="text-[11px] text-text-muted">{hint}</span>
+            </div>
+            <table className="w-full border-collapse text-xs">
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item.field} className="border-b border-border last:border-0">
+                    <td className="py-2 px-3 font-medium text-text-muted w-2/5">{item.label}</td>
+                    <td className="py-2 px-3 text-text">{item.value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+
   // Format preview as a table
   const formatPreview = (preview: unknown): React.ReactNode => {
     if (!preview) return null;
 
     if (typeof preview === 'object') {
-      const entries = Object.entries(preview as Record<string, unknown>);
+      const asRecord = preview as Record<string, unknown>;
+      if (asRecord.groups && typeof asRecord.groups === 'object') {
+        return formatBriefGroups(
+          asRecord.groups as Record<string, Array<Record<string, string>>>
+        );
+      }
+
+      const entries = Object.entries(asRecord);
       if (entries.length === 0) return null;
 
       return (
@@ -116,7 +159,13 @@ function CheckpointCard({
       <div className="flex items-start gap-3">
         <AlertTriangle size={24} className="text-accent shrink-0 mt-0.5" />
         <div className="flex-1">
-          <h3 className="font-semibold text-accent-text mb-2">Action Requires Approval</h3>
+          <h3 className="font-semibold text-accent-text mb-2">
+            {checkpoint.action.type === 'confirm_brief'
+              ? 'Chốt 1 — Xác nhận cách hiểu brief'
+              : checkpoint.action.type === 'confirm_solution'
+                ? 'Chốt 2 — Duyệt hướng giải pháp'
+                : 'Action Requires Approval'}
+          </h3>
           <p className="text-[12px] text-accent-text mb-3">{checkpoint.action.description}</p>
 
           {/* Preview */}
