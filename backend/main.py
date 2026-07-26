@@ -875,7 +875,14 @@ async def process_with_central_agent(
     async for event in central_agent.run(state, message, resume=resume):
         etype = event.get("type", "")
         if etype not in ("done",):
-            if etype in ("content", "agent_message", "assistant_message", "question_card"):
+            # A checkpoint IS the turn's output — Chốt 1 and Chốt 2 deliberately hand
+            # the rep a card and nothing else. Leaving them off this list meant a
+            # perfectly successful confirmation stop was followed by "Mình đang gặp sự
+            # cố kỹ thuật", which is both wrong and alarming.
+            if etype in (
+                "content", "agent_message", "assistant_message",
+                "question_card", "checkpoint", "checkpoint_card", "proposal_assets",
+            ):
                 has_content = True
             yield _sse_data(event)
 
@@ -1284,7 +1291,16 @@ async def chat_stream(request: Request, payload: ChatRequest):
                     yield ": keepalive\n\n"
                     continue
                 if chunk != done_chunk:
-                    if '"type": "assistant_message"' in chunk or '"type": "agent_message"' in chunk or '"type": "content"' in chunk:
+                    # Same list as has_content above, for the same reason: a turn whose
+                    # entire output is a card has not failed.
+                    if any(
+                        f'"type": "{t}"' in chunk
+                        for t in (
+                            "assistant_message", "agent_message", "content",
+                            "question_card", "checkpoint", "checkpoint_card",
+                            "proposal_assets",
+                        )
+                    ):
                         assistant_emitted = True
                     # Restore real values on the way out. Only worth the string scan
                     # when this session actually has aliases.

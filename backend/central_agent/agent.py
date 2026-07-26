@@ -729,9 +729,19 @@ class CentralAgent:
         # them what a package costs is the single most annoying thing this can do.
         conversational = intent in ("lookup", "coaching")
 
+        # The planner may ask for more, but only when it has actually formulated a
+        # question. Without this, a complete brief could be answered with the canned
+        # "chia sẻ brief không? (ngành hàng, mục tiêu...)" — asking for fields the rep
+        # had already given and the extractor had already stored. The gate is the
+        # authority on whether we may dispatch; the planner only adds to it.
+        planner_asks = bool(assessment.get("needs_clarification")) and bool(
+            (assessment.get("clarification_message") or "").strip()
+        )
+        if bool(assessment.get("needs_clarification")) and not planner_asks:
+            print("[plan] planner wanted to clarify but wrote no question — deferring to the gate")
+
         must_clarify = not conversational and (
-            not verdict.may_dispatch
-            or (bool(assessment.get("needs_clarification")) and not resuming)
+            not verdict.may_dispatch or (planner_asks and not resuming)
         )
 
         # Step 3A: Not cleared to dispatch → ask, and only ask
