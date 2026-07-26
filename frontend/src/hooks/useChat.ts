@@ -20,6 +20,8 @@ interface UseChatOptions {
 interface AgentStatus {
   name: string;
   status: 'idle' | 'thinking' | 'waiting' | 'completed' | 'failed';
+  /** Model that served this skill's last call — set by the terminal status event. */
+  model?: string | null;
 }
 
 // Artifact types for Day 6
@@ -568,11 +570,18 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           {
             const agentName = data.agent as string;
             const agentStatus = data.status as string;
+            const agentModel = (data.model as string | null) ?? null;
             if (agentName && agentStatus) {
               setActiveAgents((prev) => {
                 // Update or add agent status
                 const existing = prev.findIndex((a) => a.name === agentName);
-                const newAgent = { name: agentName, status: agentStatus as AgentStatus['status'] };
+                // Only the terminal events carry a model. Keep the previous one on a
+                // "thinking" update rather than blanking the row mid-turn.
+                const newAgent = {
+                  name: agentName,
+                  status: agentStatus as AgentStatus['status'],
+                  model: agentModel ?? (existing >= 0 ? prev[existing].model : null),
+                };
                 if (existing >= 0) {
                   const updated = [...prev];
                   updated[existing] = newAgent;

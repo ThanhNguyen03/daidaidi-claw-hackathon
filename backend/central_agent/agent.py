@@ -27,6 +27,7 @@ from typing import Any, AsyncGenerator, Optional
 
 import gate
 from knowledge.loader import RequestLedger
+from llm.usage import get_tracker
 from schemas.state import (
     AgentOutput,
     Brief,
@@ -1016,14 +1017,20 @@ class CentralAgent:
                         # "completed" — the rate-limited run that produced nothing showed
                         # a full row of green ticks, and only the final message admitted
                         # anything was wrong. The status event carries the real status.
+                        #
+                        # The model comes along with it because it is not knowable from
+                        # config: a fallback means the skill ran on something other than
+                        # its MODEL_<NAME>, and that is worth seeing on the row itself.
+                        model_used = get_tracker().last_model_for(skill_name)
                         if out.status == "COMPLETE":
                             yield {"type": "agent_status", "agent": skill_name,
-                                   "status": "completed"}
+                                   "status": "completed", "model": model_used}
                         else:
                             print(f"[CentralAgent] {skill_name} returned {out.status}: "
                                   f"{(out.summary or '')[:120]}")
                             yield {"type": "agent_status", "agent": skill_name,
-                                   "status": "failed", "message": out.summary}
+                                   "status": "failed", "message": out.summary,
+                                   "model": model_used}
                     except asyncio.TimeoutError:
                         print(f"[CentralAgent] Skill {skill_name} timed out after {_SKILL_TIMEOUT_S}s")
                         yield {"type": "agent_status", "agent": skill_name, "status": "failed",

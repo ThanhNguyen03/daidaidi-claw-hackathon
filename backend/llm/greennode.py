@@ -37,6 +37,8 @@ from openai import (
 )
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from dotenv import load_dotenv
+
+from llm.usage import get_tracker
 from tenacity import (
     RetryError,
     retry,
@@ -173,6 +175,46 @@ def _is_retryable(exc: BaseException) -> bool:
 # =============================================================================
 
 
+# Runtime model overrides, set from the UI — `"*"` applies to every caller, a skill
+# name to just that one.
+#
+# In memory only, and deliberately: a picker is for getting through the next few
+# turns when a model has run dry, not for redefining the deployment. MODEL_<NAME> in
+# the environment stays the source of truth across a restart.
+_OVERRIDES: dict[str, str] = {}
+_OVERRIDE_LOCK = threading.Lock()
+
+
+def set_model_override(agent: str, model: str | None) -> None:
+    """Point one caller — or everything, with agent="*" — at a specific model.
+    Passing model=None clears that override."""
+    with _OVERRIDE_LOCK:
+        if model:
+            _OVERRIDES[agent] = model
+            print(f"[llm] model override: {agent} -> {model}")
+        elif agent in _OVERRIDES:
+            del _OVERRIDES[agent]
+            print(f"[llm] model override cleared for {agent}")
+
+
+def get_model_overrides() -> dict[str, str]:
+    with _OVERRIDE_LOCK:
+        return dict(_OVERRIDES)
+
+
+def resolve_model(agent: str) -> str:
+    """The model this caller will actually start with: its own override, then the
+    global override, then MODEL_<NAME> from the environment."""
+    with _OVERRIDE_LOCK:
+        if agent in _OVERRIDES:
+            return _OVERRIDES[agent]
+        if "*" in _OVERRIDES:
+            return _OVERRIDES["*"]
+    return MODEL_MAPPING.get(
+        agent, MODEL_MAPPING.get("sales_orchestrator", "MiniMax-M2.5")
+    )
+
+
 @dataclass
 class GreenNodeClient:
     """
@@ -188,6 +230,17 @@ class GreenNodeClient:
     def chat(self) -> OpenAI.chat:
         """Access to chat completions API."""
         return self._client.chat
+
+    def model_chain(self) -> list[str]:
+        """Models this call will try, in order.
+
+        Resolved per call rather than at client construction so an override taken
+        from the UI applies to the very next turn — clients are cached and handed out
+        by the factory, and a chain fixed at construction would ignore the picker
+        until a restart.
+        """
+        first = resolve_model(self.agent_name)
+        return [first] + [m for m in LLM_FALLBACK_MODELS if m != first]
 
     def create_completion(
         self,
@@ -224,9 +277,8 @@ class GreenNodeClient:
         # model has spent its whole retry budget on rate limits. Anything else — a bad
         # request, a 404 model, a malformed reply — raises straight out: another model
         # would fail the same way, and swallowing it would hide the real error.
-        chain = [self.model_path] + [
-            m for m in LLM_FALLBACK_MODELS if m != self.model_path
-        ]
+        chain = self.model_chain()
+        tracker = get_tracker()
         last_error: Exception | None = None
 
         for i, model in enumerate(chain):
@@ -237,7 +289,7 @@ class GreenNodeClient:
                 # single 429 on the synthesis call ended the turn with no answer at all:
                 # the most visible call in the product was also the least protected.
                 if stream:
-                    return self._open_stream_with_retry(
+                    opened = self._open_stream_with_retry(
                         messages=messages,
                         tools=tools,
                         tool_choice=tool_choice,
@@ -246,8 +298,12 @@ class GreenNodeClient:
                         model=model,
                         **kwargs,
                     )
+                    # The handshake is as far as success can be judged here — the
+                    # tokens are consumed by the caller, long after this returns.
+                    tracker.record_success(model)
+                    return opened
 
-                return self._create_completion_with_retry(
+                result = self._create_completion_with_retry(
                     messages=messages,
                     tools=tools,
                     tool_choice=tool_choice,
@@ -257,8 +313,21 @@ class GreenNodeClient:
                     model=model,
                     **kwargs,
                 )
+                tracker.record_success(model)
+                return result
             except (RetryError, RateLimitError) as e:
                 last_error = e
+                # RetryError wraps the 429 that ended the retry loop; the loop only
+                # ends that way for a per-minute limit, so unwrap to tell the two
+                # apart in the panel.
+                inner = (
+                    e.last_attempt.exception()
+                    if isinstance(e, RetryError) and e.last_attempt.failed
+                    else e
+                )
+                tracker.record_rate_limit(
+                    model, daily=_is_daily_quota(inner or e), detail=str(inner or e)
+                )
                 if i + 1 < len(chain):
                     print(
                         f"[llm] {self.agent_name}: {model} out of quota after "
@@ -269,6 +338,9 @@ class GreenNodeClient:
                         f"[llm] {self.agent_name}: every model in the chain is out of "
                         f"quota ({', '.join(chain)})"
                     )
+            except Exception as e:
+                tracker.record_error(model, str(e))
+                raise
 
         raise last_error  # type: ignore[misc]  # chain is never empty
 
@@ -359,6 +431,12 @@ class GreenNodeClient:
             "temperature": temperature,
             "stream": stream,
         }
+        # Counted here rather than in create_completion so retries count too: five
+        # attempts against a rate-limited model are five requests as far as the
+        # provider's allowance is concerned, and a panel that showed one would explain
+        # nothing about why the allowance ran out.
+        get_tracker().record_attempt(str(kwargs.get("model") or self.model_path),
+                                     self.agent_name)
 
         if tools:
             params["tools"] = tools
@@ -451,11 +529,9 @@ class GreenNodeLLM:
         Raises:
             ValueError: If agent_name is not recognized
         """
-        # Fall back to sales_orchestrator model for unknown agents rather than crashing
-        model_path = MODEL_MAPPING.get(
-            agent_name,
-            MODEL_MAPPING.get("sales_orchestrator", "MiniMax-M2.5"),
-        )
+        # Unknown agents fall back to the sales_orchestrator model rather than crashing.
+        # resolve_model also applies any override set from the UI.
+        model_path = resolve_model(agent_name)
 
         return GreenNodeClient(
             agent_name=agent_name,

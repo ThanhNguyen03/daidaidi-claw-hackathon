@@ -149,6 +149,34 @@ requests draw a 429; a whole run on free tier produced 28 of them and failed fou
 skills. Hence concurrency 1 and the long retry ceiling. Before a demo, either buy
 quota or run a session in advance and present that.
 
+**Requests-per-day is the limit that actually stops a demo, and retrying cannot fix
+it.** Measured 2026-07-26: `gemini-3.6-flash` at 25/20 RPD while
+`gemini-3.5-flash-lite` sat at 246/500, and the five skills pinned to 3.6-flash all
+failed while the two on flash-lite sailed through. So `LLM_FALLBACK_MODELS` moves a
+call to the next model once one is spent, and the 429 body is read to tell a
+per-minute limit (wait it out) from a per-day one (switch immediately — six attempts
+across three models would hit the 270s skill timeout before reaching the last).
+
+```
+LLM_FALLBACK_MODELS=gemini-3.5-flash-lite,gemini-3.5-flash
+```
+
+Which model each skill is on, what has been spent, and a picker to move a skill — or
+everything — elsewhere: `GET /models`, `POST /models/select`, and the Model & Quota
+panel behind the CPU icon in the sidebar. `agent_status` events carry the model that
+actually served the call, which is the only way to see a fallback having fired.
+
+The usage figures are **counted by this app**, in `llm/usage.py`. Google exposes no
+API for remaining quota — AI Studio's Rate Limit page is not reachable from code — so
+the ceilings are declared in `config/model_limits.yaml` (editable without a deploy,
+like `gate_fields.yaml`) and every count is a lower bound: the same key used from a
+browser is invisible here. The exception is the `out_of_quota_today` state, which is
+read straight out of a 429 that named a per-day limit.
+
+An override from the panel is in memory only and dies with the container. That is
+deliberate — it exists to get through the next few turns, while `MODEL_<NAME>` in
+`.env.production` stays the source of truth.
+
 ---
 
 ## Deployment
