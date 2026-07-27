@@ -25,6 +25,9 @@ from functools import partial
 import random
 from typing import Any, AsyncGenerator, Optional
 
+import gate
+from knowledge.loader import RequestLedger
+from llm.usage import get_tracker
 from schemas.state import (
     AgentOutput,
     Brief,
@@ -32,7 +35,13 @@ from schemas.state import (
     Question,
     SalesCaseState,
 )
-from skills.base import SkillContext, SkillOutput, strip_think_blocks, extract_json_block
+from skills.base import (
+    SkillContext,
+    SkillOutput,
+    extract_json_block,
+    loads_lenient,
+    strip_think_blocks,
+)
 from skills.registry import get_skill_registry
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -53,14 +62,40 @@ _CENTRAL_SKILL = _load_central_skill()
 _SKILL_TIMEOUT_S = 270  # per-skill wall-clock timeout; increased to give slow GreenNode MAAS room
 _RECENT_HISTORY_WINDOW = 20
 _SYNTHESIS_HISTORY_WINDOW = 12
-# Skills that must run in the final group (after all analysis skills complete).
-# Both assembler and wireframe_designer run in parallel within that final group —
-# wireframe_designer reads the 4 analysis skill outputs directly (not assembler output)
-# which is exactly what we want: deck generation without waiting for the assembler.
+# Skills that must run after all analysis skills complete, each in its own group and
+# in this order: the deck is built from the assembler's finished proposal.
+#
+# These two used to share one parallel group, on the reasoning that the deck should not
+# wait for the assembler. It cost nothing and bought nothing. `previous_outputs` is
+# snapshotted before a group runs, so a paired wireframe_designer can never see the
+# assembler however fast the assembler finishes — it fell back to the four raw analysis
+# outputs, and when those were thin the extractor did exactly as its prompt says and
+# skipped every slide it had no source for: one cover slide, 53 tokens, a two-page deck.
+# And with LLM_MAX_CONCURRENCY=1 the pair was serialised by the semaphore anyway, so
+# "parallel" was never buying the latency it was justified by.
 _ALWAYS_SEQUENTIAL: set[str] = {"proposal_assembler", "wireframe_designer"}
-# Fallback only: fires if wireframe_designer wasn't paired with assembler in the plan.
-# In normal flow both are injected together and _AUTO_AFTER never triggers.
+# The order they run in, one group each. Every code path that arranges the plan must
+# preserve this — the deck is rendered from the assembler's output.
+_SEQUENTIAL_ORDER: list[str] = ["proposal_assembler", "wireframe_designer"]
+# Fires when wireframe_designer is not already the group after the assembler.
 _AUTO_AFTER: dict[str, str] = {"proposal_assembler": "wireframe_designer"}
+# The deck group, injected on its own after proposal_assembler.
+_DECK_STEP: dict[str, str] = {
+    "skill": "wireframe_designer",
+    "task": "Generate HTML deck + PPTX from the assembled proposal",
+}
+
+
+def _insert_deck_after_assembler(
+    plan: list[list[dict[str, str]]],
+) -> list[list[dict[str, str]]]:
+    """Put the deck step in its own group directly after the assembler's group."""
+    out: list[list[dict[str, str]]] = []
+    for group in plan:
+        out.append(group)
+        if any(s.get("skill") == "proposal_assembler" for s in group):
+            out.append([dict(_DECK_STEP)])
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -76,8 +111,41 @@ You receive:
   • Current Message — what the user just sent
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 0 — WHAT KIND OF MESSAGE IS THIS?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Classify the CURRENT message into exactly one `intent`. This decides whether the rep
+gets interrogated or simply answered, so getting it wrong is the most visible error
+you can make.
+
+"lookup" — a question about OUR product that has a factual answer sitting in our
+  knowledge: package contents, prices, what a feature does, what a policy allows,
+  the difference between two packages, lead times.
+  → The rep is asking, not briefing. NEVER ask them for industry, goal or budget to
+    answer one of these. Just answer it.
+  e.g. "Gói Base 3 và Pro 1 khác nhau gì, giá 12 tháng bao nhiêu?"
+       "ZNS tính phí thế nào?"  ·  "Scan Bill có trong CShub không?"
+
+"coaching" — the rep wants to rehearse, handle an objection, or compare against a
+  competitor. About the rep's own performance, not about a client's project.
+  e.g. "Khách chê đắt thì trả lời sao?"  ·  "Đóng vai khách phản biện giúp mình."
+
+"brief" — a client project to analyse: a campaign, a proposal, a solution, a quote
+  for a specific brand. This is the only intent that needs a complete brief.
+  e.g. "Brand FMCG muốn tăng repeat purchase, làm proposal giúp."
+
+"casual" — greeting, thanks, small talk.
+
+Deciding rule: if the message can be answered from what we know about AdtimaBox
+without knowing anything about a particular client, it is "lookup" — not "brief".
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 1 — CLARIFY or EXECUTE?
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For intent "lookup" or "coaching": ALWAYS execute, never clarify. Dispatch the one
+skill that owns the answer — product_solution for packages/pricing/features,
+compliance for policy and legal, client_simulator for coaching — and nothing else.
 
 Count CLARIFICATION ROUNDS USED = number of ASSISTANT turns in Conversation History.
 
@@ -113,11 +181,23 @@ GENERAL QUESTION or VAGUE REQUEST:
   → EXECUTE if any context exists
 
 When CLARIFYING:
-  • Ask exactly 2-3 focused questions about the MOST critical missing info
+  • Infer everything you reasonably can first. Fill it in, mark it as inferred, and ask
+    the rep to CONFIRM — never ask a question you could have answered yourself.
+  • Ask only what genuinely cannot be inferred.
+  • Put it all in ONE turn under three headings:
+        Mình tự suy ra  ·  Cần bạn cho biết  ·  Cần hỏi lại khách
+    That last split lets the rep send the client one email instead of three.
+  • Give the reason for each question.
+  • Never ask a question whose answer depends on another question in the same batch.
+  • There is NO cap on the number of questions. Stop when you have enough to reach a
+    feasibility verdict — not at some fixed count. A rep does not know what they do
+    not know, so a cap drops exactly the questions they would never have thought of.
   • Be warm and direct — frame as "để đưa ra đề xuất chính xác nhất, mình cần thêm..."
   • Do NOT ask for info already in Conversation History or Accumulated Brief
   • Match the user's language (Vietnamese if they wrote in Vietnamese)
-  • Do NOT list more than 3 questions
+  • END with what unblocks it, concretely: which field you need and what you will do
+    once you have it. The rep must never have to guess whose turn it is.
+    e.g. "**Tiếp theo:** cho mình ngành hàng và mục tiêu là mình chạy phân tích ngay."
 
 When EXECUTING:
   • Skills will flag "cần xác nhận thêm" for unknowns — that is fine
@@ -177,27 +257,44 @@ STEP 4 — OUTPUT (valid JSON only, no markdown fences)
 Skills in the same array run in parallel. Arrays run sequentially.
 proposal_assembler must be alone in the last array if included.
 
-Case A — clarify:
-{{"brief_update": {{"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": true, "clarification_message": "<2-3 warm focused questions in user's language>", "desired_outputs": []}}
+Every response MUST include "intent" — one of "lookup", "coaching", "brief", "casual".
+
+Case A — clarify (only ever valid for intent "brief"):
+{{"intent": "brief", "brief_update": {{"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": true, "clarification_message": "<one grouped set of questions in the user's language, under the three headings above, each with its reason>", "desired_outputs": []}}
 
 Case B — execute:
-{{"brief_update": {{"industry": "<or null>", "goal": "<or null>", "target_audience": "<or null>", "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": false, "skill_plan": [[{{"skill": "<name>", "task": "<specific task>"}}]], "desired_outputs": ["proposal"]}}"""
+{{"intent": "<lookup|coaching|brief>", "brief_update": {{"industry": "<or null>", "goal": "<or null>", "target_audience": "<or null>", "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": false, "skill_plan": [[{{"skill": "<name>", "task": "<specific task>"}}]], "desired_outputs": ["proposal"]}}
+
+Example — a pricing lookup. Note: no clarification, one skill, no brief demanded:
+{{"intent": "lookup", "brief_update": {{"industry": null, "goal": null, "target_audience": null, "budget_vnd": null, "timeline": null, "additional_context": null}}, "needs_clarification": false, "skill_plan": [[{{"skill": "product_solution", "task": "So sánh gói CShub Base 3 và Pro 1: khác biệt tính năng, hạn mức, và giá 12 tháng của từng gói."}}]], "desired_outputs": []}}"""
 
 
 # ---------------------------------------------------------------------------
 # Context-aware skill plan builder (uses accumulated brief + history)
 # ---------------------------------------------------------------------------
 
-def _build_contextual_skill_plan(state, message: str) -> list[list[dict[str, str]]]:
+def _build_contextual_skill_plan(
+    state, message: str, intent: str = "brief"
+) -> list[list[dict[str, str]]]:
     """Fallback plan builder used when the planning LLM fails or returns an empty plan.
 
     Priority:
-    1. Prior outputs exist → re-run those same skills (they were contextually chosen)
-    2. History exists but no prior outputs → run all registered non-sequential skills
-    3. Fresh session → run all registered non-sequential skills (safe default)
+    1. Intent is conversational → the single skill that owns the answer
+    2. Prior outputs exist → re-run those same skills (they were contextually chosen)
+    3. History exists but no prior outputs → run all registered non-sequential skills
+    4. Fresh session → run all registered non-sequential skills (safe default)
     """
     from skills.registry import get_skill_registry
     task_short = message[:400]
+
+    # Reusing whatever ran earlier is right for a follow-up on the same brief and
+    # wrong for everything else. In a session that had already produced a proposal,
+    # "đóng vai khách phản biện giúp mình" inherited the assembler and the deck
+    # generator and put an approval card in front of a roleplay request.
+    if intent == "coaching":
+        return [[{"skill": "client_simulator", "task": task_short}]]
+    if intent == "lookup":
+        return [[{"skill": "product_solution", "task": task_short}]]
     # Sequential skills are excluded from the analysis group and injected
     # as their own final parallel group (assembler + wireframe run together).
     _SEQUENTIAL = {"proposal_assembler", "wireframe_designer"}
@@ -218,9 +315,8 @@ def _build_contextual_skill_plan(state, message: str) -> list[list[dict[str, str
             plan.append([
                 {"skill": "proposal_assembler",
                  "task": f"Reassemble proposal incorporating: {task_short}"},
-                {"skill": "wireframe_designer",
-                 "task": "Generate HTML deck + PPTX from all skill outputs"},
             ])
+            plan.append([dict(_DECK_STEP)])
         return plan
 
     # Default: run all core skills
@@ -228,6 +324,172 @@ def _build_contextual_skill_plan(state, message: str) -> list[list[dict[str, str
         {"skill": s, "task": f"Analyze and provide insights for: {task_short}"}
         for s in core_skills
     ]]
+
+
+# ---------------------------------------------------------------------------
+# Confirmation stops (BRD §11)
+# ---------------------------------------------------------------------------
+
+def _classify_brief_sources(state, verdict) -> dict[str, list[dict]]:
+    """Split the working brief into what the rep said, what we inferred, and what we
+    are assuming (BRD §12.2 — every item carries its origin).
+
+    "Said" is anything that appears verbatim in the rep's own turns; everything else
+    the extractor produced is an inference. Fields the gate flagged as missing but
+    which we are proceeding on are assumptions.
+    """
+    said_text = " ".join(
+        (m.get("content") or "").lower()
+        for m in state.messages
+        if m.get("role") == "user"
+    )
+
+    labels = {
+        "industry": "Ngành hàng",
+        "goal": "Mục tiêu",
+        "target_audience": "Đối tượng mục tiêu",
+        "budget_vnd": "Ngân sách",
+        "timeline": "Thời gian",
+        "specific_requirements": "Yêu cầu cụ thể",
+        "constraints": "Ràng buộc",
+    }
+
+    assumed_fields = set(getattr(verdict, "assumptions", []) or [])
+    groups: dict[str, list[dict]] = {"said": [], "inferred": [], "assumed": []}
+
+    for fieldname, label in labels.items():
+        value = getattr(state.brief, fieldname, None) if state.brief else None
+        if value in (None, "", [], {}):
+            if fieldname in assumed_fields:
+                groups["assumed"].append(
+                    {"field": fieldname, "label": label, "value": "(chưa có — sẽ phỏng đoán)"}
+                )
+            continue
+        shown = ", ".join(str(v) for v in value) if isinstance(value, list) else str(value)
+        bucket = "said" if shown.lower()[:40] in said_text else "inferred"
+        groups[bucket].append({"field": fieldname, "label": label, "value": shown})
+
+    return groups
+
+
+def _build_brief_checkpoint(state, verdict):
+    """Chốt 1 card: the brief as understood, grouped by where each item came from."""
+    import uuid as _uuid
+
+    from schemas.state import Checkpoint, CheckpointAction
+
+    groups = _classify_brief_sources(state, verdict)
+    counts = {k: len(v) for k, v in groups.items()}
+
+    return Checkpoint(
+        id=f"cp_brief_{_uuid.uuid4().hex[:10]}",
+        action=CheckpointAction(
+            type="confirm_brief",
+            description=(
+                "Mình hiểu brief như dưới đây. Bạn xác nhận giúp trước khi mình "
+                "chạy phân tích — sửa bây giờ rẻ hơn sửa sau khi đã có proposal."
+            ),
+            parameters={"gate_state": verdict.state.value},
+            preview={"groups": groups, "counts": counts},
+        ),
+        preview={"groups": groups, "counts": counts},
+    )
+
+
+def _build_solution_checkpoint(state, outputs):
+    """Chốt 2 card: the direction and feasibility verdict, before anything is rendered."""
+    import uuid as _uuid
+
+    from schemas.state import Checkpoint, CheckpointAction
+
+    def _head(name: str, limit: int = 900) -> str:
+        out = outputs.get(name)
+        text = getattr(out, "content", "") if out else ""
+        return text[:limit]
+
+    return Checkpoint(
+        id=f"cp_solution_{_uuid.uuid4().hex[:10]}",
+        action=CheckpointAction(
+            type="confirm_solution",
+            description=(
+                "Đây là hướng giải pháp và phán quyết khả thi. Duyệt thì mình dựng "
+                "proposal đầy đủ; muốn đổi hướng thì nói, phần chiến lược và pháp lý "
+                "vẫn giữ nguyên."
+            ),
+            parameters={},
+            preview={
+                "strategy": _head("market_strategy"),
+                "solution": _head("product_solution"),
+                "compliance": _head("compliance", 500),
+            },
+        ),
+        preview={
+            "strategy": _head("market_strategy"),
+            "solution": _head("product_solution"),
+            "compliance": _head("compliance", 500),
+        },
+    )
+
+
+_VND_UNITS = (
+    ("tỷ", 1_000_000_000), ("ty", 1_000_000_000), ("tỉ", 1_000_000_000),
+    ("triệu", 1_000_000), ("trieu", 1_000_000), ("tr", 1_000_000),
+    ("nghìn", 1_000), ("nghin", 1_000), ("k", 1_000),
+)
+
+
+def _parse_vnd(value: Any) -> Optional[int]:
+    """Read a budget out of the way a Vietnamese rep actually writes one.
+
+    Handles "300 triệu", "1.5 tỷ", "200 - 500 triệu", "Dưới 100 triệu",
+    "500,000,000" and a bare integer. A range collapses to its midpoint: the top
+    of the range risks quoting a client out of the deal, the bottom under-serves
+    them, and the original phrasing is preserved in additional_context anyway so
+    the pricing skill can still see the spread.
+
+    Returns None when there is no number to find — "chưa chốt" is an answer, not
+    a parse failure, and must not be turned into a fabricated figure.
+    """
+    if isinstance(value, (int, float)):
+        return int(value) or None
+
+    text = str(value).lower().strip()
+    if not text:
+        return None
+
+    # Pair each number with the unit written right after it. A single multiplier
+    # for the whole string breaks on mixed ranges: "500 triệu - 1 tỷ" would take
+    # "tỷ" for both and land two orders of magnitude out.
+    unit_pattern = "|".join(re.escape(t) for t, _ in _VND_UNITS)
+    matches = re.findall(rf"(\d[\d.,]*)\s*({unit_pattern})?", text)
+
+    parsed: list[tuple[float, Optional[int]]] = []
+    for raw, unit in matches:
+        cleaned = raw.rstrip(".,")
+        if not cleaned:
+            continue
+        if re.fullmatch(r"\d{1,3}([.,]\d{3})+", cleaned):
+            cleaned = re.sub(r"[.,]", "", cleaned)       # 1.500.000 -> 1500000
+        else:
+            cleaned = cleaned.replace(",", ".")          # 1,5 -> 1.5
+        try:
+            number = float(cleaned)
+        except ValueError:
+            continue
+        factor = next((f for t, f in _VND_UNITS if t == unit), None) if unit else None
+        parsed.append((number, factor))
+
+    if not parsed:
+        return None
+
+    # A bare number in a range borrows the unit of its neighbour: in
+    # "200 - 500 triệu" the 200 is plainly also in millions.
+    known = [f for _, f in parsed if f]
+    fallback = known[0] if known else 1
+    amounts = [n * (f or fallback) for n, f in parsed]
+
+    amount = sum(amounts[:2]) / 2 if len(amounts) >= 2 else amounts[0]
+    return int(amount) or None
 
 
 _GANTT_DATE_RE = re.compile(r'\d{4}-\d{2}-\d{2}')
@@ -380,10 +642,13 @@ class CentralAgent:
         "tổng hợp", "làm deck", "tạo deck", "xuất deck", "xuất proposal",
         "bản trình bày", "bản đề xuất", "tài liệu đề xuất",
         "bản báo cáo", "làm tài liệu", "kế hoạch chi tiết",
+        "xuất file", "xuất ra file", "tạo file", "tải file", "tải về", "gửi file",
+        "file trình bày", "powerpoint", "pptx", "ppt",
         # English
         "deck", "slides", "presentation", "pitch deck", "pitch",
         "quotation", "quote", "estimate", "pricing doc",
         "make deck", "generate deck", "create deck", "build deck",
+        "export", "download",
     })
 
     def _detect_proposal_intent(self, state: SalesCaseState, message: str) -> bool:
@@ -397,7 +662,7 @@ class CentralAgent:
         return any(kw in haystack for kw in self._PROPOSAL_INTENT_KWS)
 
     async def run(
-        self, state: SalesCaseState, message: str
+        self, state: SalesCaseState, message: str, resume: bool = False
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Process a user message.
@@ -415,8 +680,32 @@ class CentralAgent:
         if self._detect_proposal_intent(state, message) and "proposal" not in state.desired_outputs:
             state.desired_outputs.append("proposal")
 
+        # Is this turn the continuation of an approved confirmation stop?
+        #
+        # Resuming must not depend on what the rep typed. The frontend sends a short
+        # nudge after approval, and "Tiếp tục" is exactly the shape the casual-chat
+        # detector matches — so the pipeline greeted the rep instead of carrying on.
+        # The approved checkpoint sitting on the session is the real signal.
+        # The caller says so explicitly. Inferring it from an approved checkpoint
+        # covered the two confirmation stops but not the question card, which pauses
+        # without one — so answering the card and being nudged with "Tiếp tục" landed
+        # in the casual-chat branch and the rep got greeted instead of an analysis.
+        resuming = bool(resume) or bool(
+            state.checkpoint
+            and state.checkpoint.status == "APPROVED"
+            and state.checkpoint.action.type in ("confirm_brief", "confirm_solution")
+        )
+        if resuming:
+            reason = (
+                state.checkpoint.action.type
+                if state.checkpoint and state.checkpoint.status == "APPROVED"
+                else "question card answered"
+            )
+            print(f"[resume] continuing after {reason}")
+            state.checkpoint = None  # consumed; a later stop will raise a fresh one
+
         # Step 1: Quick check — is this just a greeting/casual chat?
-        if self._is_casual(message):
+        if not resuming and self._is_casual(message):
             response = await self._casual_reply(message)
             yield {"type": "content", "content": response}
             state.messages.append({
@@ -430,30 +719,155 @@ class CentralAgent:
         assessment = await self._assess_and_plan(state, message)
         self._apply_brief_update(state, assessment.get("brief_update") or {})
 
-        # Step 3A: Brief incomplete → ask clarifying questions
-        if assessment.get("needs_clarification"):
-            clarification_msg = (
-                assessment.get("clarification_message")
-                or self._fallback_clarification(message)
-            )
-            yield {"type": "content", "content": clarification_msg}
+        # Step 2b: THE GATE (BRD §8). The model above extracted information and has an
+        # opinion about whether that is enough; this decides. Pure code, no bypass.
+        #
+        # The planner's `needs_clarification` is now advisory: it can ask for more, but
+        # it can no longer wave an incomplete brief through. That inversion is the whole
+        # point — previously the only thing standing between a half-empty brief and a
+        # priced proposal was a sentence in a prompt.
+        intent = self._resolve_intent(assessment, message)
+        print(f"[intent] {intent}")
+
+        verdict = gate.evaluate(
+            brief=state.brief,
+            message=message,
+            intent=intent,
+            history=state.messages,
+        )
+        print(verdict.log_line())
+
+        # Step 2c: the model provider is down. Say so. Every skill uses the same
+        # client, so nothing useful can happen this turn, and dressing the outage up
+        # as a clarifying question just makes the rep retype their brief.
+        if assessment.get("llm_failed"):
+            msg = self._service_error_message(message, state)
+            print(f"[CentralAgent] reporting provider outage to user")
+            yield {"type": "content", "content": msg}
             state.messages.append({
-                "role": "assistant", "content": clarification_msg,
-                "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+                "role": "assistant", "content": msg, "agent": "central_agent",
+                "kind": "service_error", "timestamp": datetime.now().isoformat(),
             })
             yield {"type": "done"}
             return
 
-        # Step 3B: Brief clear → execute skills
+        # On a resume the rep has just approved this brief on screen. The planner sees
+        # only the short nudge that carried the turn and will often ask for more; that
+        # would bounce them straight back to a question they already answered. The gate
+        # still applies — it just no longer takes the planner's opinion as a veto.
+        # A lookup or a coaching request is answered, never interrogated (BRD §8.3).
+        # The planner sometimes still returns needs_clarification for these; the
+        # classification wins, because asking a rep for their industry before telling
+        # them what a package costs is the single most annoying thing this can do.
+        conversational = intent in ("lookup", "coaching")
+
+        # The planner may ask for more, but only when it has actually formulated a
+        # question. Without this, a complete brief could be answered with the canned
+        # "chia sẻ brief không? (ngành hàng, mục tiêu...)" — asking for fields the rep
+        # had already given and the extractor had already stored. The gate is the
+        # authority on whether we may dispatch; the planner only adds to it.
+        planner_asks = bool(assessment.get("needs_clarification")) and bool(
+            (assessment.get("clarification_message") or "").strip()
+        )
+        if bool(assessment.get("needs_clarification")) and not planner_asks:
+            print("[plan] planner wanted to clarify but wrote no question — deferring to the gate")
+
+        must_clarify = not conversational and (
+            not verdict.may_dispatch or (planner_asks and not resuming)
+        )
+
+        # Step 3A: Not cleared to dispatch → ask, and only ask
+        if must_clarify:
+            clarification_msg = (
+                assessment.get("clarification_message")
+                or self._fallback_clarification(message, state)
+            )
+            if not verdict.may_dispatch and verdict.missing:
+                blocking = ", ".join(
+                    f"{m.field}" for m in verdict.missing if m.blocking
+                )
+                print(f"[gate] blocked dispatch — no specialist agent ran. missing: {blocking}")
+
+            # Asking the identical question again teaches the rep nothing. If the last
+            # turn was already a clarification and this one added no new field — or the
+            # rep just told us they don't know — change tack and offer the assumption
+            # route instead of repeating (BRD §10.1: infer, then confirm).
+            stuck = self._consecutive_clarifications(state) >= 1
+            if (stuck or gate.said_dont_know(message)) and not verdict.may_dispatch:
+                clarification_msg = self._escalated_clarification(message, verdict, state)
+                print("[CentralAgent] repeat clarification detected — offering assumption route")
+
+            yield {"type": "content", "content": clarification_msg}
+
+            # Alongside the prose, hand over pickable answers for the fields the gate
+            # is actually blocking on. Typing "FMCG" costs a rep more than tapping it,
+            # and free text arrives in a hundred spellings that the extractor then has
+            # to normalise. The card always carries a free-text option too — a closed
+            # list would quietly steer briefs toward whatever we guessed.
+            questions = gate.build_questions(verdict)
+            if questions:
+                state.question_stack = [
+                    Question(**q) for q in questions
+                ]
+                print(f"[gate] offering {len(questions)} pickable question(s): "
+                      f"{[q['target_field'] for q in questions]}")
+                yield {"type": "question_card", "questions": questions}
+
+            state.messages.append({
+                "role": "assistant", "content": clarification_msg,
+                "agent": "central_agent", "kind": "clarification",
+                "timestamp": datetime.now().isoformat(),
+            })
+            yield {"type": "done"}
+            return
+
+        # Step 3A2 — CHỐT 1 (BRD §11): before spending any specialist work, show the rep
+        # what we think they said and let them correct it. Running the whole pipeline
+        # first means an error in the first line is only discovered at the last one.
+        # Only a brief has a brief to confirm. Putting a "is this what you meant"
+        # card in front of a one-line pricing question is pure friction.
+        if not conversational and "confirm_brief" not in state.confirmed_stages:
+            checkpoint = _build_brief_checkpoint(state, verdict)
+            state.checkpoint = checkpoint
+            print(f"[checkpoint] CHOT 1 raised — awaiting brief confirmation")
+            yield {"type": "checkpoint", "checkpoint": checkpoint.model_dump(mode="json")}
+            yield {"type": "done"}
+            return
+
+        # Step 3B: Cleared → execute skills
         skill_plan: list[list[dict]] = assessment.get("skill_plan") or []
 
         if not skill_plan:
-            skill_plan = _build_contextual_skill_plan(state, message)
+            skill_plan = _build_contextual_skill_plan(state, message, intent)
 
-        # Safety net: inject assembler + wireframe as a paired parallel group if missing.
-        # Both run in parallel: assembler synthesizes the text response, wireframe_designer
-        # reads the 4 analysis skill outputs directly to build the deck (no assembler wait).
-        if ("proposal" in state.desired_outputs
+        # The planner is told not to build deliverables for a lookup or a coaching
+        # turn, and still does — it classified this one "coaching" and then planned an
+        # assembler and a deck anyway. Instruction is not enforcement: strip them here
+        # so a rehearsal request cannot silently spend two minutes rendering a PPTX
+        # nobody asked for.
+        if conversational:
+            stripped = [
+                [s for s in group if s.get("skill") not in _ALWAYS_SEQUENTIAL]
+                for group in skill_plan
+            ]
+            stripped = [g for g in stripped if g]
+            if stripped != skill_plan:
+                dropped = {
+                    s.get("skill")
+                    for group in skill_plan
+                    for s in group
+                    if s.get("skill") in _ALWAYS_SEQUENTIAL
+                }
+                print(f"[plan] intent={intent}: dropped {sorted(dropped)} — no deliverable requested")
+            skill_plan = stripped or _build_contextual_skill_plan(state, message, intent)
+
+        # Safety net: inject assembler, then the deck as its own following group, if
+        # missing. The order matters — see _ALWAYS_SEQUENTIAL.
+        # `desired_outputs` is sticky for the whole session by design, so once a rep
+        # has asked for a proposal every later turn tried to build one — including a
+        # question about pricing or a request to rehearse an objection.
+        if (not conversational
+                and "proposal" in state.desired_outputs
                 and not assessment.get("needs_clarification")
                 and "proposal_assembler" not in state.outputs):
             _pa_in_plan = {s.get("skill") for g in skill_plan for s in g}
@@ -467,26 +881,25 @@ class CentralAgent:
                             "data reactivation strategy và báo giá chi tiết."
                         ),
                     },
-                    {
-                        "skill": "wireframe_designer",
-                        "task": "Generate HTML deck + PPTX from all skill outputs",
-                    },
                 ])
+                skill_plan.append([dict(_DECK_STEP)])
             elif "wireframe_designer" not in _pa_in_plan:
-                # assembler is already in the plan but wireframe is missing — pair them
-                skill_plan = [
-                    (group + [{"skill": "wireframe_designer",
-                               "task": "Generate HTML deck + PPTX from all skill outputs"}])
-                    if any(s.get("skill") == "proposal_assembler" for s in group)
-                    else group
-                    for group in skill_plan
-                ]
+                # assembler is already in the plan — insert the deck as the group after it
+                skill_plan = _insert_deck_after_assembler(skill_plan)
 
         # Snapshot which skills already ran in PRIOR turns (before this execution)
         prior_skill_names: set[str] = set(state.outputs.keys())
 
         skill_registry = get_skill_registry()
         all_outputs: dict[str, SkillOutput] = {}
+
+        # One ledger for the whole turn: a reference read for the strategy agent is not
+        # read again for the product agent, and the §14 log can account for the total.
+        ledger = RequestLedger(request_id=f"{state.session_id}:{len(state.messages)}")
+
+        # When the gate let this run on assumptions, every skill is told what is being
+        # assumed so the output declares it rather than passing a guess off as fact.
+        assumption_note = gate.assumption_notice(verdict)
 
         def _safe_field(v: Any, field: str, default: Any) -> Any:
             """Safely read a field from either a dict or an object (handles old DB records)."""
@@ -498,6 +911,38 @@ class CentralAgent:
             if not group:
                 continue
 
+            # CHỐT 2 (BRD §11): the analysis is done, the render is not. Stop here and
+            # show the direction — a proposal built on the wrong direction is the most
+            # expensive thing this system can produce.
+            is_render_group = any(
+                s.get("skill") in ("proposal_assembler", "wireframe_designer") for s in group
+            )
+            # Same rule as Chốt 1: a lookup or a coaching turn has no client solution
+            # to approve. The fallback plan reuses whatever skills ran earlier in the
+            # session, so asking to rehearse an objection inside a session that had
+            # already built a proposal dragged the render group back in and put an
+            # approval card in front of a roleplay request.
+            if is_render_group and not conversational and "confirm_solution" not in state.confirmed_stages:
+                merged_now = dict(state.outputs)
+                merged_now.update(all_outputs)
+                checkpoint = _build_solution_checkpoint(state, merged_now)
+
+                # Nothing to approve if the analysis produced nothing — which happens
+                # when the skills were rate-limited. An empty card asking "duyệt hướng
+                # giải pháp?" above three blank rows is worse than no card.
+                #
+                # Skip the card, but do NOT skip the work. The first version of this
+                # guard used `break`, which exits the whole group loop — so asking to
+                # export a finished proposal ran no skills at all and answered "các
+                # skill không trả về kết quả" in two seconds.
+                preview = checkpoint.preview or {}
+                if any((preview.get(k) or "").strip() for k in ("strategy", "solution", "compliance")):
+                    state.checkpoint = checkpoint
+                    print("[checkpoint] CHOT 2 raised — awaiting solution confirmation")
+                    yield {"type": "checkpoint", "checkpoint": checkpoint.model_dump(mode="json")}
+                    break
+                print("[checkpoint] CHOT 2 skipped — nothing to confirm, running the group")
+
             tasks: dict[asyncio.Task, str] = {}
             for item in group:
                 skill_name = item.get("skill", "")
@@ -506,6 +951,18 @@ class CentralAgent:
                 if not skill:
                     print(f"[CentralAgent] Skill not found: {skill_name}, skipping")
                     continue
+
+                # Approving a confirmation stop means "carry on", not "start over".
+                # The planner rebuilds the full plan on the resume turn, so without this
+                # the analysis skills all ran a second time — wasted minutes, and on a
+                # rate-limited tier it burned the quota the deck extractor needed next,
+                # which is how a proposal ended up with only a cover and a closing slide.
+                # Re-running is what a *rejection* is for (BRD §11.3).
+                if resuming and skill_name not in _ALWAYS_SEQUENTIAL:
+                    prior = state.outputs.get(skill_name)
+                    if prior is not None and _safe_field(prior, "status", "") == "COMPLETE":
+                        print(f"[CentralAgent] {skill_name}: reusing result from before the checkpoint")
+                        continue
                 # Merge prior session outputs with current-run group outputs so skills
                 # can build on previous analysis when handling follow-up questions.
                 merged_previous = {
@@ -521,7 +978,7 @@ class CentralAgent:
                     for k, v in all_outputs.items()
                 })
                 ctx = SkillContext(
-                    task=task_desc,
+                    task=task_desc + assumption_note,
                     brief=state.brief,
                     # Keep a wider rolling window here because the session transcript
                     # is the primary source of cross-turn context for re-entrant skills.
@@ -529,6 +986,7 @@ class CentralAgent:
                     previous_outputs=merged_previous,
                     constraints=state.constraints,
                     session_id=state.session_id,
+                    ledger=ledger,
                 )
                 t = asyncio.create_task(
                     asyncio.wait_for(skill.execute(ctx), timeout=_SKILL_TIMEOUT_S)
@@ -555,7 +1013,24 @@ class CentralAgent:
                             content=out.content,
                             confidence=out.confidence,
                         )
-                        yield {"type": "agent_status", "agent": skill_name, "status": "completed"}
+                        # A skill that returned FAILED used to be announced as
+                        # "completed" — the rate-limited run that produced nothing showed
+                        # a full row of green ticks, and only the final message admitted
+                        # anything was wrong. The status event carries the real status.
+                        #
+                        # The model comes along with it because it is not knowable from
+                        # config: a fallback means the skill ran on something other than
+                        # its MODEL_<NAME>, and that is worth seeing on the row itself.
+                        model_used = get_tracker().last_model_for(skill_name)
+                        if out.status == "COMPLETE":
+                            yield {"type": "agent_status", "agent": skill_name,
+                                   "status": "completed", "model": model_used}
+                        else:
+                            print(f"[CentralAgent] {skill_name} returned {out.status}: "
+                                  f"{(out.summary or '')[:120]}")
+                            yield {"type": "agent_status", "agent": skill_name,
+                                   "status": "failed", "message": out.summary,
+                                   "model": model_used}
                     except asyncio.TimeoutError:
                         print(f"[CentralAgent] Skill {skill_name} timed out after {_SKILL_TIMEOUT_S}s")
                         yield {"type": "agent_status", "agent": skill_name, "status": "failed",
@@ -589,6 +1064,7 @@ class CentralAgent:
                         previous_outputs=merged_auto,
                         constraints=state.constraints,
                         session_id=state.session_id,
+                        ledger=ledger,
                     )
                     yield {"type": "agent_status", "agent": auto_skill, "status": "thinking"}
                     try:
@@ -611,14 +1087,21 @@ class CentralAgent:
 
         # Step 3D: Deck-only shortcut — user explicitly requests deck but proposal_assembler
         # was not re-run this turn. If prior assembled content exists, generate deck from it.
+        # "xuất file" was in neither this list nor the proposal-intent one, so asking
+        # for a file fell through to the generic responder — which answered that it
+        # was a chat model and could not produce files, while the deck generator sat
+        # right there. Keyword lists always have holes; the durable fix is the
+        # capability statement in SKILL.md, and this widening is the cheap half.
         _DECK_REQUEST_KWS = frozenset({
-            "deck", "slide", "slides", "pptx", "html deck",
+            "deck", "slide", "slides", "pptx", "html deck", "powerpoint",
             "làm deck", "tạo deck", "xuất deck", "update deck",
             "làm lại deck", "tạo lại deck", "regenerate deck",
+            "xuất file", "xuất ra file", "xuất ra", "tạo file", "gửi file",
+            "tải file", "tải về", "download", "export", "file trình bày",
         })
         _msg_lower = message.lower()
         _is_deck_request = any(kw in _msg_lower for kw in _DECK_REQUEST_KWS)
-        if _is_deck_request and "wireframe_designer" not in all_outputs:
+        if _is_deck_request and not conversational and "wireframe_designer" not in all_outputs:
             prior_pa = state.outputs.get("proposal_assembler")
             if (prior_pa and _safe_field(prior_pa, "status", "") == "COMPLETE"
                     and _safe_field(prior_pa, "content", "")):
@@ -641,6 +1124,7 @@ class CentralAgent:
                         previous_outputs=merged_deck,
                         constraints=state.constraints,
                         session_id=state.session_id,
+                        ledger=ledger,
                     )
                     yield {"type": "agent_status", "agent": "wireframe_designer", "status": "thinking"}
                     try:
@@ -660,6 +1144,10 @@ class CentralAgent:
                     except Exception as e:
                         print(f"[CentralAgent] Deck-only wireframe_designer error: {e}")
                         yield {"type": "agent_status", "agent": "wireframe_designer", "status": "failed"}
+
+        # §14: one line per turn accounting for the knowledge that reached the prompts.
+        print(f"[knowledge] turn {ledger.request_id}: {ledger.summary()}")
+        print(f"[agents] ran: {', '.join(all_outputs.keys()) or 'none'}")
 
         # Step 4: Synthesize final response
         if all_outputs:
@@ -683,11 +1171,28 @@ class CentralAgent:
         """
         try:
             return await self._plan(state, message)
-        except Exception as e:
-            print(f"[CentralAgent] Assessment LLM failed ({e}), defaulting to execute mode")
+        except json.JSONDecodeError as e:
+            # The provider answered; we just could not read the answer. That is not an
+            # outage, and telling the rep it is one ends the turn with nothing when the
+            # contextual plan below would have served them perfectly well. Measured on
+            # the live box: two turns in three ended this way on a malformed escape.
+            print(f"[CentralAgent] plan JSON unreadable ({e}) — falling back to contextual plan")
             return {
                 "brief_update": {},
                 "needs_clarification": False,
+                "skill_plan": _build_contextual_skill_plan(state, message),
+            }
+        except Exception as e:
+            # Flag it. Previously this returned a normal "execute" result, so a dead
+            # provider was indistinguishable from a real plan — the turn fell through
+            # to the canned clarification and the rep saw the same paragraph every
+            # time with no hint that anything was wrong.
+            print(f"[CentralAgent] Assessment LLM failed ({e}) — cannot plan this turn")
+            return {
+                "brief_update": {},
+                "needs_clarification": False,
+                "llm_failed": True,
+                "llm_error": str(e),
                 "skill_plan": _build_contextual_skill_plan(state, message),
             }
 
@@ -718,6 +1223,13 @@ class CentralAgent:
             if name not in _EXCLUDE_FROM_PLAN
         )
         system_prompt = _PLANNING_SYSTEM_TEMPLATE.format(skill_catalog=skill_catalog)
+
+        # Prepend the orchestrator's own SKILL.md — identity, greeting behaviour,
+        # elicitation stance and routing rules. It was being loaded at import and then
+        # never used, so none of it had reached a prompt; the planner was running on the
+        # template alone.
+        if _CENTRAL_SKILL:
+            system_prompt = f"{_CENTRAL_SKILL}\n\n---\n\n{system_prompt}"
 
         brief_block = self._format_brief(state.brief)
         history_block = self._format_history(state.messages[-_RECENT_HISTORY_WINDOW:])
@@ -751,7 +1263,7 @@ class CentralAgent:
         raw = strip_think_blocks(raw)
         raw = extract_json_block(raw)
 
-        result = json.loads(raw)
+        result = loads_lenient(raw)
 
         # Option B: allow up to 2 clarification rounds, then always execute.
         # Round 0 (0 assistant turns): may clarify if info missing.
@@ -790,20 +1302,11 @@ class CentralAgent:
                             "data reactivation strategy và báo giá chi tiết."
                         ),
                     },
-                    {
-                        "skill": "wireframe_designer",
-                        "task": "Generate HTML deck + PPTX from all skill outputs",
-                    },
                 ])
+                result["skill_plan"].append([dict(_DECK_STEP)])
             elif "wireframe_designer" not in _planned_skills:
-                # assembler is already in the LLM plan but wireframe is missing — pair into same group
-                result["skill_plan"] = [
-                    (group + [{"skill": "wireframe_designer",
-                               "task": "Generate HTML deck + PPTX from all skill outputs"}])
-                    if any(s.get("skill") == "proposal_assembler" for s in group)
-                    else group
-                    for group in result["skill_plan"]
-                ]
+                # assembler is already in the LLM plan — deck goes in the group after it
+                result["skill_plan"] = _insert_deck_after_assembler(result["skill_plan"])
 
         # Safety net: if LLM returned execute but no skill_plan, build from session state.
         if not result.get("needs_clarification") and not result.get("skill_plan"):
@@ -823,8 +1326,13 @@ class CentralAgent:
             if not result["skill_plan"]:
                 result["skill_plan"] = _build_contextual_skill_plan(state, message)
 
-            # Enforce sequential skills: pull them out of any mixed group and
-            # append them as their own final group so they always run after others.
+            # Enforce sequential skills: pull them out of any mixed group and append
+            # them after the others — one group each, in _SEQUENTIAL_ORDER.
+            #
+            # This used to collapse them into a single final group, which silently
+            # undid every attempt upstream to order the assembler before the deck: the
+            # deck was rebuilt into the assembler's own group and so never saw the
+            # proposal it is supposed to render. Ordering here is the last word.
             plan = result["skill_plan"]
             sequential_entries: list[dict] = []
             cleaned: list[list[dict]] = []
@@ -834,15 +1342,157 @@ class CentralAgent:
                 if regular:
                     cleaned.append(regular)
                 sequential_entries.extend(pulled)
-            if sequential_entries:
-                cleaned.append(sequential_entries)
+            for skill_name in _SEQUENTIAL_ORDER:
+                step = [s for s in sequential_entries if s.get("skill") == skill_name]
+                if step:
+                    cleaned.append(step[:1])  # a duplicate entry is a planner artefact
             result["skill_plan"] = cleaned
 
         return result
 
-    def _fallback_clarification(self, message: str) -> str:
+    # A question about our own product, answerable without knowing anything about a
+    # particular client. Used only when the planner did not classify — the model is
+    # better at this than a word list, but a word list still beats treating a pricing
+    # question as a new brief and interrogating the rep about their industry.
+    _LOOKUP_HINTS = re.compile(
+        r"(giá|bao nhiêu|khác nhau|khác gì|so sánh|gồm những gì|bao gồm|"
+        r"có hỗ trợ|có được|tính phí|chi phí|ratecard|bảng giá|"
+        r"là gì|thế nào|có trong|nằm trong|"
+        r"how much|what.s the (price|difference)|compare|included|pricing)",
+        re.IGNORECASE,
+    )
+    # Naming a specific package or module is a strong signal: nobody writes a client
+    # brief in terms of "Base 3" — they ask about it.
+    _PRODUCT_TERMS = re.compile(
+        r"\b(base\s*[123]|pro\s*[12]|voucher\s*1|cshub|cs hub|zns|zbs|"
+        r"utc|scan bill|lucky draw|mini ?app|open api)\b",
+        re.IGNORECASE,
+    )
+    _COACHING_HINTS = re.compile(
+        r"(đóng vai|phản biện|tập pitch|luyện pitch|khách chê|khách hỏi khó|"
+        r"xử lý từ chối|objection|roleplay|rehearse)",
+        re.IGNORECASE,
+    )
+
+    def _resolve_intent(self, assessment: dict[str, Any], message: str) -> str:
+        """Trust the planner's classification; fall back to keywords when it is absent.
+
+        The gate must know whether this is a brief before it decides to block. Without
+        a classifier every turn was treated as a brief, so "gói Base 3 và Pro 1 khác
+        nhau gì" — a question with a fixed answer in the ratecard — was answered by
+        demanding the rep's industry, goal and timeline.
+        """
+        declared = str(assessment.get("intent") or "").strip().lower()
+        if declared in ("lookup", "coaching", "brief", "casual"):
+            return declared
+
+        if self._COACHING_HINTS.search(message):
+            return "coaching"
+        # Needs both a question shape and a product term: "giá bao nhiêu" alone could
+        # sit inside a real brief, and misclassifying a brief as a lookup skips the
+        # gate — the more expensive direction to be wrong in.
+        if self._LOOKUP_HINTS.search(message) and self._PRODUCT_TERMS.search(message):
+            return "lookup"
+        return "brief"
+
+    def _is_vietnamese(self, message: str, state: Optional[SalesCaseState] = None) -> bool:
+        """Decide the reply language from the whole conversation, not one message.
+
+        System-generated nudges — "Continue", "Tiếp tục" — carry the turn after a
+        checkpoint or a question card, and judging on those alone answered a
+        Vietnamese rep in English. Their own earlier messages are the real signal.
+        """
+        if self._VI_CHARS.search(message) or self._VI_TOKENS.search(message):
+            return True
+        if state is None:
+            return False
+        for m in reversed(state.messages):
+            if m.get("role") != "user":
+                continue
+            text = m.get("content") or ""
+            if self._VI_CHARS.search(text) or self._VI_TOKENS.search(text):
+                return True
+        return False
+
+    @staticmethod
+    def _consecutive_clarifications(state: SalesCaseState) -> int:
+        """How many clarification turns we have just sent in a row.
+
+        Counts back from the end, stopping at the first assistant turn that was not a
+        clarification. Used to notice we are asking the same thing twice.
+        """
+        count = 0
+        for m in reversed(state.messages):
+            if m.get("role") != "assistant":
+                continue
+            if m.get("kind") == "clarification":
+                count += 1
+                continue
+            break
+        return count
+
+    def _escalated_clarification(self, message: str, verdict, state=None) -> str:
+        """Second attempt at the same question — offer to proceed on assumptions.
+
+        A rep who did not answer the first time usually cannot: the information sits
+        with their client. Repeating the question strands them. Naming what we would
+        assume and how to accept it gives them a way forward (BRD §8.2).
+        """
+        vi = self._is_vietnamese(message, state)
+        missing = [m for m in verdict.missing if m.blocking] or verdict.missing
+
+        if vi:
+            lines = [
+                "Nếu giờ chưa có mấy thông tin này thì không sao — mình vẫn chạy được, "
+                "chỉ là sẽ chạy trên giả định và ghi rõ chỗ nào đang đoán.",
+                "",
+                "**Mình sẽ giả định:**",
+            ]
+            for m in missing:
+                lines.append(f"- **{m.field}** — chưa có, mình lấy mặc định phổ biến nhất cho tình huống này")
+            lines += [
+                "",
+                'Bạn nhắn **"cứ làm đi"** là mình chạy luôn với giả định trên. '
+                "Còn nếu tiện hỏi khách thì chỉ cần ngành hàng và mục tiêu là đủ để mình "
+                "ra được phán quyết khả thi chính xác.",
+            ]
+            return "\n".join(lines)
+
+        lines = [
+            "No problem if you don't have these yet — I can still run, I'll just work "
+            "from assumptions and label every one of them.",
+            "",
+            "**I would assume:**",
+        ]
+        for m in missing:
+            lines.append(f"- **{m.field}** — not given, I'll take the most common default")
+        lines += [
+            "",
+            'Reply **"just do it"** and I\'ll go ahead on those. If you can check with the '
+            "client, industry and objective alone are enough for an accurate feasibility call.",
+        ]
+        return "\n".join(lines)
+
+    def _service_error_message(self, message: str, state=None) -> str:
+        """Told plainly, because a fake question wastes the rep's time."""
+        vi = self._is_vietnamese(message, state)
+        if vi:
+            return (
+                "Mình đang không kết nối được tới dịch vụ mô hình nên chưa xử lý được "
+                "yêu cầu này. Đây là sự cố hệ thống, không phải do brief của bạn thiếu "
+                "gì cả — bạn thử lại sau ít phút giúp mình nhé. Nếu vẫn lỗi thì báo team "
+                "kỹ thuật kiểm tra API key."
+            )
+        return (
+            "I can't reach the model service right now, so I couldn't process this. "
+            "That's a system problem, not anything missing from your brief — please try "
+            "again in a few minutes, and if it persists, ask the tech team to check the "
+            "API key."
+        )
+
+    def _fallback_clarification(self, message: str, state=None) -> str:
         """Fallback clarification message when LLM fails to generate one."""
-        lang = "vi" if (self._VI_CHARS.search(message) or self._VI_TOKENS.search(message)) else "en"
+        lang = "vi" if self._is_vietnamese(message, state) else "en"
         if lang == "vi":
             return (
                 "Để mình có thể tư vấn giải pháp phù hợp nhất, bạn có thể chia sẻ thêm một chút:\n\n"
@@ -900,8 +1550,32 @@ class CentralAgent:
 
         if not outputs_block.strip():
             if not is_followup:
-                # First call with no skill output — show error
-                msg = "Xin lỗi, mình chưa tổng hợp được kết quả phân tích. Bạn thử gửi lại câu hỏi không?"
+                # Distinguish "the model provider refused us" from "nothing to say".
+                # A rate limit told as "chưa tổng hợp được" reads as the agent being
+                # confused by the question, so the rep rewrites a question that was
+                # perfectly fine — the same mistake as dressing an outage up as a
+                # clarifying question.
+                failures = [
+                    o for o in skill_outputs.values() if getattr(o, "status", "") == "FAILED"
+                ]
+                throttled = any(
+                    "ratelimit" in (getattr(o, "summary", "") or "").lower()
+                    or "429" in (getattr(o, "summary", "") or "")
+                    for o in failures
+                )
+                if throttled:
+                    msg = (
+                        "Hạn mức gọi model đang bị đầy nên mình chưa chạy được phân tích "
+                        "cho câu này. Câu hỏi của bạn không có vấn đề gì — chờ khoảng "
+                        "một phút rồi gửi lại giúp mình."
+                    )
+                elif failures:
+                    msg = (
+                        "Bước phân tích gặp lỗi kỹ thuật nên mình chưa có kết quả. "
+                        "Bạn gửi lại giúp mình nhé — nếu vẫn lỗi thì báo team kỹ thuật."
+                    )
+                else:
+                    msg = "Xin lỗi, mình chưa tổng hợp được kết quả phân tích. Bạn thử gửi lại câu hỏi không?"
                 yield {"type": "content", "content": msg}
                 state.messages.append({
                     "role": "assistant", "content": msg,
@@ -929,6 +1603,8 @@ Format rules:
 - Use ## for section headers, ### for sub-sections
 - Be specific to this brief/brand — no generic filler
 - Do NOT mention "skill", "agent", "module", or internal pipeline names
+- This system produces a branded HTML deck and a downloadable PPTX. Never claim it
+  cannot generate files; the only honest limits are Word, Excel and email.
 
 OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
 
@@ -1001,6 +1677,27 @@ Your job: respond ONLY to what they asked about in the Current Request.
 - Language: match the user's language (Vietnamese if they wrote in Vietnamese).
 - Do NOT mention "skill", "agent", "module", or internal pipeline names.
 
+NEVER INVENT SLIDE CONTENTS. If a deck was built, its real slide list is in the
+context under the deck output — describe those slides and no others. If it says DECK
+NOT BUILT, say the deck could not be built yet and to retry shortly; never list slides
+or offer a download for a file that does not exist.
+
+YOU PRODUCE REAL FILES. This system generates an AdtimaBox-branded HTML deck and a
+downloadable PPTX, delivered as "View Deck" and "Download PPTX" buttons in the chat.
+Claiming "mình là AI chạy trên nền tảng chat nên không xuất được file" is FALSE and a
+rep may repeat it to a client. If asked to export or download in any wording, say you
+build it — and if it does not exist yet, say what triggers it:
+  "**Tiếp theo:** nói *làm proposal* là mình dựng bản đầy đủ kèm deck HTML và file PPTX."
+The only honest limits: no Word (.docx), no Excel, no email.
+
+ALWAYS CLOSE WITH WHAT HAPPENS NEXT. Never end on an explanation and leave the rep
+guessing whether it is their turn. Finish with a short `**Tiếp theo:**` line that says
+either what you need from them to continue, or what you can produce next and how to
+ask for it. One or two sentences — concrete, not "let me know if you need anything".
+  Good:  **Tiếp theo:** cho mình ngân sách dự kiến là mình ra được báo giá chi tiết.
+  Good:  **Tiếp theo:** nói "làm proposal" là mình dựng bản đầy đủ kèm deck PPTX.
+  Bad:   Hy vọng thông tin trên hữu ích cho bạn!
+
 OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
 TABLES: Markdown pipe tables — NEVER ASCII box-drawing for tables.
 BAR CHARTS: ``` plain block, ┌─╠═─┘ box, "NN%  Label" per line — NEVER █ block chars.
@@ -1023,10 +1720,26 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                     history_lines.append(f"Assistant: {content}")
             history_block = "\n\n".join(history_lines)
 
+            # "Deck có mấy slide?" usually arrives on a turn that runs no skills, so the
+            # only deck facts in the prompt would be whatever the transcript happens to
+            # mention — and the model filled the gap by inventing a table of contents.
+            # The manifest wireframe_designer wrote is on the session; put it back in.
+            deck_block = ""
+            if "wireframe_designer" not in skill_outputs:
+                prior_deck = (state.outputs or {}).get("wireframe_designer")
+                prior_content = (
+                    prior_deck.get("content", "")
+                    if isinstance(prior_deck, dict)
+                    else getattr(prior_deck, "content", "")
+                ) or ""
+                if prior_content:
+                    deck_block = f"\n\n## Deck Built Earlier This Session\n{prior_content}"
+
             user_msg = (
                 f"## Conversation So Far\n{history_block}\n\n"
                 f"## Current Request\n{original_message}\n\n"
-                f"## New Analysis (respond based on this)\n{outputs_block}\n\n"
+                f"## New Analysis (respond based on this)\n{outputs_block}"
+                f"{deck_block}\n\n"
                 "Respond directly to the Current Request. Be thorough on the specific topics asked. "
                 "Do not repeat what was already covered in the previous response."
             )
@@ -1252,11 +1965,22 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
         free_text = answers.get("free_text")
         if free_text:
             self._apply_brief_update(state, await self._extract_brief_from_text(state, free_text))
-        state.validation_status = "READY"
-        state.question_stack = []
+
+        # Drop only what was actually answered. Clearing the whole stack meant
+        # answering the first of three questions silently discarded the other two,
+        # so the rep tapped one chip and the rest of the card vanished.
+        remaining = [q for q in state.question_stack if not q.answered]
+        state.question_stack = [] if free_text else remaining
+
+        status = "READY" if not state.question_stack else "PENDING"
+        state.validation_status = status
         return AgentOutput(
-            agent="central_agent", status="COMPLETE", payload={},
-            summary="Ready to proceed.", confidence=0.9, questions=[],
+            agent="central_agent",
+            status="COMPLETE",
+            payload={},
+            summary="Ready to proceed." if status == "READY" else "More answers needed.",
+            confidence=0.9,
+            questions=[q.model_dump(mode="json") for q in state.question_stack],
         )
 
     async def extract_desired_outputs(self, answer: str) -> list[str]:
@@ -1333,18 +2057,28 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
         elif field == "target_audience" and not brief.target_audience:
             brief.target_audience = str(value)
         elif field == "budget_vnd" and not brief.budget_vnd:
-            try:
-                brief.budget_vnd = int(str(value).replace(",", "").replace(".", "").strip())
-            except (ValueError, TypeError):
-                pass
+            # Answers arrive as human phrases — "200 - 500 triệu", "Trên 1 tỷ" — from
+            # the choice chips as much as from typing. int() on those raised and was
+            # swallowed, so a budget the rep had explicitly picked never reached the
+            # brief and the gate kept asking for it.
+            parsed = _parse_vnd(value)
+            if parsed:
+                brief.budget_vnd = parsed
+            # Keep the phrasing either way: a range carries intent that one number
+            # cannot, and "chưa chốt" is itself worth telling the pricing skill.
+            brief.additional_context = (
+                (brief.additional_context or "") + f" Ngân sách khách nói: {value}."
+            ).strip()
         elif field == "timeline" and not brief.timeline:
             brief.timeline = str(value)
         elif field == "additional_context":
             brief.additional_context = ((brief.additional_context or "") + " " + str(value)).strip()
-        elif field == "specific_requirements" and isinstance(value, list):
-            brief.specific_requirements = list(brief.specific_requirements or []) + value
-        elif field == "constraints" and isinstance(value, list):
-            brief.constraints = list(brief.constraints or []) + value
+        elif field in ("specific_requirements", "constraints"):
+            # A chip answers with a string; only the LLM path produces a list. The
+            # list-only check silently dropped every chip for these two fields.
+            incoming = value if isinstance(value, list) else [str(value)]
+            current = list(getattr(brief, field) or [])
+            setattr(brief, field, current + [v for v in incoming if v not in current])
 
     async def _extract_brief_from_text(self, state: SalesCaseState, text: str) -> dict:
         from llm.greennode import get_llm_client
@@ -1363,7 +2097,9 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                 ),
             )
             raw = strip_think_blocks(response.choices[0].message.content or "{}")
-            return json.loads(extract_json_block(raw))
+            # Lenient: this extracts Vietnamese brief fields, which is exactly where the
+            # invalid-escape replies show up, and the except below drops the brief silently.
+            return loads_lenient(extract_json_block(raw))
         except Exception:
             return {}
 

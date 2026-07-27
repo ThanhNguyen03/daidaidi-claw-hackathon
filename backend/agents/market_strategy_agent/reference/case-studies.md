@@ -1,10 +1,10 @@
-﻿---
+---
 
 name: adtimabox-case-studies
 
 description: >
 
-    AdtimaBox case study matcher — activate when the client's industry, audience type, or business objective is already known and agent needs to find a similar past case for social proof and solution direction. Input: known firmographic (industry, B2B/B2C, channel, objective). Output: matched case alias + solution direction. Use AFTER adtimabox-requirement-elicitor has identified the client profile. Do NOT use when client context is still vague — elicit first. Does NOT answer pricing (→ adtimabox-product-advisor) or design journeys (→ adtimabox-solution-designer).
+AdtimaBox case study matcher — activate when the client's industry, audience type, or business objective is already known and agent needs to find a similar past case for social proof and solution direction. Input: known firmographic (industry, B2B/B2C, channel, objective). Output: matched case alias + solution direction. Use AFTER adtimabox-requirement-elicitor has identified the client profile. Do NOT use when client context is still vague — elicit first. Does NOT answer pricing (→ adtimabox-product-advisor) or design journeys (→ adtimabox-solution-designer).
 
 ---
 
@@ -20,13 +20,13 @@ description: >
 
 **Output always includes:**
 
-1\. Matched case(s) with alias and rationale for the match
+1. Matched case(s) with alias and rationale for the match
 
-2\. Recommended solution: CShub package + Campaign instant add-ons
+2. Recommended solution: CShub package + Campaign instant add-ons
 
-3\. Key selling point / proof point from the matched case
+3. Key selling point / proof point from the matched case
 
-4\. Refer to `adtimabox-product-advisor` for detailed pricing and feature specs
+4. Refer to `adtimabox-product-advisor` for detailed pricing and feature specs
 
 
 
@@ -46,71 +46,71 @@ When reading a client brief, match in this order:
 
 
 
-1\. **B2B or B2C?**
+1. **B2B or B2C?**
 
-     - B2B cases: CS-04 (HCP general), CS-05 (garage/mechanic), CS-06 (dealer), CS-07 (POC outlet), CS-12 (HCP new product launch + Salesforce integration), CS-16 (construction B2B contractor), CS-17 (cross-border seller community)
+- B2B cases: CS-04 (HCP general), CS-05 (garage/mechanic), CS-06 (dealer), CS-07 (POC outlet), CS-12 (HCP new product launch + Salesforce integration), CS-16 (construction B2B contractor), CS-17 (cross-border seller community)
 
-     - B2C cases: CS-01, CS-02, CS-03, CS-08, CS-09, CS-10, CS-11, CS-13, CS-14, CS-15, CS-18
-
-
-
-2\. **Channel**
-
-     - MT shopper → CS-02, CS-14 (formula UTC)
-
-     - Pharmacy / clinic → CS-08, CS-14, CS-15
-
-     - Brand store chain → CS-03, CS-09
-
-     - Convenience store / circle K → CS-10
-
-     - GT / on-premise / POC → CS-07
-
-     - Garage / repair shop → CS-05
-
-     - Dealer network → CS-06, CS-16
-
-     - HCP / hospital / clinic → CS-04, CS-12 (new launch / Salesforce integration → CS-12)
-
-     - B2B professional community / SME → CS-17
-
-     - Multi-brand consumer health → CS-15
-
-     - Infant formula / baby nutrition → CS-13, CS-14
-
-     - Personal care OTC → CS-18
+- B2C cases: CS-01, CS-02, CS-03, CS-08, CS-09, CS-10, CS-11, CS-13, CS-14, CS-15, CS-18
 
 
 
-3\. **Primary objective**
+2. **Channel**
 
-     - Long-term loyalty program → CS-01, CS-05, CS-07, CS-08, CS-13, CS-14
+- MT shopper → CS-02, CS-14 (formula UTC)
 
-     - New product trial / awareness → CS-09, CS-10
+- Pharmacy / clinic → CS-08, CS-14, CS-15
 
-     - O2O conversion → CS-09, CS-10
+- Brand store chain → CS-03, CS-09
 
-     - Consumer data from purchase (MT/pharmacy) → CS-02, CS-08, CS-14
+- Convenience store / circle K → CS-10
 
-     - B2B intermediary engagement → CS-05, CS-06, CS-07, CS-16
+- GT / on-premise / POC → CS-07
 
-     - Personalized CRM / retention → CS-03, CS-08, CS-13
+- Garage / repair shop → CS-05
 
-     - Digital engagement / viral / earned media → CS-11, CS-10
+- Dealer network → CS-06, CS-16
 
-     - HCP / professional audience → CS-04, CS-12
+- HCP / hospital / clinic → CS-04, CS-12 (new launch / Salesforce integration → CS-12)
 
-     - Pregnancy-week triggered personalization → CS-13
+- B2B professional community / SME → CS-17
 
-     - Multi-brand single hub → CS-15
+- Multi-brand consumer health → CS-15
 
-     - B2B knowledge community / seller education → CS-17
+- Infant formula / baby nutrition → CS-13, CS-14
 
-     - OA-only lightweight CRM → CS-18
+- Personal care OTC → CS-18
 
 
 
-4\. **Industry proximity** — same industry = strongest match; adjacent industry still useful for pitch
+3. **Primary objective**
+
+- Long-term loyalty program → CS-01, CS-05, CS-07, CS-08, CS-13, CS-14
+
+- New product trial / awareness → CS-09, CS-10
+
+- O2O conversion → CS-09, CS-10
+
+- Consumer data from purchase (MT/pharmacy) → CS-02, CS-08, CS-14
+
+- B2B intermediary engagement → CS-05, CS-06, CS-07, CS-16
+
+- Personalized CRM / retention → CS-03, CS-08, CS-13
+
+- Digital engagement / viral / earned media → CS-11, CS-10
+
+- HCP / professional audience → CS-04, CS-12
+
+- Pregnancy-week triggered personalization → CS-13
+
+- Multi-brand single hub → CS-15
+
+- B2B knowledge community / seller education → CS-17
+
+- OA-only lightweight CRM → CS-18
+
+
+
+4. **Industry proximity** — same industry = strongest match; adjacent industry still useful for pitch
 
 
 
@@ -121,8 +121,6 @@ When reading a client brief, match in this order:
 ## CASE STUDY PROFILES
 
 
-
-### CS-01
 
 **CS-01 — Global carbonated beverage MNC, mass-market flagship, UTC on-pack loyalty**
 
@@ -146,8 +144,6 @@ When reading a client brief, match in this order:
 
 
 
-### CS-02
-
 **CS-02 — Global food MNC, cooking condiment brand, MT-channel, bill submission promotion**
 
 - Industry: F&B — cooking condiments
@@ -169,8 +165,6 @@ When reading a client brief, match in this order:
 ---
 
 
-
-### CS-03
 
 **CS-03 — International footwear retail brand, mid-range, store chain, personalized ZBS CRM**
 
@@ -194,8 +188,6 @@ When reading a client brief, match in this order:
 
 
 
-### CS-04
-
 **CS-04 — Global pharma MNC, HCP-facing, multi-specialty doctor/pharmacist CRM**
 
 - Industry: Pharma / Healthcare — B2B HCP
@@ -217,8 +209,6 @@ When reading a client brief, match in this order:
 ---
 
 
-
-### CS-05
 
 **CS-05 — Global lubricant MNC, B2B intermediary (garage/mechanic) loyalty, QR-based**
 
@@ -242,8 +232,6 @@ When reading a client brief, match in this order:
 
 
 
-### CS-06
-
 **CS-06 — Global paint MNC, B2B2C (dealer + end consumer), building materials, loyalty + scan bill**
 
 - Industry: Building materials — paint
@@ -265,8 +253,6 @@ When reading a client brief, match in this order:
 ---
 
 
-
-### CS-07
 
 **CS-07 — Global beer MNC, B2B POC (outlet) loyalty, migrated from app to Zalo — 131% KPI**
 
@@ -290,8 +276,6 @@ When reading a client brief, match in this order:
 
 
 
-### CS-08
-
 **CS-08 — Global nutrition MNC, adult health supplement, pharmacy channel, full-funnel CRM**
 
 - Industry: F&B / Healthcare — nutrition science
@@ -313,8 +297,6 @@ When reading a client brief, match in this order:
 ---
 
 
-
-### CS-09
 
 **CS-09 — Vietnamese premium dairy brand, new product launch (probiotic), O2O trial via minigame**
 
@@ -338,8 +320,6 @@ When reading a client brief, match in this order:
 
 
 
-### CS-10
-
 **CS-10 — Global beverage MNC, youth sub-brand, O2O trial via personalization, Circle K redemption**
 
 - Industry: F&B — carbonated beverage, youth segment
@@ -361,8 +341,6 @@ When reading a client brief, match in this order:
 ---
 
 
-
-### CS-12
 
 **CS-12 — Global pharma MNC, HCP-facing, new product MCE launch + Salesforce-integrated HCP Hub**
 
@@ -388,8 +366,6 @@ When reading a client brief, match in this order:
 
 
 
-### CS-13
-
 **CS-13 — Global infant nutrition MNC, pregnant mom/new parent community, ZBS personalization by pregnancy week + location**
 
 - Industry: F&B / Nutrition — infant formula, baby nutrition
@@ -414,8 +390,6 @@ When reading a client brief, match in this order:
 
 
 
-### CS-14
-
 **CS-14 — Global infant nutrition MNC, baby formula, UTC under-cap scan → points accumulation + redemption**
 
 - Industry: F&B / Nutrition — baby formula (infant/toddler stage)
@@ -437,8 +411,6 @@ When reading a client brief, match in this order:
 ---
 
 
-
-### CS-15
 
 **CS-15 — Global consumer health MNC (multi-brand OTC portfolio), membership registration + unified loyalty hub**
 
@@ -462,8 +434,6 @@ When reading a client brief, match in this order:
 
 
 
-### CS-16
-
 **CS-16 — Global construction chemicals MNC, B2B contractor/dealer engagement, anniversary loyalty campaign**
 
 - Industry: Construction materials — specialty chemicals, sealants, adhesives, industrial solutions
@@ -485,8 +455,6 @@ When reading a client brief, match in this order:
 ---
 
 
-
-### CS-17
 
 **CS-17 — Global B2B e-commerce platform, Vietnamese cross-border seller community, knowledge hub + seller status update**
 
@@ -510,8 +478,6 @@ When reading a client brief, match in this order:
 
 
 
-### CS-18
-
 **CS-18 — Asian personal care brand Vietnam, B2C product consultation + promotions hub on Zalo**
 
 - Industry: Personal care — health supplements / OTC personal care (Japanese heritage brand)
@@ -533,10 +499,6 @@ When reading a client brief, match in this order:
 ---
 
 
-
-### CS-11
-
-**CS-11 — Global premium beer MNC, lifestyle brand, AI faceswap photo engagement, viral sharing**
 
 - Industry: F&B — premium beer / lifestyle
 

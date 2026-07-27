@@ -12,15 +12,15 @@ Does NOT run strategy, quote pricing, or perform compliance checks. Designs the 
 
 ---
 
-## Skills Available
+## Reference Skills List
 
-| Skill | Reference File | When to Use |
-|---|---|---|
-| Journey design core | `references/solution-designer-core.md` | Always — main design logic |
-| Extended design patterns | `references/solution-designer-extended.md` | When design requires additional patterns |
-| Integration assessment | `references/integration-expert.md` | When integration with 3rd party systems is needed |
-| Haravan platform spec | `references/platform-haravan.md` | When client uses Haravan e-commerce |
-| KiotViet platform spec | `references/platform-kiotviet.md` | When client uses KiotViet POS |
+| Filename | Purpose / Scope |
+|---|---|
+| [solution-designer-core.md](reference/solution-designer-core.md) | Core journey-design logic: how to lay out a user flow, what a screen spec must contain, Mermaid conventions. Load for every design task. |
+| [solution-designer-extended.md](reference/solution-designer-extended.md) | Additional patterns for flows the core file does not cover — multi-actor journeys, gamification loops, staged rollouts. Load when the core patterns do not fit. |
+| [integration-expert.md](reference/integration-expert.md) | Assessing what a third-party system can and cannot do, and where the seams go. Load when the design has to touch an external platform. |
+| [platform-haravan.md](reference/platform-haravan.md) | Haravan specifics for the integration section. Load only when the client uses Haravan. |
+| [platform-kiotviet.md](reference/platform-kiotviet.md) | KiotViet specifics for the integration section. Load only when the client uses KiotViet. |
 
 ---
 

@@ -2,7 +2,9 @@
 # Frontend Dockerfile for AgentBase Runtime Deployment
 # =============================================================================
 # Multi-stage build for production-optimized image
-FROM node:18-alpine AS builder
+# Node 20+ is required: @tailwindcss/postcss v4 uses APIs missing on Node 18,
+# which fails `next build` with a webpack error inside the Tailwind plugin.
+FROM node:20-alpine AS builder
 
 # Set working directory
 WORKDIR /app
@@ -23,7 +25,7 @@ COPY . .
 RUN npm run build
 
 # Production image
-FROM node:18-alpine AS runner
+FROM node:20-alpine AS runner
 
 # Create non-root user
 RUN addgroup --system --gid 1001 nodejs

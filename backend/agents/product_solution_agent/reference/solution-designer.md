@@ -1,4 +1,4 @@
-﻿---
+---
 name: adtimabox-solution-designer
 description: >
   AdtimaBox solution designer — activate after requirements are clear and agent needs to design the actual user journey for a client. Queries miniapp-specialist for standard flows, compares with client's desired flow, identifies gaps, then outputs a complete journey document + screen spec + Mermaid userflow for pitch. Input: constraint map from requirement-elicitor OR clear client requirement. Output: journey flow, screen spec, Mermaid diagram. Does NOT explain business logic (→ adtimabox-domain-knowledge), quote pricing (→ adtimabox-product-advisor), or gather requirements (→ adtimabox-requirement-elicitor). Triggers: "design the flow", "map out the solution", "what's the journey for this client", "draw the userflow".
@@ -153,7 +153,6 @@ Rules:
 - Use decision diamonds for branching (new user vs returning, enough points vs not)
 - Keep to max 10-12 nodes for readability
 - Clean node labels only
-- Quote every node label and escape special characters so Mermaid parses the flowchart without syntax errors
 
 **Example:**
 ```mermaid

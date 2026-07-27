@@ -15,9 +15,11 @@ ENV VIRTUAL_ENV=/opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 ENV PIP_REQUIRE_HASHES=0
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
+# Install dependencies. Defaults to the full requirements.txt so existing builds
+# are unchanged; the server deployment passes REQUIREMENTS=requirements-prod.txt.
+ARG REQUIREMENTS=requirements.txt
+COPY requirements*.txt ./
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r ${REQUIREMENTS}
 
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser

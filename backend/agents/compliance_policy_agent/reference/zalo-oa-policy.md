@@ -1,4 +1,4 @@
-﻿# Zalo OA Policy Reference
+# Zalo OA Policy Reference
 
 Source: oa.zalo.me (official) — Last verified: June 2026
 

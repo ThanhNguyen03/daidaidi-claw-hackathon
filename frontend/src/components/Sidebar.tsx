@@ -15,6 +15,7 @@ import {
   Plus,
   Clock,
   Users,
+  Cpu,
   Database,
   Sun,
   Moon,
@@ -34,11 +35,15 @@ interface SidebarProps {
   onToggle: () => void;
   isDarkMode: boolean;
   onToggleTheme: () => void;
+  onOpenModelPanel?: () => void;
 }
 
 interface AgentStatus {
   name: string;
   status: 'idle' | 'thinking' | 'waiting' | 'completed' | 'failed';
+  /** The model that actually served this skill's last call. Not derivable from
+   *  config: a quota fallback means it ran on something other than its MODEL_<NAME>. */
+  model?: string | null;
 }
 
 
@@ -69,8 +74,11 @@ const CS_AGENTS: { name: string; display_name: string }[] = [
 const getStatusColorClass = (status: AgentStatus['status']): string => {
   const classes: Record<AgentStatus['status'], string> = {
     idle: 'bg-status-idle',
-    thinking: 'bg-status-thinking',
-    waiting: 'bg-status-waiting',
+    // Only the two live states pulse. Animating everything would make the panel
+    // busy without telling anyone anything; animating just these makes the list a
+    // genuine progress readout during the minute a proposal takes to build.
+    thinking: 'bg-status-thinking agent-active',
+    waiting: 'bg-status-waiting agent-active',
     completed: 'bg-status-completed',
     failed: 'bg-status-failed',
   };
@@ -109,6 +117,7 @@ export function Sidebar({
   isOpen = true,
   isDarkMode,
   onToggleTheme,
+  onOpenModelPanel,
 }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -116,8 +125,10 @@ export function Sidebar({
 
   // Create a map of agent statuses
   const agentStatusMap = new Map<string, AgentStatus['status']>();
+  const agentModelMap = new Map<string, string>();
   activeAgents.forEach((agent) => {
     agentStatusMap.set(agent.name, agent.status);
+    if (agent.model) agentModelMap.set(agent.name, agent.model);
   });
 
   const sidebarWidth = isCollapsed ? 'w-16' : 'w-64';
@@ -206,36 +217,61 @@ export function Sidebar({
       {/* Active Agents */}
       <div className="mb-6">
         {!isCollapsed && (
-          <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3 flex items-center gap-2">
-            <Users size={14} />
-            Active Agents
+          <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3 flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2">
+              <Users size={14} />
+              Active Agents
+            </span>
+            {onOpenModelPanel && (
+              <button
+                onClick={onOpenModelPanel}
+                className="p-1 rounded hover:bg-bg text-text-muted normal-case tracking-normal"
+                title="Model & quota"
+                aria-label="Model & quota"
+              >
+                <Cpu size={14} />
+              </button>
+            )}
           </h2>
         )}
         <div className="flex flex-col gap-1">
           {displayAgents.map((agent) => {
             const status = agentStatusMap.get(agent.name) || 'idle';
+            const model = agentModelMap.get(agent.name);
 
             return (
               <div
                 key={agent.name}
                 className={`
                   flex items-center gap-2 text-xs
-                  ${isCollapsed ? 'justify-center py-2' : 'px-3 py-2'}
+                  ${isCollapsed ? 'justify-center py-2' : 'px-3 py-1.5'}
                 `}
                 title={agent.display_name}
               >
                 <span
-                  className={`w-2 h-2 rounded-full ${getStatusColorClass(status)}`}
+                  className={`w-2 h-2 rounded-full flex-shrink-0 ${getStatusColorClass(status)}`}
                   style={{ backgroundColor: getStatusColorStyle(status) }}
                   title={status}
                 />
                 {!isCollapsed && (
-                  <span className={getStatusTextClass(status)} style={{ color: getStatusColorStyle(status) }}>
-                    {agent.display_name}
+                  <span className="min-w-0 flex flex-col leading-tight">
+                    <span
+                      className={getStatusTextClass(status)}
+                      style={{ color: getStatusColorStyle(status) }}
+                    >
+                      {agent.display_name}
+                      {status === 'thinking' && (
+                        <span className="ml-1 text-status-thinking">●</span>
+                      )}
+                    </span>
+                    {/* The model it actually ran on. Shown only once it has run,
+                        because before that it is a guess the fallback can overrule. */}
+                    {model && (
+                      <span className="text-[10px] text-text-muted truncate" title={model}>
+                        {model}
+                      </span>
+                    )}
                   </span>
-                )}
-                {status === 'thinking' && !isCollapsed && (
-                  <span className="text-xs text-status-thinking">●</span>
                 )}
               </div>
             );

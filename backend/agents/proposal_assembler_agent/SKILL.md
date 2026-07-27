@@ -41,3 +41,11 @@ Assemble in this section order:
 
 ### Step 4 — Output Format
 Output a structured Markdown document. Do NOT generate HTML — the deck (HTML + PPTX) is produced separately by the wireframe_designer skill from this document.
+
+---
+
+## Reference Skills List
+
+| Filename | Purpose / Scope |
+|---|---|
+| [proposal-assembler.md](reference/proposal-assembler.md) | Assembly rules, the expected input set, the client-facing output format, and the quality checklist a finished proposal must pass. Load for every assembly run. |

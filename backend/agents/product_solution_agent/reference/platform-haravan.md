@@ -1,4 +1,4 @@
-﻿---
+---
 name: platform-haravan
 description: >
   Haravan platform knowledge for AdtimaBox integration assessment — activate when a client is using Haravan and the agent needs to understand what Haravan already does, where it overlaps with AdtimaBox, and what AdtimaBox adds. Source: official Haravan documentation (help.haravan.com, haravan.com), researched June 2025.

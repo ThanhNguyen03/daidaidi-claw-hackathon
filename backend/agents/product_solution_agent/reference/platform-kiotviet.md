@@ -1,4 +1,4 @@
-﻿---
+---
 name: platform-kiotviet
 description: >
   KiotViet platform knowledge for AdtimaBox integration assessment — activate when a client is using KiotViet and the agent needs to understand what KiotViet already does, where it overlaps with AdtimaBox, and what AdtimaBox adds. Source: official KiotViet documentation (kiotviet.vn), researched June 2025.

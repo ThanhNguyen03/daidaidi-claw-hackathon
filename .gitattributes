@@ -1,0 +1,24 @@
+# Normalize text files in the repo, but pin LF on everything that a Linux
+# shell, container, or nginx has to read. core.autocrlf=true on a Windows
+# checkout would otherwise hand deploy.sh a CRLF ending and bash would fail
+# with `$'\r': command not found`.
+* text=auto
+
+*.sh        text eol=lf
+*.conf      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+Dockerfile  text eol=lf
+*.env       text eol=lf
+.env.*      text eol=lf
+requirements*.txt text eol=lf
+
+# Windows-native helpers keep CRLF
+*.bat       text eol=crlf
+*.ps1       text eol=crlf
+
+# Binary
+*.pptx      binary
+*.png       binary
+*.jpg       binary
+*.ico       binary

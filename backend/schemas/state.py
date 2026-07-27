@@ -231,6 +231,9 @@ class CheckpointAction(BaseModel):
     """An action that requires human approval."""
 
     type: Literal[
+        # BRD §11 stop points — the rep confirms direction before work is spent on it
+        "confirm_brief",      # Chốt 1: is this what you meant?
+        "confirm_solution",   # Chốt 2: is this the direction, before we render?
         "generate_pptx",
         "generate_wireframe",
         "generate_userflow",
@@ -431,6 +434,14 @@ class SalesCaseState(BaseModel):
     )
 
     # Checkpoint
+    # BRD §11: which confirmation stops the rep has already cleared this session.
+    # Holds CheckpointAction.type values, e.g. {"confirm_brief"}. Editing at Chốt 1
+    # clears it so extraction re-runs; changing direction at Chốt 2 clears only
+    # "confirm_solution" so the strategy and compliance work is not thrown away.
+    confirmed_stages: list[str] = Field(
+        default_factory=list,
+        description="Checkpoint stages the salesperson has already approved",
+    )
     checkpoint: Optional[Checkpoint] = Field(
         None, description="Current checkpoint if any"
     )

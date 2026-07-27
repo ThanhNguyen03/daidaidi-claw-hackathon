@@ -1,4 +1,4 @@
-﻿# Vietnamese Advertising Law — Pharma & FMCG Reference
+# Vietnamese Advertising Law — Pharma & FMCG Reference
 
 Sources:
 - Luật Quảng cáo số 16/2012/QH13 (amended 2025)

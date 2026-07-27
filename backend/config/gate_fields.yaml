@@ -1,0 +1,146 @@
+# Gate field policy (BRD §8)
+# ==========================
+# Read by backend/gate.py. Deliberately data, not code: the *rule* that a gate
+# exists is code and cannot be bypassed; *which fields* it guards is knowledge
+# that sales and BA can edit without a deploy.
+#
+# The gate blocks on "expensive to fix late", not on completeness (§8.4).
+# Technical feasibility, legal exposure, budget and timeline are expensive.
+# Insight quality, phrasing and illustrative numbers are cheap — never block on those.
+
+# `ask` and `options` drive the choice chips the rep sees when a field is missing.
+# They live here rather than in code so sales can reword a question or add a
+# common answer without a deploy. `options` are suggestions, never a closed set —
+# the UI always offers a free-text alternative alongside them.
+
+# Missing any of these -> CHAN_HOI_LAI. Nothing downstream runs.
+required:
+  - field: industry
+    why: >
+      Compliance rules and the whole case-study corpus are keyed by industry.
+      Guessing it means the legal verdict is a guess, and that is the single
+      most expensive thing to discover late.
+    ask: "Brand hoạt động trong ngành nào?"
+    options:
+      - FMCG - Thực phẩm & Đồ uống
+      - FMCG - Chăm sóc cá nhân & Gia dụng
+      - Dược phẩm & Thực phẩm chức năng
+      - Bán lẻ & Chuỗi cửa hàng
+      - F&B - Nhà hàng & Cà phê
+      - Mẹ & Bé
+      - Điện máy & Công nghệ
+      - Tài chính & Bảo hiểm
+  - field: goal
+    why: >
+      Determines whether this is a short campaign or a long-term platform, which
+      changes the package, the price and the architecture. Wrong here means the
+      entire proposal is wrong.
+    ask: "Mục tiêu chính của chương trình lần này là gì?"
+    options:
+      - Thu thập data khách hàng mới
+      - Tăng tần suất mua lại (loyalty dài hạn)
+      - Kích hoạt lại tệp khách cũ
+      - Tăng doanh số ngắn hạn theo campaign
+      - Xây kênh D2C bán trực tiếp trên Zalo
+      - Kết nối & chăm sóc nhà thuốc / đại lý (B2B)
+      - Tăng nhận diện thương hiệu
+
+# Required only when a trigger applies. Same blocking force as `required`.
+conditional:
+  - field: budget_vnd
+    when_any_of: [quote, pricing, proposal]
+    why: A quotation with no budget anchor gets rebuilt from scratch after the first client call.
+    ask: "Ngân sách dự kiến khoảng bao nhiêu?"
+    options:
+      - Dưới 100 triệu
+      - 100 - 200 triệu
+      - 200 - 500 triệu
+      - 500 triệu - 1 tỷ
+      - Trên 1 tỷ
+      - Chưa chốt, cần mình đề xuất mức phù hợp
+  - field: target_audience
+    when_any_of: [pharma, hcp, b2b]
+    why: >
+      Regulated audiences (doctors, pharmacists) carry different advertising-law
+      duties than consumers. Getting this wrong is a legal problem, not a wording one.
+    ask: "Chương trình nhắm tới ai?"
+    options:
+      - Người tiêu dùng cuối (B2C)
+      - Nhà thuốc / dược sĩ
+      - Bác sĩ & nhân viên y tế
+      - Đại lý / nhà phân phối
+      - Chủ cửa hàng bán lẻ
+      - Nhân viên nội bộ / PG
+
+# Absence is noted and labelled, never blocks.
+nice_to_have:
+  - field: timeline
+    why: Shifts lead-time and phasing, but is cheap to revise later.
+    ask: "Dự kiến chạy khi nào?"
+    options:
+      - Trong tháng này
+      - Quý tới
+      - Dịp Tết
+      - Theo mùa cao điểm của ngành
+      - Chưa xác định
+  - field: specific_requirements
+    why: Sharpens the solution; its absence only makes the proposal more generic.
+    ask: "Có cơ chế nào brand muốn có sẵn không?"
+    options:
+      - Tích điểm đổi quà
+      - Quay số trúng thưởng (Lucky Draw)
+      - Quét mã trên bao bì (UTC)
+      - Chụp hoá đơn (Scan Bill)
+      - Mini game
+      - Giới thiệu bạn bè (referral)
+      - Chưa có, để mình đề xuất
+  - field: constraints
+    why: Usually surfaces during solution design anyway.
+    ask: "Có ràng buộc nào cần lưu ý không?"
+    options:
+      - Đã có hệ thống CRM cần kết nối
+      - Đã có POS (Haravan / KiotViet / khác)
+      - Đã có Zalo OA đang chạy
+      - Cần go-live gấp
+      - Không có ràng buộc đặc biệt
+
+# Intents that skip the gate entirely (§8.3). A rep asking "what does ZNS cost"
+# or rehearsing an objection is not building a brief.
+bypass_intents:
+  - lookup
+  - coaching
+
+# Phrases by which a rep explicitly accepts running on assumptions (§8.2).
+# This is the ONLY thing that downgrades a block, and it never deletes the
+# missing field — it converts it into a labelled assumption.
+# The rep telling us they cannot answer. Distinct from "proceed anyway": this does
+# NOT open the gate on its own, it only stops us repeating the same question. The
+# system responds by naming what it would assume and asking them to accept it.
+dont_know_phrases:
+  - không biết
+  - ko biết
+  - khong biet
+  - chưa biết
+  - chua biet
+  - không rõ
+  - chưa rõ
+  - chưa có thông tin
+  - chưa hỏi khách
+  - phải hỏi lại khách
+  - i don't know
+  - dont know
+  - not sure
+  - no idea
+
+proceed_anyway_phrases:
+  - cứ làm đi
+  - cứ chạy đi
+  - làm luôn đi
+  - làm tạm đi
+  - cứ tạm vậy
+  - bỏ qua đi
+  - không cần hỏi thêm
+  - proceed anyway
+  - just do it
+  - go ahead anyway
+  - skip the questions

@@ -1,0 +1,34 @@
+# Free-tier rate limits per model, used only to render "how much is left".
+#
+# These are declared, not discovered: Google exposes no API that reports remaining
+# quota for a key. The AI Studio "Rate Limit" page shows it, and these numbers were
+# read off that page for this project's key on 2026-07-26. If the plan changes, or a
+# model's free-tier allowance changes, edit this file — no deploy needed.
+#
+# rpm — requests per minute
+# rpd — requests per day (the one that actually stops a demo: it does not clear
+#       until the daily window rolls over, so no amount of retrying helps)
+#
+# A model absent from this table still works and is still counted; it just shows a
+# usage count with no ceiling to compare against.
+models:
+  gemini-3.6-flash:
+    rpm: 5
+    rpd: 20
+    note: The workhorse. Tightest daily allowance of the three we use.
+  gemini-3.5-flash-lite:
+    rpm: 15
+    rpd: 500
+    note: Widest allowance by far — first fallback, and the planner/deck extractor.
+  gemini-3.5-flash:
+    rpm: 5
+    rpd: 20
+    note: Second fallback.
+  gemini-2.5-flash:
+    rpm: 5
+    rpd: 20
+    note: Listed by the models endpoint but 404s on this key. Not in the chain.
+  gemini-3.1-pro-preview:
+    rpm: 0
+    rpd: 0
+    note: 429s immediately on free tier. Not in the chain.

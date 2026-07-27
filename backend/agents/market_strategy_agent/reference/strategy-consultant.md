@@ -1,4 +1,4 @@
-﻿---
+---
 name: strategy-skill
 description: >
   Strategy & Marketing skill for Adtima's proposal system.

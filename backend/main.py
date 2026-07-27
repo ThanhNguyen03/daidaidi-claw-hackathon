@@ -5,6 +5,7 @@ Entry point for the multi-agent sales assistant backend.
 Provides REST API and SSE streaming endpoints.
 """
 
+import asyncio
 import os
 import json
 import uuid
@@ -52,6 +53,9 @@ from memory.profile import get_profile_manager
 # Import checkpoint (Day 5)
 from checkpoint.manager import get_checkpoint_manager
 
+# PII masking — system component, must run before any model sees the message (BRD §3)
+from pii.masking import get_masker, forget_session as forget_masked_session
+
 # Import generation (Day 6)
 from generation.pptx import create_pptx_generator
 from generation.userflow import create_userflow_generator
@@ -92,13 +96,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Warning: skill registry init failed (non-fatal): {e}")
 
-    # Startup: index agent knowledge into the KB vector store (for RAG reference lookups)
-    print("Starting up: indexing agent knowledge into the KB vector store...")
-    try:
-        from tools.ingest import ingest_all_agents
-        await ingest_all_agents(force=False)
-    except Exception as e:
-        print(f"Warning: knowledge ingest failed (non-fatal): {e}")
+    # Knowledge reaches prompts through knowledge/loader.py, which reads the files
+    # each SKILL.md declares. The vector index is no longer on that path, so it is
+    # off by default: it cost an embedding round-trip per document at every boot and
+    # failed closed *and silently* — a 401 left the knowledge base empty with nothing
+    # but a warning on stdout. Set KB_VECTOR_ENABLED=true to index anyway.
+    if os.getenv("KB_VECTOR_ENABLED", "false").lower() == "true":
+        print("Starting up: indexing agent knowledge into the KB vector store...")
+        try:
+            from tools.ingest import ingest_all_agents
+            await ingest_all_agents(force=False)
+        except Exception as e:
+            print(f"Warning: knowledge ingest failed (non-fatal): {e}")
+    else:
+        print("Knowledge: static lookup via knowledge/loader.py (vector index disabled)")
 
     yield  # App runs here
 
@@ -153,6 +164,15 @@ class ChatRequest(BaseModel):
     )
     brief: Optional[Brief] = Field(None, description="Initial brief data")
     context: Optional[dict] = Field(None, description="Additional context")
+    resume: bool = Field(
+        False,
+        description=(
+            "This turn is the UI nudging a paused pipeline back to life after a "
+            "checkpoint approval or a question card, not something the rep typed. "
+            "Inferring it from the text does not work: the nudge reads as small talk "
+            "and got answered with a greeting."
+        ),
+    )
 
 
 class ChatResponse(BaseModel):
@@ -335,6 +355,54 @@ def _json_default(value: Any) -> Any:
 def _sse_data(payload: dict[str, Any]) -> str:
     """Serialize a server-sent event payload safely."""
     return f"data: {json.dumps(payload, default=_json_default)}\n\n"
+
+
+# Sentinel yielded by _with_heartbeat when the wrapped stream has gone quiet.
+_HEARTBEAT = object()
+SSE_HEARTBEAT_S = float(os.getenv("SSE_HEARTBEAT_S", "10"))
+
+
+async def _with_heartbeat(source: AsyncGenerator[str, None], interval: float = SSE_HEARTBEAT_S):
+    """Yield from `source`, emitting a sentinel whenever it is silent for `interval`.
+
+    A turn can spend minutes inside one skill — retrying against a rate limit, or
+    just waiting on a slow completion — and during that time the SSE stream sends
+    nothing at all. An idle HTTP/2 stream gets reset somewhere in the middle
+    (nginx logged "upstream prematurely closed connection"), and the browser
+    surfaces that to the rep as a bare "network error" on a request that was in
+    fact still working.
+
+    An SSE comment line is invisible to EventSource consumers and to our own
+    parser, which only reads `data:` lines — it exists purely to keep bytes moving.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    _DONE = object()
+
+    async def pump():
+        try:
+            async for item in source:
+                await queue.put(item)
+        except Exception as exc:  # surface it on the consuming side
+            await queue.put(exc)
+        finally:
+            await queue.put(_DONE)
+
+    task = asyncio.create_task(pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=interval)
+            except asyncio.TimeoutError:
+                yield _HEARTBEAT
+                continue
+            if item is _DONE:
+                return
+            if isinstance(item, Exception):
+                raise item
+            yield item
+    finally:
+        if not task.done():
+            task.cancel()
 
 
 # =============================================================================
@@ -776,6 +844,7 @@ def _extract_agent_content(agent_name: str, output) -> str:
 async def process_with_central_agent(
     state: SalesCaseState,
     message: str,
+    resume: bool = False,
 ) -> AsyncGenerator[str, None]:
     """
     Process message using the central agent + skills system.
@@ -803,10 +872,17 @@ async def process_with_central_agent(
     central_agent = get_central_agent()
 
     has_content = False
-    async for event in central_agent.run(state, message):
+    async for event in central_agent.run(state, message, resume=resume):
         etype = event.get("type", "")
         if etype not in ("done",):
-            if etype in ("content", "agent_message", "assistant_message", "question_card"):
+            # A checkpoint IS the turn's output — Chốt 1 and Chốt 2 deliberately hand
+            # the rep a card and nothing else. Leaving them off this list meant a
+            # perfectly successful confirmation stop was followed by "Mình đang gặp sự
+            # cố kỹ thuật", which is both wrong and alarming.
+            if etype in (
+                "content", "agent_message", "assistant_message",
+                "question_card", "checkpoint", "checkpoint_card", "proposal_assets",
+            ):
                 has_content = True
             yield _sse_data(event)
 
@@ -1066,6 +1142,77 @@ async def health_check():
     }
 
 
+class ModelSelectionRequest(BaseModel):
+    """Point a skill — or everything — at a specific model."""
+
+    model: Optional[str] = Field(
+        None, description="Model id to use. Null or empty clears the override."
+    )
+    agent: str = Field(
+        "*",
+        description=(
+            "Skill name to override, or '*' for all of them. A per-skill override "
+            "wins over the global one."
+        ),
+    )
+
+
+@app.get("/models")
+async def list_models():
+    """What model each skill is on, what it will fall back to, and how much of each
+    model's allowance this app has spent.
+
+    The usage numbers are counted locally — Google exposes no API for remaining quota
+    — so the response carries the caveat with it rather than leaving the UI to invent
+    a confidence it does not have.
+    """
+    from llm.greennode import (
+        LLM_FALLBACK_MODELS,
+        MODEL_MAPPING,
+        get_model_overrides,
+        resolve_model,
+    )
+    from llm.usage import get_tracker
+
+    tracker = get_tracker()
+    overrides = get_model_overrides()
+    skill_names = get_skill_registry().all_names() + ["central_agent", "deck_extractor"]
+
+    skills = []
+    for name in skill_names:
+        active = resolve_model(name)
+        skills.append({
+            "skill": name,
+            # What it starts on, what the environment says, and what actually served
+            # the last call — three different things the moment a fallback fires.
+            "model": active,
+            "configured": MODEL_MAPPING.get(name),
+            "overridden": name in overrides or "*" in overrides,
+            "last_used": tracker.last_model_for(name),
+            "chain": [active] + [m for m in LLM_FALLBACK_MODELS if m != active],
+        })
+
+    return {
+        "skills": skills,
+        "overrides": overrides,
+        "fallback_chain": LLM_FALLBACK_MODELS,
+        **tracker.snapshot(),
+    }
+
+
+@app.post("/models/select")
+async def select_model(request: ModelSelectionRequest):
+    """Switch models without a redeploy, for when one has run out of quota mid-demo."""
+    from llm.greennode import get_model_overrides, resolve_model, set_model_override
+
+    set_model_override(request.agent, request.model)
+    return {
+        "agent": request.agent,
+        "model": resolve_model(request.agent),
+        "overrides": get_model_overrides(),
+    }
+
+
 @app.post("/chat")
 async def chat(request: ChatRequest):
     """Chat endpoint - non-streaming."""
@@ -1156,13 +1303,22 @@ async def chat_stream(request: Request, payload: ChatRequest):
     state.visited = []
     state.hop_depth = 0
 
+    # ---- PII masking: system component, runs before anything reads the message ----
+    # BRD §3/§4[A]. Everything downstream — intent classification, the planner, every
+    # skill, and the persisted transcript — sees aliases. Real values are restored
+    # only on the way back out to the rep. There is no code path that skips this.
+    masker = get_masker(state.session_id)
+    mask_result = masker.mask(payload.message)
+    print(mask_result.log_line())          # counts and kinds only, never values (§14)
+    safe_message = mask_result.text
+
     async def event_generator():
         try:
             # Send session info + current brief so FE can immediately sync state
             initial_brief = _brief_to_dict(state.brief)
             yield _sse_data({'type': 'session', 'session_id': state.session_id, 'brief': initial_brief})
 
-            # Send user message event
+            # Echo the rep's own words back to their screen, not the aliased form.
             yield _sse_data({'type': 'user_message', 'content': payload.message})
             assistant_emitted = False
 
@@ -1172,9 +1328,9 @@ async def chat_stream(request: Request, payload: ChatRequest):
 
             # Check if message contains feedback (non-critical, swallow errors)
             try:
-                if feedback_extractor.is_feedback_message(payload.message):
+                if feedback_extractor.is_feedback_message(safe_message):
                     rule = feedback_extractor.extract(
-                        payload.message,
+                        safe_message,
                         {"salesperson_id": state.salesperson_id}
                     )
                     if rule:
@@ -1193,17 +1349,33 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 profile = await memory_repo.load_profile(state.salesperson_id)
                 if not profile:
                     profile = profile_manager.create_profile(state.salesperson_id)
-                if profile_manager.detect_frustration(profile, payload.message):
+                if profile_manager.detect_frustration(profile, safe_message):
                     await memory_repo.save_profile(profile)
             except Exception as _mem_e:
                 print(f"Warning: profile frustration check failed (non-fatal): {_mem_e}")
 
             done_chunk = _sse_data({'type': 'done'})
-            async for chunk in process_with_central_agent(state, payload.message):
+            async for chunk in _with_heartbeat(
+                process_with_central_agent(state, safe_message, resume=payload.resume)
+            ):
+                if chunk is _HEARTBEAT:
+                    yield ": keepalive\n\n"
+                    continue
                 if chunk != done_chunk:
-                    if '"type": "assistant_message"' in chunk or '"type": "agent_message"' in chunk or '"type": "content"' in chunk:
+                    # Same list as has_content above, for the same reason: a turn whose
+                    # entire output is a card has not failed.
+                    if any(
+                        f'"type": "{t}"' in chunk
+                        for t in (
+                            "assistant_message", "agent_message", "content",
+                            "question_card", "checkpoint", "checkpoint_card",
+                            "proposal_assets",
+                        )
+                    ):
                         assistant_emitted = True
-                    yield chunk
+                    # Restore real values on the way out. Only worth the string scan
+                    # when this session actually has aliases.
+                    yield masker.unmask(chunk) if masker.has_aliases() else chunk
 
             if not assistant_emitted:
                 yield _sse_data({
@@ -1220,7 +1392,17 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 wp = wireframe_out.payload if isinstance(wireframe_out.payload, dict) else {}
                 assets: dict = {}
 
-                html_content = wp.get("html_content", "")
+                # Re-emit artifacts produced on an earlier turn. Without this, the
+                # buttons only ever appeared on the turn that built the deck — and
+                # since the PPTX bytes are dropped from state right after being stored
+                # (they break JSON persistence), a later "tải file" produced a deck
+                # link and no PPTX at all. Remembering the ids costs nothing.
+                if wp.get("deck_artifact_id") in _artifact_store:
+                    assets["deck_url"] = f"/artifact/{wp['deck_artifact_id']}"
+                if wp.get("pptx_artifact_id") in _artifact_store:
+                    assets["pptx_url"] = f"/artifact/{wp['pptx_artifact_id']}"
+
+                html_content = "" if assets.get("deck_url") else wp.get("html_content", "")
                 if html_content:
                     deck_id = f"deck_{uuid.uuid4().hex[:10]}"
                     _artifact_store[deck_id] = {
@@ -1231,9 +1413,10 @@ async def chat_stream(request: Request, payload: ChatRequest):
                         "type": "deck",
                         "title": "Proposal Deck (HTML)",
                     }
+                    wp["deck_artifact_id"] = deck_id
                     assets["deck_url"] = f"/artifact/{deck_id}"
 
-                pptx_bytes = wp.get("pptx_bytes")
+                pptx_bytes = None if assets.get("pptx_url") else wp.get("pptx_bytes")
                 if pptx_bytes:
                     pptx_id = f"pptx_{uuid.uuid4().hex[:10]}"
                     client_name = (state.brief.industry if state.brief and state.brief.industry else "Client")
@@ -1261,10 +1444,18 @@ async def chat_stream(request: Request, payload: ChatRequest):
                             "type": "pptx",
                             "title": f"Proposal Deck — {client_name}",
                         }
+                    wp["pptx_artifact_id"] = pptx_id
                     assets["pptx_url"] = f"/artifact/{pptx_id}"
 
                 if assets:
                     yield _sse_data({"type": "proposal_assets", **assets})
+
+                # The raw PPTX has been copied into the artifact store; drop it from
+                # session state. It is binary, and SalesCaseState is serialised to JSON
+                # on every save — leaving it there failed persistence outright with
+                # "invalid utf-8 sequence", so any session that produced a deck silently
+                # stopped being saved from that point on.
+                wp.pop("pptx_bytes", None)
 
             # Save final state to in-memory store
             update_session(state)
@@ -1436,6 +1627,9 @@ async def delete_session(session_id: str):
     """Delete a session."""
     if session_id in _session_store:
         del _session_store[session_id]
+        # The alias table dies with the session — it is the only place raw PII
+        # still exists in this process (BRD §13).
+        forget_masked_session(session_id)
         return {"status": "deleted", "session_id": session_id}
 
     raise HTTPException(status_code=404, detail="Session not found")
@@ -1505,6 +1699,11 @@ class WorkflowInteractionRequest(BaseModel):
     session_id: Optional[str] = None
     question_id: Optional[str] = None
     answer: Optional[str] = None
+    # Several answers at once, keyed by question id. The card shows every blocking
+    # field together, so the rep fills them in together — submitting one at a time
+    # meant the first pick immediately advanced the pipeline and the rest of the
+    # card was discarded. `question_id`/`answer` still work for single answers.
+    answers: Optional[dict[str, str]] = None
     message: Optional[str] = None
     salesperson_id: Optional[str] = None
     checkpoint_id: Optional[str] = None
@@ -1555,7 +1754,10 @@ async def answer_question(request: Request, payload: AnswerQuestionRequest):
 
     # Get updated questions
     question_manager = get_question_manager()
-    remaining_questions = question_manager.stack.next_batch()
+    # Read from the session, not the process-global stack: questions are raised
+    # per session by the gate and never registered with that manager, so it was
+    # always empty and the card lost its remaining questions after one answer.
+    remaining_questions = [q for q in state.question_stack if not q.answered]
 
     # Build response based on validation status
     if validation_output.status == "COMPLETE":
@@ -1600,7 +1802,10 @@ async def skip_question(request: Request, payload: SkipQuestionRequest):
     except Exception as exc:
         print(f"Warning: failed to persist session after skip_question: {exc}")
 
-    remaining_questions = question_manager.stack.next_batch()
+    # Read from the session, not the process-global stack: questions are raised
+    # per session by the gate and never registered with that manager, so it was
+    # always empty and the card lost its remaining questions after one answer.
+    remaining_questions = [q for q in state.question_stack if not q.answered]
 
     if should_dispatch:
         return {
@@ -1645,7 +1850,10 @@ async def answer_free_text(request: ChatRequest):
 
     # Get updated questions
     question_manager = get_question_manager()
-    remaining_questions = question_manager.stack.next_batch()
+    # Read from the session, not the process-global stack: questions are raised
+    # per session by the gate and never registered with that manager, so it was
+    # always empty and the card lost its remaining questions after one answer.
+    remaining_questions = [q for q in state.question_stack if not q.answered]
 
     if validation_output.status == "COMPLETE":
         return {
@@ -1671,11 +1879,34 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
     Unified FE workflow endpoint.
     """
     if payload.action == "answer":
-        if not payload.session_id or not payload.question_id or payload.answer is None:
-            raise HTTPException(status_code=400, detail="session_id, question_id, and answer are required")
+        if not payload.session_id:
+            raise HTTPException(status_code=400, detail="session_id is required")
+        if not payload.answers and (not payload.question_id or payload.answer is None):
+            raise HTTPException(
+                status_code=400,
+                detail="either answers, or question_id and answer, are required",
+            )
 
         state = await get_session_or_404(payload.session_id)
         orchestrator = get_central_agent()
+
+        # Batch: the whole card submitted in one go.
+        if payload.answers:
+            validation_output = await orchestrator.handle_validation_response(
+                state, dict(payload.answers)
+            )
+            update_session(state)
+            await persist_session_best_effort(state, "workflow.answer batch")
+            remaining_questions = [q for q in state.question_stack if not q.answered]
+            answered = len(payload.answers)
+            print(f"[questions] {answered} answered in one submit, "
+                  f"{len(remaining_questions)} left")
+            return {
+                "status": "ready" if not remaining_questions else "pending",
+                "message": f"Đã ghi nhận {answered} câu trả lời.",
+                "questions": [q.model_dump(mode="json") for q in remaining_questions],
+                **serialize_workflow_state(state),
+            }
 
         if payload.question_id == "desired_output":
             outputs = await orchestrator.extract_desired_outputs(payload.answer)
@@ -1698,7 +1929,8 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
         await persist_session_best_effort(state, "workflow.answer")
 
         question_manager = get_question_manager()
-        remaining_questions = question_manager.stack.next_batch()
+        # Read from the session, not the process-global stack.
+        remaining_questions = [q for q in state.question_stack if not q.answered]
         return {
             "status": "ready" if validation_output.status == "COMPLETE" else "pending",
             "message": "All questions answered. Ready to proceed."
@@ -1721,7 +1953,8 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
         update_session(state)
         await persist_session_best_effort(state, "workflow.skip_question")
 
-        remaining_questions = question_manager.stack.next_batch()
+        # Read from the session, not the process-global stack.
+        remaining_questions = [q for q in state.question_stack if not q.answered]
         return {
             "status": "ready" if should_dispatch else "pending",
             "message": "Optional question skipped. Ready to proceed."
@@ -1744,7 +1977,8 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
         await persist_session_best_effort(state, "workflow.answer_free_text")
 
         question_manager = get_question_manager()
-        remaining_questions = question_manager.stack.next_batch()
+        # Read from the session, not the process-global stack.
+        remaining_questions = [q for q in state.question_stack if not q.answered]
         return {
             "status": "ready" if validation_output.status == "COMPLETE" else "pending",
             "message": "Answers mapped successfully. Ready to proceed."
@@ -1768,13 +2002,63 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
             cpm.set_auto_approve(payload.session_id, checkpoint.action.type, True)
 
         updated = await cpm.process_decision(checkpoint, payload.decision, payload.params)
+
         if payload.decision == "edit" and payload.params:
-            new_payload = await _recompute_preview(state, payload.params)
-            if new_payload:
-                updated.preview = new_payload
-                updated.action.parameters.update(payload.params)
-                if "total_vnd" in new_payload:
-                    updated.action.description = f"Generate quotation for {new_payload['total_vnd']:,} VND"
+            if checkpoint.action.type == "confirm_brief":
+                # Correcting the brief IS the point of Chốt 1 — the rep is fixing what
+                # we misread. Overwrite rather than merge: _apply_field only fills
+                # blanks, and here the existing value is precisely what is wrong.
+                from central_agent.agent import _parse_vnd
+
+                if state.brief is None:
+                    state.brief = Brief()
+                corrected: list[str] = []
+                for field, raw in payload.params.items():
+                    if field not in Brief.model_fields:
+                        continue
+                    text = str(raw).strip()
+                    if not text:
+                        continue
+                    if field == "budget_vnd":
+                        parsed = _parse_vnd(text)
+                        if parsed is None:
+                            continue
+                        setattr(state.brief, field, parsed)
+                    elif field in ("specific_requirements", "constraints"):
+                        setattr(state.brief, field, [p.strip() for p in text.split(",") if p.strip()])
+                    else:
+                        setattr(state.brief, field, text)
+                    corrected.append(field)
+                print(f"[checkpoint] confirm_brief edited: {corrected or 'nothing changed'}")
+            else:
+                new_payload = await _recompute_preview(state, payload.params)
+                if new_payload:
+                    updated.preview = new_payload
+                    updated.action.parameters.update(payload.params)
+                    if "total_vnd" in new_payload:
+                        updated.action.description = f"Generate quotation for {new_payload['total_vnd']:,} VND"
+
+        # BRD §11.2-§11.4 — what a decision invalidates.
+        # Approving clears the stop for the rest of the session. Editing or rejecting
+        # rewinds only as far as it has to: a correction at Chốt 1 means extraction was
+        # wrong, so the solution built on it is void too; a change of direction at Chốt 2
+        # leaves the strategy and compliance work standing.
+        stage = updated.action.type
+        if stage in ("confirm_brief", "confirm_solution"):
+            if payload.decision == "approve":
+                if stage not in state.confirmed_stages:
+                    state.confirmed_stages.append(stage)
+                print(f"[checkpoint] {stage} approved — cleared for this session")
+            else:
+                state.confirmed_stages = [
+                    s for s in state.confirmed_stages if s != stage
+                ]
+                if stage == "confirm_brief":
+                    # Everything downstream rested on the brief we got wrong.
+                    state.confirmed_stages = []
+                    state.outputs.pop("proposal_assembler", None)
+                    state.outputs.pop("wireframe_designer", None)
+                print(f"[checkpoint] {stage} {payload.decision} — rerunning from that step")
 
         state.checkpoint = updated
         update_session(state)
@@ -1785,6 +2069,13 @@ async def workflow_interact(request: Request, payload: WorkflowInteractionReques
             "checkpoint": updated.model_dump(),
             "clarifying_question": clarifying_question,
             "auto_approve_enabled": payload.auto_approve,
+            "confirmed_stages": state.confirmed_stages,
+            # Tells the FE to resume the pipeline rather than just close the card.
+            # An edit resumes too: confirmed_stages was cleared above, so the next
+            # turn re-raises the same stop with the corrected brief and the rep sees
+            # their fix reflected before anything is built on it (BRD §11.2).
+            "resume": stage in ("confirm_brief", "confirm_solution")
+            and payload.decision in ("approve", "edit"),
             **serialize_workflow_state(state),
         }
 
@@ -1984,13 +2275,14 @@ async def checkpoint_decision(
     if not checkpoint or checkpoint.id != checkpoint_id:
         raise HTTPException(status_code=404, detail=f"Checkpoint not found: {checkpoint_id} (session has {checkpoint.id if checkpoint else 'none'})")
 
+    # No local re-import of get_checkpoint_manager here: a function-scoped import makes
+    # the name local for the whole function, so the module-level import at the top became
+    # invisible and the call below raised UnboundLocalError on every request — this route
+    # returned 500 unconditionally.
+    cpm = get_checkpoint_manager()
     if request.auto_approve:
-        from checkpoint.manager import get_checkpoint_manager
-
-        cpm = get_checkpoint_manager()
         cpm.set_auto_approve(session_id, checkpoint.action.type, True)
 
-    cpm = get_checkpoint_manager()
     updated = await cpm.process_decision(checkpoint, request.decision, request.params)
 
     if request.decision == "edit" and request.params:

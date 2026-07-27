@@ -1,102 +1,12 @@
-﻿---
+---
 
 name: adtimabox-product-advisor
 
 description: >
 
-    AdtimaBox pricing and feature reference — activate when someone asks about specific package details, pricing, feature availability, what's included in CShub vs what needs to be purchased separately as Campaign instant. Input: specific questions about packages, pricing, features, or quotation requests. Output: accurate pricing, feature breakdown, and CShub vs Campaign instant classification. Does NOT recommend solutions from client briefs — that is handled by adtimabox-case-studies skill.
+AdtimaBox pricing and feature reference — activate when someone asks about specific package details, pricing, feature availability, what's included in CShub vs what needs to be purchased separately as Campaign instant. Input: specific questions about packages, pricing, features, or quotation requests. Output: accurate pricing, feature breakdown, and CShub vs Campaign instant classification. Does NOT recommend solutions from client briefs — that is handled by adtimabox-case-studies skill.
 
 ---
-
-
-
-# AdtimaBox Product Advisor
-
-
-
-**Scope:** Answer specific questions about AdtimaBox packages, pricing, and features. Produce accurate quotations. Clarify what belongs to CShub subscription vs Campaign instant.
-
-
-
-**Does NOT do:** Recommend solutions based on client briefs or prospect profiles — refer to the case studies skill for that.
-
-
-
----
-
-
-
-## PRODUCT CONTEXT
-
-
-
-**Zalo Brand Hub** is the umbrella term for Adtima's full marketing solution ecosystem on Zalo:
-
-
-
-- **AdtimaBox (CShub)** — long-term subscription platform: brands pay recurring fees to manage members, messaging, loyalty, D2C shop, and automation on Zalo. The backbone for long-term customer retention.
-
-- **Campaign instant** — short-term activations purchased per campaign: UTC, Lucky Draw, Game, Scan Bill, etc.
-
-
-
-→ **Zalo Brand Hub = AdtimaBox (CShub) + Campaign instant**
-
-
-
----
-
-
-
-## ADTIMABOX POSITIONING
-
-
-
-**Định vị:** AdtimaBox là **Customer Engagement Platform** tập trung vào O2O marketing & loyalty — native trên Zalo.
-
-
-
-**Vấn đề AdtimaBox giải quyết:**
-
-1\. **Campaign kết thúc — data biến mất:** Sau mỗi campaign, brand không thể tái sử dụng data, không reward được khách hàng trung thành, campaign sau phải bắt đầu lại từ đầu
-
-2\. **Có hệ thống nhưng chi phí custom & vận hành đè nặng:** Mỗi channel đòi custom riêng, bảo trì liên tục, chi phí xây dựng cao
-
-
-
-**Giải pháp cốt lõi:** Kích hoạt data một cách bền vững — có khả năng tích lũy và nhân rộng theo thời gian
-
-
-
-**5 capability pillars:**
-
-- **Acquisition** — Thu thập khách hàng: Scan Bill, UTC, Lucky Draw, Welcome message, Tặng Voucher
-
-- **Unify & Segment** — Hợp nhất profile, gán nhãn tự động, phân tệp theo hành vi
-
-- **Analyze** — Dashboard chỉ số chính + **Khám phá chân dung khách hàng với Zalo DMP** (lợi thế cạnh tranh duy nhất vs đối thủ hiện tại, giúp tự động phân tích tạo các báo cáo khám phá chân dung khách hàng bao gồm: giới tính, độ tuổi, ngành nghề, nơi sinh sống/làm việc, quê quán, mối quan tâm, thiết bị, nhà mạng, hành vi đọc báo mới hoặc tương tác với ads trên hệ sinh thái Zalo - Auto EDA).
-
-- **Activation & Conversion** — Cá nhân hóa, Quản lý sự kiện, Khảo sát & Câu hỏi, Hệ thống tự động hóa tin nhắn Zalo.
-
-- **Loyalty & Referral** — Trò chơi tích điểm, Đổi điểm nhận quà, Lan tỏa giới thiệu thành viên.
-
-**Lợi thế cạnh tranh (Why AdtimaBox):**
-
-- **Native on Zalo Experience** — Trải nghiệm mượt mà, đồng bộ trực tiếp trong ứng dụng Zalo (Mini App) cùng đội ngũ phát triển am hiểu sâu sắc hành vi người dùng Zalo.
-
-- **Khám phá chân dung khách hàng với Zalo DMP** — Tính năng tự động phân tích tạo các báo cáo khám phá chân dung khách hàng (giới tính, độ tuổi, ngành nghề, nơi sinh sống/làm việc, quê quán, mối quan tâm, thiết bị, nhà mạng, hành vi đọc báo mới hoặc tương tác với ads trên hệ sinh thái Zalo - Auto EDA), đối thủ không có (không dùng để chủ động kích hoạt tin nhắn).
-
-- **Kết nối qua Open API** — Kết nối linh hoạt với Trang Zalo chính thức (Zalo OA) và hệ thống tin nhắn chăm sóc khách hàng (ZNS) qua Cổng kết nối mở (Open API).
-
-- **Bảo mật & Tuân thủ** — Tiêu chuẩn bảo mật ISO 27001, dữ liệu lưu trữ hoàn toàn tại Việt Nam.
-
-- **Tùy biến sâu** — Tự do tùy chỉnh theo bài toán của từng doanh nghiệp.
-
-- **Doanh nghiệp lớn (Enterprise-grade)** — Độ tin cậy cao, khả năng mở rộng tốt và quản trị minh bạch.
-  AdtimaBox pricing and feature reference — activate when someone asks about specific package details, pricing, feature availability, what's included in CShub vs what needs to be purchased separately as Campaign instant. Input: specific questions about packages, pricing, features, or quotation requests. Output: accurate pricing, feature breakdown, and CShub vs Campaign instant classification. Does NOT recommend solutions from client briefs — that is handled by adtimabox-case-studies skill.
-
----
-
 # AdtimaBox Product Advisor
 
 **Scope:** Answer specific questions about AdtimaBox packages, pricing, and features. Produce accurate quotations. Clarify what belongs to CShub subscription vs Campaign instant.
@@ -156,6 +66,17 @@ description: >
 - **Doanh nghiệp lớn (Enterprise-grade)** — Độ tin cậy cao, khả năng mở rộng tốt và quản trị minh bạch.
 
 **Social proof:** 100+ nhãn hàng, 210+ chiến dịch, 7+ lĩnh vực (FMCG, Pharma, F&B...)
+
+---
+
+## CORE PRINCIPLES
+
+- **CShub** = AdtimaBox platform, recurring fee, features bundled by package
+- **Campaign instant** = charged per campaign, completely outside CShub
+- Lucky Draw, Scan Bill, UTC → Campaign instant, NOT CShub
+- Lucky spin after D2C purchase (Base 3/Pro) → CShub only, tied to D2C orders — NOT the same as Lucky Draw campaign
+- All prices excl. VAT 8% unless stated otherwise
+- Campaign instant prices also excl. Agency fee
 
 ---
 # AdtimaBox Ratecard Reference
@@ -365,17 +286,17 @@ The following capabilities are **NOT** supported out-of-the-box by CShub AdtimaB
 
 
 
-1\. Primary goal: lead collection / online sales / long-term loyalty / short-term campaign?
+1. Primary goal: lead collection / online sales / long-term loyalty / short-term campaign?
 
-2\. Long-term points accumulation or one-shot campaign?
+2. Long-term points accumulation or one-shot campaign?
 
-3\. Expected database size?
+3. Expected database size?
 
-4\. Existing CRM/CDP that needs integration?
+4. Existing CRM/CDP that needs integration?
 
-5\. Need 3rd-party vouchers (Urbox, GotIt, etc.)?
+5. Need 3rd-party vouchers (Urbox, GotIt, etc.)?
 
-6\. **Prize pool budget (ngân sách quỹ quà tặng)**: What is the total budget for the prize pool? (MANDATORY to ask this before proposing detailed prize structure or winning rates).
+6. **Prize pool budget (ngân sách quỹ quà tặng)**: What is the total budget for the prize pool? (MANDATORY to ask this before proposing detailed prize structure or winning rates).
 
 
 

@@ -1,0 +1,85 @@
+# =============================================================================
+# Production Compose — team server zah-28.123c.vn (118.102.2.128)
+# =============================================================================
+# Both services bind to 127.0.0.1 only. Public traffic arrives through the
+# host nginx (see deploy/nginx-zah-28.conf), which terminates TLS with the
+# existing *.123c.vn wildcard cert and routes:
+#     https://zah-28.123c.vn/      -> frontend:3000
+#     https://zah-28.123c.vn/api/  -> backend:8000
+#
+# Usage on the server:
+#     docker compose -f docker-compose.prod.yml up -d --build
+
+name: adtimabox-agent
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        REQUIREMENTS: requirements-prod.txt
+    image: adtimabox-backend:latest
+    container_name: adtimabox-backend
+    env_file:
+      - ./backend/.env.production
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - DEBUG=false
+      # The §14 audit trail (gate state, PII counts, which documents were loaded)
+      # goes to stdout. Block buffering would hold those lines back for minutes,
+      # which is useless when you are trying to see why a turn behaved oddly.
+      - PYTHONUNBUFFERED=1
+      # nginx is the only client uvicorn ever sees. Without this, every request
+      # looks like it comes from the docker bridge gateway and slowapi's
+      # per-IP rate limit (10/min) would be shared by ALL demo users at once.
+      - FORWARDED_ALLOW_IPS=*
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # SQLite sessions, LanceDB vectors, generated PPTX artifacts
+      - ./data/backend:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Baked in at build time — NEXT_PUBLIC_* is inlined into the client bundle.
+        NEXT_PUBLIC_API_URL: https://zah-28.123c.vn/api
+    image: adtimabox-frontend:latest
+    container_name: adtimabox-frontend
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Next.js standalone binds to $HOSTNAME, and Docker sets that to the container
+      # ID — which resolves to the container's own IP, so the server listened on
+      # 172.x only and nothing inside could reach it on localhost. The published port
+      # still worked, so the only visible symptom was a permanently failing healthcheck.
+      - HOSTNAME=0.0.0.0
+      - NEXT_PUBLIC_API_URL=https://zah-28.123c.vn/api
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      # 127.0.0.1, not localhost: busybox wget resolves localhost to ::1 first and the
+      # server only listens on IPv4, so the probe was refused while the app was fine.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

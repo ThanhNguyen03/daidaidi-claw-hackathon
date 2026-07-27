@@ -421,6 +421,16 @@ def _load_extract_system(path: str) -> str:
 
 _EXTRACT_SYSTEM = _load_extract_system(_SKILL_MD_PATH)
 
+# Output budget for the extraction call.
+#
+# The prompt above asks for up to 16 slide objects, densely populated and usually in
+# Vietnamese, which tokenises worse than English — and Gemini draws its reasoning from
+# this same budget. Measured on gemini-3.5-flash-lite: an 18-slide deck cost 5470
+# completion tokens, so the previous 12000 was adequate but had little headroom for a
+# longer proposal, and running out means json.loads rejects the whole array. Env-tunable
+# because it is a property of the model behind MODEL_DECK_EXTRACTOR, not of this code.
+_EXTRACT_MAX_TOKENS = int(os.getenv("DECK_EXTRACT_MAX_TOKENS", "24000"))
+
 
 def _find_json_array(text: str) -> str:
     """Bracket-balanced extractor: finds the outermost [...] in text.
@@ -453,6 +463,50 @@ def _find_json_array(text: str) -> str:
     return text
 
 
+def _salvage_json_objects(text: str) -> list:
+    """Recover the complete slide objects from an array json.loads would not accept.
+
+    A whole deck rides on one parse: any defect anywhere in the array — a run out of
+    output budget, one malformed slide — takes all sixteen slides with it and leaves a
+    bare cover and closing. Scan top-level {...} objects instead and keep the ones that
+    closed, so a defect costs the slides it touched and no others.
+    """
+    start = text.find('[')
+    if start == -1:
+        return []
+    objects: list = []
+    depth = 0
+    obj_start = -1
+    in_string = False
+    escape = False
+    for i in range(start + 1, len(text)):
+        c = text[i]
+        if escape:
+            escape = False
+            continue
+        if c == '\\' and in_string:
+            escape = True
+            continue
+        if c == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == '{':
+            if depth == 0:
+                obj_start = i
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0 and obj_start != -1:
+                try:
+                    objects.append(json.loads(text[obj_start:i + 1]))
+                except json.JSONDecodeError:
+                    pass  # a single malformed slide must not sink the rest
+                obj_start = -1
+    return objects
+
+
 def _validate_slides(slides: list) -> list:
     """Drop slides missing required fields or with empty content."""
     valid = []
@@ -472,21 +526,33 @@ def _validate_slides(slides: list) -> list:
         "checklist": ["decisions"],
         "screen": ["headline", "screens"],
     }
+    # Every drop here is silent to the caller, which only sees a count. When the count
+    # reaches zero the deck degrades to two pages, so say which type went and why.
+    dropped: list[str] = []
     for s in slides:
         t = s.get("type")
         if t not in required:
+            dropped.append(f"{t}(unknown type)")
             continue
-        if not all(s.get(f) for f in required[t]):
+        missing = [f for f in required[t] if not s.get(f)]
+        if missing:
+            dropped.append(f"{t}(missing {','.join(missing)})")
             continue
         if t == "value" and not any(c.get("title") for c in (s.get("cards") or [])):
+            dropped.append("value(no card titles)")
             continue
         if t == "flow" and not any(st.get("label") for st in (s.get("steps") or [])):
+            dropped.append("flow(no step labels)")
             continue
         if t == "tier" and not any(ti.get("name") for ti in (s.get("tiers") or [])):
+            dropped.append("tier(no tier names)")
             continue
         if t == "screen" and not any(sc.get("label") or sc.get("app_name") for sc in (s.get("screens") or [])):
+            dropped.append("screen(no labels)")
             continue
         valid.append(s)
+    if dropped:
+        print(f"[HTMLDeck] validation dropped {len(dropped)}: {dropped}")
     return valid
 
 
@@ -575,14 +641,16 @@ class HTMLDeckGenerator:
 
     async def _extract_slides(self, proposal_text: str, brief: dict, attempt: int = 0) -> list[dict]:
         from llm.greennode import get_llm_client
-        from skills.base import strip_think_blocks, extract_json_block
+        from skills.base import strip_think_blocks, extract_json_block, repair_json_escapes
 
-        # Use design model (minimax) — better at strict JSON-only output, no thinking mode issues
-        client = get_llm_client("design")
+        # Dedicated slot rather than the design skill's model, so this call can be
+        # pointed at something light — it runs straight after the 16k-token proposal
+        # assembler, and on a rate-limited tier that sequence is expensive enough.
+        client = get_llm_client("deck_extractor")
         brand_hint = (brief or {}).get("industry", "")
         # Second attempt: shorter input to reduce LLM confusion on retry.
-        # First attempt: up to 80k chars (4 skill outputs at ~15k each + brief = ~65k).
-        # MiniMax M2.5 has 1M token context so this is well within limits.
+        # First attempt: up to 80k chars — an assembled proposal plus, when the
+        # assembler failed, the analysis outputs it fell back to.
         trimmed = proposal_text[:45000] if attempt > 0 else proposal_text[:80000]
 
         loop = asyncio.get_running_loop()
@@ -595,17 +663,45 @@ class HTMLDeckGenerator:
                     {"role": "user", "content": f"Brand context: {brand_hint}\n\nProposal:\n{trimmed}"},
                 ],
                 temperature=0.0,
-                max_tokens=12000,
+                max_tokens=_EXTRACT_MAX_TOKENS,
                 stream=False,
             ),
         )
-        raw = resp.choices[0].message.content or ""
+        choice = resp.choices[0]
+        raw = choice.message.content or ""
+        # finish_reason is the difference between "the model refused" and "we did not
+        # give it room to finish": a truncated reply reads exactly like a malformed one
+        # once json.loads has thrown, and the old log printed neither.
+        finish = getattr(choice, "finish_reason", None)
+        completion_tokens = getattr(getattr(resp, "usage", None), "completion_tokens", None)
         raw = strip_think_blocks(raw)
         raw = extract_json_block(raw)  # handles ```json...``` fences
         raw = _find_json_array(raw)   # handles preamble text before [
-        print(f"[HTMLDeck] attempt {attempt+1} raw ({len(raw)} chars): {raw[:500]}")
+        print(
+            f"[HTMLDeck] attempt {attempt+1} finish={finish} "
+            f"completion_tokens={completion_tokens} raw ({len(raw)} chars): {raw[:300]}"
+        )
 
-        data = json.loads(raw)
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            # Slides are written in Vietnamese, the same place the planner met malformed
+            # \u escapes — repair those first, then salvage whatever objects closed.
+            raw = repair_json_escapes(raw)
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                data = []
+            if data:
+                print(f"[HTMLDeck] attempt {attempt+1}: parsed after escape repair ({e})")
+            else:
+                data = _salvage_json_objects(raw)
+                if not data:
+                    raise
+                print(
+                    f"[HTMLDeck] attempt {attempt+1}: array unparseable ({e}) — "
+                    f"salvaged {len(data)} complete slide(s) from it"
+                )
         if not isinstance(data, list) or not data:
             print(f"[HTMLDeck] attempt {attempt+1}: empty/invalid list")
             return []

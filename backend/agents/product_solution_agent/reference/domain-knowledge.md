@@ -1,8 +1,8 @@
-﻿---
+---
 
 name: adtimabox-domain-knowledge
 description: >
-    AdtimaBox domain knowledge — activate when an agent needs to understand WHY a mechanic works a certain way, what the business logic is behind a module, or how a specific scenario plays out technically. Covers offline-to-online bridge mechanics, loyalty earn/burn logic, B2B vs B2C differences, messaging strategy, segmentation patterns, and module constraints. Input: a "how does X work" or "what happens when Y" question about AdtimaBox mechanics. Output: business logic explanation, constraints, and key considerations. Does NOT design user journeys (→ adtimabox-solution-designer), quote pricing (→ adtimabox-product-advisor), explain step-by-step user flows (→ adtimabox-miniapp-specialist), or gather requirements (→ adtimabox-requirement-elicitor).
+AdtimaBox domain knowledge — activate when an agent needs to understand WHY a mechanic works a certain way, what the business logic is behind a module, or how a specific scenario plays out technically. Covers offline-to-online bridge mechanics, loyalty earn/burn logic, B2B vs B2C differences, messaging strategy, segmentation patterns, and module constraints. Input: a "how does X work" or "what happens when Y" question about AdtimaBox mechanics. Output: business logic explanation, constraints, and key considerations. Does NOT design user journeys (→ adtimabox-solution-designer), quote pricing (→ adtimabox-product-advisor), explain step-by-step user flows (→ adtimabox-miniapp-specialist), or gather requirements (→ adtimabox-requirement-elicitor).
 ---
 
 # AdtimaBox Domain Knowledge
@@ -64,7 +64,7 @@ Customer sees Zalo Ad or OA message
 **Key constraints:**
 
 * Zalo does NOT auto-collect user info — customer must actively consent and fill form
-* Form should be 2–5 fields max to minimize drop rate (onboarding takes \~20 seconds)
+* Form should be 2–5 fields max to minimize drop rate (onboarding takes ~20 seconds)
 * Customer must have Zalo installed — desktop users get a QR landing page instead
 * First-time onboarding only: returning users auto-fill and go straight to content
 
@@ -332,7 +332,7 @@ User scans on-pack QR (UTC campaign)
 
 ---
 
-## PATTERN 8: SEGMENTATION \& PERSONALIZATION
+## PATTERN 8: SEGMENTATION & PERSONALIZATION
 
 **Scenario:** Brand has thousands of members and wants to send relevant content/offers to different groups — not one-size-fits-all.
 
@@ -355,7 +355,141 @@ User scans on-pack QR (UTC campaign)
 
 **----**
 
-## CRITICAL DISTINCTIONS — MUST KNOW
+## PATTERN 9: WHITELIST-GATED HCP ONBOARDING
+
+**Scenario:** Pharma brand wants to build an HCP community on Zalo but must restrict access to verified healthcare professionals only — cannot allow open self-registration.
+
+**The core challenge:** AdtimaBox's default flow allows any Zalo user to register. For pharma/professional audiences, the brand needs a verification gate to ensure only legitimate HCPs access the hub.
+
+**Solution flow:**
+
+```
+HCP enters via: QR at event / MedRep URL / Email campaign / Word-of-mouth
+    ↓ Information acquire permission pop-up (Zalo grants brand access to phone/name)
+    ↓ Form 1: Name + phone auto-filled → consent tick → OA follow (1st time)
+    ↓ Form 2: Manual fill — hospital, title, specialty, department
+    ↓ AdtimaBox maps phone number against brand's whitelist (pre-loaded HCP database)
+    ├── Match found (existing HCP):
+    │       → Direct access to Hub home screen
+    │       → Receive successful registration message via OA
+    └── No match (unknown HCP):
+            → Manual approval queue (brand's medical/compliance team reviews)
+            ├── Approved:
+            │       → Access granted → Welcome message
+            └── Rejected:
+                    → Popup rejection → Failed registration message
+```
+
+**Segmentation from Form 2 data:**
+- By Hospital (e.g. Hospital 115, Hoàn Mỹ, Chợ Rẫy)
+- By Specialty (e.g. Endocrinologist, Cardiologist, Nephrologist)
+- By Level (e.g. Level A, Level B, Level C)
+- By City / Province / District
+- Behavioral labels auto-added post-registration (preferred content, event attendance)
+
+**Required:** CShub Pro 1+ + whitelist data provided by brand + manual approval workflow agreed upfront
+
+**Key operational constraint:** Manual approval requires dedicated brand-side resource; if manual queue is large, set approval timeline expectations. Whitelist must be regularly updated by brand.
+
+---
+
+## PATTERN 10: MCE (MULTI-CHANNEL ENGAGEMENT) FOR PHARMA PRODUCT LAUNCH
+
+**Scenario:** Pharma brand launching a new product needs to move HCPs through a structured awareness-to-trial funnel using multiple digital and physical channels in a coordinated way.
+
+**MCE framework (3-phase):**
+
+```
+PRE-LAUNCH phase
+Objective: Cost per HCP Acquisition (CPA)
+Channels:
+    - Zalo OA broadcast → drive HCPs to register on Hub
+    - Email marketing with QR code / URL → MiniApp onboarding
+    - MedRep personally invites via Zalo message
+    - Offline medical events → QR code walk-in registration
+    → KPI: Number of verified HCPs onboarded
+
+LAUNCH phase
+Objective: Trial prescription count
+Channels:
+    - Zalo personalized message by specialty → product education
+    - Content Hub articles: efficacy, dosing, safety, patient profiles
+    - Online/offline medical events (symposia, webinars) → HCP attendance
+    - HCP Portal (3rd party medical platforms) for detailed clinical info
+    - 3rd party medical networks (Hello Doctor, Docquity, MIMs etc.) for awareness
+    → KPI: Event registrations, content engagement, trial prescription signals
+
+POST-LAUNCH phase
+Objective: Positive product mentions and advocacy
+Channels:
+    - Post-event survey (automated via Zalo OA message after each event)
+    - Loyalty point accumulation for continuous engagement
+    - Digital activities: medical quiz, AI e-card for HCP appreciation days
+    - Year-end recap / tribute activities
+    → KPI: Survey completion rate, positive brand mentions
+```
+
+**What AdtimaBox contributes to MCE:**
+- HCP database management (segmented by specialty, hospital, level)
+- Personalized ZBS messages at every event stage (announcement → reminder → during → post-event)
+- Content Hub for clinical education content
+- Event Hub for online/offline event management and QR check-in
+- Loyalty and digital engagement layer
+- 2-way data sync with brand's enterprise CRM (Salesforce)
+
+**What AdtimaBox does NOT replace:**
+- 3rd party medical networks (Hello Doctor, Docquity) — separate buy
+- Email marketing platform — separate system
+- HCP Portal (brand's own web portal for clinical materials) — separate system
+- Call center / e-RMA / e-Rep follow-up — separate system
+
+**AdtimaBox is the Zalo layer of MCE — not the full MCE stack.**
+
+---
+
+## PATTERN 11: SALESFORCE ↔ ADTIMABOX TWO-WAY DATA SYNC
+
+**Scenario:** Brand already uses Salesforce as their enterprise CRM. They want AdtimaBox to be the Zalo engagement layer — but data must flow both ways so Salesforce stays as the system of record.
+
+**Data flow architecture:**
+
+```
+Direction 1 — Salesforce → AdtimaBox:
+Salesforce pushes: HCP whitelist, existing member records, approved new registrations
+    → AdtimaBox uses this to: verify onboarding, pre-populate member labels, trigger personalized messages
+
+Direction 2 — AdtimaBox → Salesforce:
+AdtimaBox pushes: all raw data logs (every action on MiniApp/OA)
+    - Registration form data (from onboarding)
+    - Event registration + check-in logs
+    - Content engagement (views, likes, shares)
+    - Message interaction data (sent / opened / clicked)
+    - Survey responses
+    → Salesforce uses this to: segmentation, follow-up sequencing, e-Rep triggers, RMA triggers
+```
+
+**Integration implementation:**
+- AdtimaBox hosts open APIs for CRM integration
+- Salesforce sets up webhook / scheduled API pull to receive data
+- Data stays onshore (Vietnam) — no international transfer
+- All data processed with user consent (compliant with Decree 13/2023/NĐ-CP)
+- Post-event data auto-syncs to Salesforce for follow-up segmentation
+
+**Requirements:**
+- Integration add-on: 25–50M VND depending on data volume / complexity
+- Salesforce-side engineering resources required (API keys, token rotation, error handling)
+- Tech confirmation mandatory before committing to client — not all Salesforce configurations are identical
+- Adtima Tech Team must assess Salesforce instance and agree on integration pattern
+
+**Critical constraints:**
+- Real-time vs batch sync must be agreed upfront (real-time costs more)
+- Salesforce must expose API endpoint (or support scheduled pulls)
+- Role permissions in Salesforce must be defined (who can see Zalo behavioral data?)
+- This is always an add-on — NOT included in any CShub base package
+
+---
+
+
 
 |Confusion|Correct understanding|
 |-|-|
@@ -367,17 +501,65 @@ User scans on-pack QR (UTC campaign)
 |"ZNS and broadcast are the same"|ZNS goes to phone number (no OA follow needed). Broadcast goes to OA followers only|
 |"UTC and CShub are separate programs"|They can work together — UTC earns feed into Pro 1 loyalty account when configured correctly|
 |"B2B loyalty works the same as B2C"|Different profile fields, different earn logic (sales volume vs individual actions), different segmentation needs|
+|"There is only one pharma HCP model"|Two documented models: (A) Whitelist-gated — HCP access restricted until approved; (B) Open registration + staff check-in — HCP registers freely, staff controls event attendance. See Pattern 13|
+|"UTC and Game are MiniApp modules"|No. Both are CAMPAIGN ADD-ONS purchased separately. They run for a defined period on the MiniApp — not permanent Hub modules. Flows 11 and 12 document how each works|
+
+## PATTERN 12: ZBS MESSAGE AUTOMATION CADENCE FOR PHARMA EVENTS (TRANSACTIONAL ONLY, NO PROMO)
+
+| Label | Trigger | Message purpose | Key content |
+|---|---|---|---|
+| M1 | Đăng ký tài khoản thành công | Xác nhận đăng ký tài khoản thành công | Thông tin tài khoản mới |
+| M2 | Đăng ký sự kiện thành công | Xác nhận đăng ký sự kiện | Link phòng họp (nếu Online) HOẶC Mã QR check-in cá nhân (nếu Offline) |
+| M3 | Quét QR check-in sự kiện offline | Xác nhận check-in thành công | Lời chào mừng khi đến sự kiện |
+| M4 | Sự kiện kết thúc | Khảo sát sau sự kiện | Link khảo sát ý kiến đánh giá sau sự kiện |
+
+**Why this cadence matters:**
+- Each message fires on a different trigger — they are not a single broadcast
+- M2 depends on event registration data (unique QR per HCP — not same for everyone)
+- M3 timing is configurable (brand decides: day before, morning of event, etc.)
+- M4 depends on event completion — needs event end time defined in admin
+- Post-event survey data feeds back to Salesforce (if integration enabled) for follow-up segmentation
+
+**ZNS vs Broadcast (OA message) — when to use each:**
+- ZNS: goes directly to phone number — HCP does NOT need to follow OA. Used for transactional messages (M1 confirmation, M2 event QR, M3 reminder)
+- Broadcast (OA message): goes to OA followers only — HCP must have followed OA. Used for general announcements (upcoming events, new content, news)
+- For pharma events: M2 (event QR) should be ZNS, not broadcast, to ensure delivery even if HCP hasn't followed OA
 
 ---
 
-## NOT DOCUMENTED — DO NOT SPECULATE
+## PATTERN 13: TWO PHARMA HCP DEPLOYMENT MODELS — COMPARISON
 
-* POS integration specifics (confirm compatible systems with tech lead)
+**When to use which model for a pharma client:**
+
+| Dimension | Model A: Whitelist-Gated (Flow 8) | Model B: Open Registration + Staff Check-in (Flow 13) |
+|---|---|---|
+| HCP registration | Restricted — phone must be in whitelist | Open — any HCP can register |
+| Access control | At point of Hub entry | At point of physical event (via staff) |
+| Staff role | Brand/medical team reviews & approves new HCPs | On-site event staff uses check-in app to scan QR |
+| New HCP acquisition | Via manual approval queue | Freely — anyone with the link/QR |
+| Compliance fit | Higher — only verified HCPs in the system | Lower — unverified HCPs can enter Hub |
+| Friction for HCP | Higher — may be rejected, slower access | Lower — immediate access after registration |
+| Best for | Brands with strict HCP verification requirements (e.g. prescription-only products) | Brands prioritizing community growth with event-based attendance tracking |
+| Staff whitelist | Not applicable (staff don't use a separate app) | Staff added to brand whitelist → use staff check-in app to scan HCPs |
+| Event check-in | QR code check-in (Flow 10) — HCP scanned by staff | Staff-side QR scan with confirm/invalid result (Flow 13 staff journey) |
+| Salesforce sync | Recommended (all new HCP data → Salesforce) | Optional |
+
+**Decision guide for sales:**
+- Client is pharma MNC with compliance team → probe: "Do you need to verify each doctor before they access the Hub?" → If YES → Model A (whitelist-gated)
+- Client wants to grow HCP database quickly via events → probe: "Is it OK for any doctor who scans our QR to join the Hub?" → If YES → Model B (open + staff check-in)
+- Model B can later be upgraded to Model A as database matures and brand wants tighter control
+
+---
+
+
+
+* POS integration specifics for non-Haravan/KiotViet platforms (confirm with tech lead)
 * Custom earn schemes (bonus multiplier, time-limited double points)
 * Survey / Quiz / Course module mechanics
 * Automation step limits and delay configuration details
 * OCR accuracy rates by retailer type
 * Haravan / specific POS connector availability
+* Salesforce integration specifics beyond the architecture described in Pattern 11 (data volume limits, rate limits, field mapping) — confirm with tech lead
 
 → Response: **"This needs to be confirmed with the tech lead before committing to the client."**
 

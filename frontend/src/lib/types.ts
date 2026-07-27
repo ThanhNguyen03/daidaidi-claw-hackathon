@@ -40,6 +40,10 @@ export interface Question {
   answered: boolean;
   answer?: string;
   was_helpful?: boolean;
+  /** Suggested answers, rendered as chips. Never a closed set — the card always
+   *  pairs them with a free-text box. Backend has carried this field all along;
+   *  the type was simply missing it, so the options were dropped on arrival. */
+  options?: string[];
 }
 
 // =============================================================================
@@ -83,6 +87,11 @@ export interface ValidationReport {
 
 export interface CheckpointAction {
   type:
+    // Confirmation stops: the pipeline pauses so the rep can correct course
+    // before work is spent on the wrong thing. Keep in sync with
+    // backend/schemas/state.py CheckpointAction.type.
+    | 'confirm_brief'
+    | 'confirm_solution'
     | 'generate_pptx'
     | 'generate_wireframe'
     | 'generate_userflow'
@@ -228,6 +237,47 @@ export type SSEEventType =
 export interface SSEEvent {
   type: SSEEventType;
   data?: Record<string, unknown>;
+}
+
+// =============================================================================
+// Model & Quota Types
+// =============================================================================
+
+/** One model's declared ceilings and what this app has spent against them.
+ *  `used_*` is counted by the backend, not reported by Google — see ModelsResponse.caveat.
+ *  `limit_*` is null when the limits file declares no ceiling for that model. */
+export interface ModelInfo {
+  model: string;
+  state: 'ok' | 'unused' | 'rate_limited' | 'out_of_quota_today';
+  used_rpm: number;
+  used_rpd: number;
+  limit_rpm: number | null;
+  limit_rpd: number | null;
+  note: string;
+  successes: number;
+  rate_limits: number;
+  other_errors: number;
+  last_error: string;
+}
+
+export interface SkillModel {
+  skill: string;
+  /** What it will start on: override first, then MODEL_<NAME>. */
+  model: string;
+  /** What the environment says, which differs from `model` once overridden. */
+  configured: string | null;
+  overridden: boolean;
+  /** What actually served its last call — differs from `model` when a fallback fired. */
+  last_used: string | null;
+  chain: string[];
+}
+
+export interface ModelsResponse {
+  skills: SkillModel[];
+  models: ModelInfo[];
+  overrides: Record<string, string>;
+  fallback_chain: string[];
+  caveat: string;
 }
 
 // =============================================================================

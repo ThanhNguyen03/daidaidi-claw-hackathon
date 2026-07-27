@@ -20,6 +20,8 @@ interface UseChatOptions {
 interface AgentStatus {
   name: string;
   status: 'idle' | 'thinking' | 'waiting' | 'completed' | 'failed';
+  /** Model that served this skill's last call — set by the terminal status event. */
+  model?: string | null;
 }
 
 // Artifact types for Day 6
@@ -60,8 +62,9 @@ interface UseChatReturn {
   } | null;
 
   // Actions
-  sendMessage: (message: string, brief?: Brief) => Promise<void>;
+  sendMessage: (message: string, brief?: Brief, resume?: boolean) => Promise<void>;
   answerQuestion: (questionId: string, answer: string) => Promise<void>;
+  answerAllQuestions: (answers: Record<string, string>) => Promise<void>;
   skipQuestion: (questionId: string) => Promise<void>;
   freeTextAnswer: (freeText: string) => Promise<void>;  // Day 3: C.5 §5
   revokeConstraint: (ruleId: string) => Promise<void>;  // Day 4: Revoke constraint
@@ -261,7 +264,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
   // Send message with SSE streaming
   const sendMessage = useCallback(
-    async (message: string, brief?: Brief) => {
+    async (message: string, brief?: Brief, resume = false) => {
       // Capture origin mode first — everything below is scoped to this mode.
       const myMode = mode;
 
@@ -289,7 +292,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       const isCs = mode === 'cs';
       const requestBody = isCs
         ? JSON.stringify({ message, session_id: sessionId, salesperson_id: salespersonId })
-        : JSON.stringify({ message, session_id: sessionId, salesperson_id: salespersonId, mode, brief });
+        : JSON.stringify({ message, session_id: sessionId, salesperson_id: salespersonId, mode, brief, resume });
 
       try {
         response = await fetch(`${BACKEND_URL}${isCs ? '/cs/chat/stream' : '/chat/stream'}`, {
@@ -377,7 +380,17 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           return;
         }
         if (currentModeRef.current === myMode) {
-          setError((e as Error).message);
+          // "network error" / "Failed to fetch" is what the browser reports when a
+          // stream is cut, which says nothing about whether the work survived — and
+          // the rep's own connection is usually fine. Name the likely cause and the
+          // action instead of echoing the browser's wording.
+          const raw = (e as Error).message || '';
+          const dropped = /network|failed to fetch|load failed|terminated/i.test(raw);
+          setError(
+            dropped
+              ? 'Mất kết nối tới máy chủ giữa chừng. Lượt vừa rồi có thể vẫn đang chạy — gửi lại tin nhắn sau ít giây là tiếp tục được.'
+              : raw
+          );
         }
       } finally {
         modeAbortControllers.current[myMode] = null;
@@ -557,11 +570,18 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           {
             const agentName = data.agent as string;
             const agentStatus = data.status as string;
+            const agentModel = (data.model as string | null) ?? null;
             if (agentName && agentStatus) {
               setActiveAgents((prev) => {
                 // Update or add agent status
                 const existing = prev.findIndex((a) => a.name === agentName);
-                const newAgent = { name: agentName, status: agentStatus as AgentStatus['status'] };
+                // Only the terminal events carry a model. Keep the previous one on a
+                // "thinking" update rather than blanking the row mid-turn.
+                const newAgent = {
+                  name: agentName,
+                  status: agentStatus as AgentStatus['status'],
+                  model: agentModel ?? (existing >= 0 ? prev[existing].model : null),
+                };
                 if (existing >= 0) {
                   const updated = [...prev];
                   updated[existing] = newAgent;
@@ -743,6 +763,44 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       } catch {
         // Fallback: send as message
         await sendMessage(`Answer to question: ${answer}`);
+      }
+    },
+    [sessionId, sendMessage]
+  );
+
+  // Submit every answer on the card in one request.
+  //
+  // The per-question version advanced the pipeline as soon as the first answer
+  // landed, which discarded the rest of the card. The card asks for several
+  // blocking fields at once precisely because they are needed together, so the
+  // commit has to be together too.
+  const answerAllQuestions = useCallback(
+    async (answers: Record<string, string>) => {
+      if (!sessionId || Object.keys(answers).length === 0) return;
+
+      setIsLoading(true);
+      try {
+        const response = await fetch(`${BACKEND_URL}/workflow/interact`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'answer', session_id: sessionId, answers }),
+        });
+        if (!response.ok) throw new Error('Failed to submit answers');
+
+        const data = await response.json();
+        if (data.brief) setBrief(data.brief);
+
+        const remaining = (data.questions as Question[]) ?? [];
+        setPendingQuestions(remaining);
+
+        if (remaining.length === 0) {
+          // Everything answered — let the pipeline pick up where it stopped.
+          await sendMessage('Tiếp tục', undefined, true);
+        }
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setIsLoading(false);
       }
     },
     [sessionId, sendMessage]
@@ -961,12 +1019,19 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         setMessages((prev) => [...prev, msg]);
       }
       setActiveCheckpoint(null);
+
+      // The confirmation stops (Chốt 1 / Chốt 2) pause the pipeline mid-run.
+      // Approving has to restart it — otherwise the card just disappears and the
+      // rep is left staring at a conversation that stopped for no visible reason.
+      if (data.resume) {
+        await sendMessage('Tiếp tục', undefined, true);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setIsLoading(false);
     }
-  }, [sessionId, activeCheckpoint]);
+  }, [sessionId, activeCheckpoint, sendMessage]);
 
   const rejectCheckpoint = useCallback(async () => {
     if (!sessionId || !activeCheckpoint) return;
@@ -1023,26 +1088,34 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         if (!response.ok) throw new Error('Failed to edit checkpoint');
         const data = await response.json();
 
-        if (data.checkpoint) {
-          setActiveCheckpoint(data.checkpoint);
-        } else {
-          setActiveCheckpoint(null);
-        }
+        if (data.brief) setBrief(data.brief);
 
-        const msg: Message = {
-          role: 'assistant',
-          content: 'Parameters updated. Please review the new preview and approve.',
-          agent: 'sales_orchestrator',
-          timestamp: new Date().toISOString(),
-        };
-        setMessages((prev) => [...prev, msg]);
+        if (data.resume) {
+          // The correction is in the brief; the stop was cleared server-side. Re-run
+          // so the card comes back showing what was fixed — leaving a stale card on
+          // screen next to an "updated" notice tells the rep nothing about whether
+          // their edit took.
+          setActiveCheckpoint(null);
+          await sendMessage('Tiếp tục', undefined, true);
+        } else {
+          setActiveCheckpoint(data.checkpoint ?? null);
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: 'assistant',
+              content: 'Đã cập nhật. Bạn xem lại rồi duyệt giúp mình nhé.',
+              agent: 'sales_orchestrator',
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+        }
       } catch (e) {
         setError((e as Error).message);
       } finally {
         setIsLoading(false);
       }
     },
-    [sessionId, activeCheckpoint]
+    [sessionId, activeCheckpoint, sendMessage]
   );
 
   // Clear error
@@ -1104,6 +1177,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     brainState,  // Day 7: Brainstorm state
     sendMessage,
     answerQuestion,
+    answerAllQuestions,
     skipQuestion,
     freeTextAnswer,
     revokeConstraint,  // Day 4

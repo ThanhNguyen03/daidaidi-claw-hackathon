@@ -11,7 +11,9 @@ import React, { useState, useEffect } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { ChatWindow } from '../components/ChatWindow';
 import { ContextPanel } from '../components/ContextPanel';
+import { ModelPanel } from '../components/ModelPanel';
 import { MobileNav } from '../components/MobileNav';
+import { AttentionField } from '../components/AttentionField';
 import { useChat } from '../hooks/useChat';
 import type { ChatMode } from '../lib/types';
 import { getApiBaseUrl } from '../lib/api';
@@ -20,15 +22,19 @@ export default function Home() {
   // Identity state (demo mode - simple name input)
   const [isIdentified, setIsIdentified] = useState(false);
   const [salespersonName, setSalespersonName] = useState('');
+  const [isBooting, setIsBooting] = useState(false);
 
   // Mode state
   const [mode, setMode] = useState<ChatMode>('chat');
 
-  // Theme state - persist to localStorage
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  // Theme state - persist to localStorage. Dark is the default: this is a tool
+  // people sit in front of for a whole working session, and the product reads as
+  // an instrument rather than a document.
+  const [isDarkMode, setIsDarkMode] = useState(true);
 
   // Context panel state — open by default only on large screens
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
+  const [modelPanelOpen, setModelPanelOpen] = useState(false);
 
   // Sidebar state for responsive
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -37,13 +43,14 @@ export default function Home() {
   const [isConnected, setIsConnected] = useState(false);
   const [sessionCount, setSessionCount] = useState(1);
 
-  // Load theme from localStorage on mount
+  // Load theme from localStorage on mount. Only an explicit "light" overrides the
+  // dark default — the previous version could only ever turn dark ON, so a first
+  // visit always rendered light no matter what the default said.
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === 'dark') {
-      setIsDarkMode(true);
-      document.documentElement.classList.add('dark');
-    }
+    const dark = savedTheme !== 'light';
+    setIsDarkMode(dark);
+    document.documentElement.classList.toggle('dark', dark);
   }, []);
 
   // Open context panel by default on large screens only
@@ -83,7 +90,7 @@ export default function Home() {
     brief,
     artifacts,
     sendMessage,
-    answerQuestion,
+    answerAllQuestions,
     skipQuestion,
     freeTextAnswer,
     revokeConstraint,
@@ -127,11 +134,13 @@ export default function Home() {
     }
   }, [isIdentified, salespersonName, loadConstraints, loadProfile]);
 
-  // Handle identity submission
+  // Handle identity submission. The boot animation runs first, then the app
+  // mounts — 950ms, matched to the CSS keyframes in globals.css (.tf-lock).
   const handleIdentify = (e: React.FormEvent) => {
     e.preventDefault();
-    if (salespersonName.trim()) {
-      setIsIdentified(true);
+    if (salespersonName.trim() && !isBooting) {
+      setIsBooting(true);
+      setTimeout(() => setIsIdentified(true), 950);
     }
   };
 
@@ -150,10 +159,26 @@ export default function Home() {
   // If not identified, show welcome screen
   if (!isIdentified) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-bg p-4 md:p-6">
-        <div className="bg-surface p-5 sm:p-6 md:p-8 rounded-lg shadow-card max-w-sm sm:max-w-md w-full border border-border mx-2 sm:mx-4">
+      <div
+        className={`tf-stage min-h-screen flex items-center justify-center bg-bg p-4 md:p-6 ${
+          isBooting ? 'tf-booting' : ''
+        }`}
+      >
+        <AttentionField />
+
+        {/* Boot overlay: three rings propagating outward, then a horizontal wipe. */}
+        {isBooting && (
+          <>
+            <span className="tf-ring" />
+            <span className="tf-ring" />
+            <span className="tf-ring" />
+            <span className="tf-wipe" />
+          </>
+        )}
+
+        <div className="tf-card p-5 sm:p-6 md:p-8 rounded-2xl max-w-sm sm:max-w-md w-full mx-2 sm:mx-4">
           <div className="text-center mb-5 sm:mb-6">
-            <div className="w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-3 sm:mb-4 bg-accent rounded-2xl flex items-center justify-center">
+            <div className="tf-mark w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-3 sm:mb-4 bg-accent rounded-2xl flex items-center justify-center">
               <span className="text-3xl sm:text-4xl">🤖</span>
             </div>
             <h1 className="text-xl sm:text-[22px] font-bold text-text mb-1.5 sm:mb-2">AdtimaBox Sales Agent</h1>
@@ -171,27 +196,35 @@ export default function Home() {
                 value={salespersonName}
                 onChange={(e) => setSalespersonName(e.target.value)}
                 placeholder="Enter your name..."
-                className="w-full px-4 py-3 sm:py-3.5 border border-border rounded-lg text-sm sm:text-[13px] bg-surface text-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+                autoFocus
+                disabled={isBooting}
+                className="w-full px-4 py-3 sm:py-3.5 border border-border rounded-lg text-sm sm:text-[13px] bg-surface/60 text-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
                 autoComplete="off"
               />
             </div>
 
             <button
               type="submit"
-              disabled={!salespersonName.trim()}
+              disabled={!salespersonName.trim() || isBooting}
               className={`w-full py-3 sm:py-3.5 rounded-lg font-medium text-sm ${
-                salespersonName.trim()
+                salespersonName.trim() && !isBooting
                   ? 'bg-accent text-white hover:opacity-90 active:scale-[0.98] transition-all'
                   : 'bg-text-muted/50 text-white/70 cursor-not-allowed'
               }`}
             >
-              Start Chatting
+              {isBooting ? 'Initializing…' : 'Start Chatting'}
             </button>
           </form>
 
-          <p className="text-[11px] sm:text-xs text-text-muted text-center mt-4">
-            Demo mode — no authentication required
-          </p>
+          {isBooting ? (
+            <p className="tf-boot-line text-[11px] sm:text-xs text-accent-text text-center mt-4 font-mono tracking-wide">
+              ▸ 7 agents online · knowledge base linked
+            </p>
+          ) : (
+            <p className="text-[11px] sm:text-xs text-text-muted text-center mt-4">
+              Demo mode — no authentication required
+            </p>
+          )}
         </div>
       </div>
     );
@@ -223,8 +256,11 @@ export default function Home() {
           onToggle={() => setSidebarOpen(!sidebarOpen)}
           isDarkMode={isDarkMode}
           onToggleTheme={toggleTheme}
+          onOpenModelPanel={() => setModelPanelOpen(true)}
         />
       </div>
+
+      <ModelPanel isOpen={modelPanelOpen} onClose={() => setModelPanelOpen(false)} />
 
       {/* Main chat area */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden pt-14 md:pt-0 pb-16 md:pb-0">
@@ -238,7 +274,7 @@ export default function Home() {
           activeCheckpoint={activeCheckpoint}
           mode={mode}
           onSendMessage={sendMessage}
-          onAnswerQuestion={answerQuestion}
+          onAnswerAllQuestions={answerAllQuestions}
           onSkipQuestion={skipQuestion}
           onFreeTextAnswer={freeTextAnswer}
           onApproveCheckpoint={approveCheckpoint}
