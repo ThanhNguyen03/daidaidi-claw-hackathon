@@ -7,6 +7,8 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, Mic, MicOff } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { MessageBubble } from './MessageBubble';
 import { QuestionCard } from './QuestionCard';
 import { ThinkingTrace } from './ThinkingTrace';
@@ -162,7 +164,13 @@ function CheckpointCard({
                     {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                   </td>
                   <td className="py-2 px-3 text-text">
-                    {cleanArrowSymbols(typeof value === 'object' ? JSON.stringify(value) : String(value))}
+                    {typeof value === 'string' && (value.includes('**') || value.includes('\n') || value.includes('###')) ? (
+                      <div className="prose-sm max-w-none text-text">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanArrowSymbols(value)}</ReactMarkdown>
+                      </div>
+                    ) : (
+                      cleanArrowSymbols(typeof value === 'object' ? JSON.stringify(value) : String(value))
+                    )}
                   </td>
                 </tr>
               ))}

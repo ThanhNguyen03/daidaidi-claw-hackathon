@@ -1030,6 +1030,10 @@ function cleanSectionHeadersAndDividers(content: string): string {
     return `\n\n#### ${title.trim()}\n`;
   });
 
+  // Convert lines that are ONLY = or - characters (pure dividers, 4+ chars) → markdown hr
+  // This catches lines like "================" not matched by the SECTION rule above
+  text = text.replace(/^([=]{4,}|-{4,})$/gm, '---');
+
   return text;
 }
 
