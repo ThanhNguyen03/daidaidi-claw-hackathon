@@ -145,8 +145,12 @@ export function Sidebar({
       } catch { /* ignore */ }
     };
     fetchSessions();
-    const interval = setInterval(fetchSessions, 10000);
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchSessions, 5000);
+    window.addEventListener('session_updated', fetchSessions);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('session_updated', fetchSessions);
+    };
   }, [currentUser]);
 
   const displayAgents = currentMode === 'cs' ? CS_AGENTS : SALE_AGENTS;

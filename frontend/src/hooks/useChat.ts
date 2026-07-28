@@ -493,6 +493,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           // Stream complete
           break;
 
+        case 'session':
         case 'session_updated':
           // Session state updated — sync brief and persist session id
           if (data.session_id) {
@@ -505,6 +506,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           // Only update brief if BE returned a non-empty brief object
           if (data.brief && typeof data.brief === 'object' && Object.keys(data.brief as object).length > 0) {
             setBrief(data.brief as Brief);
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('session_updated'));
           }
           break;
 

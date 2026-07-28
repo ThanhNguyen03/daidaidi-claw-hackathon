@@ -1493,6 +1493,25 @@ async def chat_stream(request: Request, payload: ChatRequest):
 
     async def event_generator():
         try:
+            # Save session to DB immediately on start so History list updates instantly
+            try:
+                from database import db_save_session
+                auth_header = request.headers.get("authorization")
+                user_payload = _get_current_user(auth_header)
+                uid = user_payload["user_id"] if user_payload else None
+                first_msg = state.messages[0]["content"] if state.messages else payload.message[:50]
+                title = state.brief.brand_name or state.brief.industry or first_msg[:50]
+                db_save_session(
+                    session_id=state.session_id,
+                    user_id=uid,
+                    title=title,
+                    brief_data=_brief_to_dict(state.brief),
+                    messages_data=state.messages,
+                    constraints_data=[c.to_dict() if hasattr(c, "to_dict") else c for c in state.constraints],
+                )
+            except Exception as _e:
+                print(f"[main] Immediate session save warning: {_e}")
+
             # Send session info + current brief so FE can immediately sync state
             initial_brief = _brief_to_dict(state.brief)
             yield _sse_data({'type': 'session', 'session_id': state.session_id, 'brief': initial_brief})

@@ -1106,6 +1106,26 @@ class CentralAgent:
             for item in group:
                 skill_name = item.get("skill", "")
                 task_desc = item.get("task", message)
+
+                # Force inject latest brief values (budget, industry, goal, timeline) into task_desc
+                # so specialist agents NEVER hallucinate old numbers (e.g. 300M instead of 100M)
+                if state.brief:
+                    brief_parts = []
+                    if state.brief.industry:
+                        brief_parts.append(f"Ngành hàng: {state.brief.industry}")
+                    if state.brief.budget_vnd:
+                        brief_parts.append(f"Ngân sách CHÍNH XÁC: {state.brief.budget_vnd:,.0f} VNĐ")
+                    if state.brief.goal:
+                        brief_parts.append(f"Mục tiêu: {state.brief.goal}")
+                    if state.brief.timeline:
+                        brief_parts.append(f"Thời gian: {state.brief.timeline}")
+                    if brief_parts:
+                        task_desc += (
+                            f"\n\n[DỮ LIỆU BRIEF BẮT BUỘC MỚI NHẤT - KHÔNG ĐƯỢC DÙNG CON SỐ KHÁC]:\n"
+                            + " | ".join(brief_parts)
+                            + "\n(Yêu cầu lập giải pháp & tính toán báo giá TUÂN THỦ ĐÚNG ngân sách trên)."
+                        )
+
                 skill = skill_registry.get(skill_name)
                 if not skill:
                     print(f"[CentralAgent] Skill not found: {skill_name}, skipping")
