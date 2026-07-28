@@ -199,6 +199,7 @@ def _get_current_user(authorization: Optional[str] = None) -> Optional[dict]:
 
 
 @app.post("/api/auth/register")
+@app.post("/auth/register")  # Nginx strips /api/ prefix
 async def auth_register(req: RegisterRequest):
     from database import register_user
     try:
@@ -209,6 +210,7 @@ async def auth_register(req: RegisterRequest):
 
 
 @app.post("/api/auth/login")
+@app.post("/auth/login")  # Nginx strips /api/ prefix
 async def auth_login(req: LoginRequest):
     from database import login_user
     try:
@@ -219,6 +221,7 @@ async def auth_login(req: LoginRequest):
 
 
 @app.get("/api/auth/me")
+@app.get("/auth/me")  # Nginx strips /api/ prefix
 async def auth_me(authorization: Optional[str] = Header(None)):
     payload = _get_current_user(authorization)
     if not payload:
@@ -231,6 +234,7 @@ async def auth_me(authorization: Optional[str] = Header(None)):
 
 
 @app.get("/api/user/sessions")
+@app.get("/user/sessions")  # Nginx strips /api/ prefix
 async def get_user_sessions(authorization: Optional[str] = Header(None)):
     payload = _get_current_user(authorization)
     user_id = payload["user_id"] if payload else None
@@ -239,6 +243,7 @@ async def get_user_sessions(authorization: Optional[str] = Header(None)):
 
 
 @app.get("/api/user/sessions/{session_id}")
+@app.get("/user/sessions/{session_id}")  # Nginx strips /api/ prefix
 async def get_session_detail(session_id: str, authorization: Optional[str] = Header(None)):
     payload = _get_current_user(authorization)
     from database import db_load_session
@@ -265,6 +270,7 @@ def _require_admin(authorization: Optional[str]) -> dict:
 
 
 @app.get("/api/admin/users")
+@app.get("/admin/users")  # Nginx strips /api/ prefix
 async def admin_list_users(authorization: Optional[str] = Header(None)):
     _require_admin(authorization)
     from database import list_all_users
@@ -272,6 +278,7 @@ async def admin_list_users(authorization: Optional[str] = Header(None)):
 
 
 @app.put("/api/admin/users/role")
+@app.put("/admin/users/role")  # Nginx strips /api/ prefix
 async def admin_set_role(req: UserRoleRequest, authorization: Optional[str] = Header(None)):
     _require_admin(authorization)
     from database import update_user_role
@@ -283,6 +290,7 @@ async def admin_set_role(req: UserRoleRequest, authorization: Optional[str] = He
 
 
 @app.get("/api/admin/rules")
+@app.get("/admin/rules")  # Nginx strips /api/ prefix
 async def admin_list_rules(authorization: Optional[str] = Header(None)):
     _require_admin(authorization)
     from database import list_org_rules
@@ -290,6 +298,7 @@ async def admin_list_rules(authorization: Optional[str] = Header(None)):
 
 
 @app.post("/api/admin/rules")
+@app.post("/admin/rules")  # Nginx strips /api/ prefix
 async def admin_create_rule(req: OrgRuleCreateRequest, authorization: Optional[str] = Header(None)):
     user = _require_admin(authorization)
     from database import create_org_rule
@@ -298,6 +307,7 @@ async def admin_create_rule(req: OrgRuleCreateRequest, authorization: Optional[s
 
 
 @app.put("/api/admin/rules/{rule_id}")
+@app.put("/admin/rules/{rule_id}")  # Nginx strips /api/ prefix
 async def admin_update_rule(rule_id: int, req: OrgRuleUpdateRequest, authorization: Optional[str] = Header(None)):
     _require_admin(authorization)
     from database import update_org_rule
@@ -306,6 +316,7 @@ async def admin_update_rule(rule_id: int, req: OrgRuleUpdateRequest, authorizati
 
 
 @app.patch("/api/admin/rules/{rule_id}/toggle")
+@app.patch("/admin/rules/{rule_id}/toggle")  # Nginx strips /api/ prefix
 async def admin_toggle_rule(rule_id: int, authorization: Optional[str] = Header(None)):
     _require_admin(authorization)
     from database import list_org_rules, toggle_org_rule
@@ -318,6 +329,7 @@ async def admin_toggle_rule(rule_id: int, authorization: Optional[str] = Header(
 
 
 @app.delete("/api/admin/rules/{rule_id}")
+@app.delete("/admin/rules/{rule_id}")  # Nginx strips /api/ prefix
 async def admin_delete_rule(rule_id: int, authorization: Optional[str] = Header(None)):
     _require_admin(authorization)
     from database import delete_org_rule
