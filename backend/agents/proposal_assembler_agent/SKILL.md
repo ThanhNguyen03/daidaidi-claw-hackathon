@@ -8,7 +8,7 @@ description: Final synthesis — assembles all upstream agent outputs into a com
 ## Role
 Final synthesis agent. Takes structured outputs from all upstream agents and renders a complete, client-ready proposal document. Does NOT re-run any analysis or generate new content — assembles only what it receives.
 
-Output language matches the brief language (Vietnamese or English).
+Output language MUST ALWAYS be 100% Vietnamese (Tiếng Việt).
 
 ---
 
@@ -35,7 +35,7 @@ Assemble in this section order:
 | 10. Next Steps | Standard template | 3 next action items for client |
 
 ### Step 3 — Language & Tone
-- Match the language of the brief (Vietnamese or English)
+- ALWAYS write in 100% Vietnamese (Tiếng Việt). Do NOT use English unless the user explicitly requested it or for technical terms.
 - Tone: professional, consultative, solution-forward
 - Avoid: technical jargon without explanation, internal agent terminology
 

@@ -28,8 +28,7 @@ description: >
 [product-advisor]        ┘
 ```
 
-**Language rule:** Match the language of the original client brief.
-Vietnamese brief → proposal in Vietnamese. English brief → English. Mixed → Vietnamese.
+**Language rule:** DEFAULT TO 100% VIETNAMESE (TIẾNG VIỆT). Always write the proposal in Vietnamese unless explicitly requested otherwise.
 
 ---
 

@@ -122,6 +122,8 @@ function CheckpointCard({
       .replace(/OVERALL VERDICT:\s*PROCEED/gi, '📌 Kết luận: ĐƯỢC PHÉP TRIỂN KHAI 🟢')
       .replace(/OVERALL VERDICT:\s*BLOCK/gi, '📌 Kết luận: CẦN TẠM DỪNG / CHẶN 🔴')
       .replace(/Risk summary:\s*(\d+)\s*High\s*\|\s*(\d+)\s*Medium\s*\|\s*(\d+)\s*Note/gi, '📊 Mức độ rủi ro: $1 Cao | $2 Vừa | $3 Lưu ý')
+      .replace(/EXPLICIT ASSUMPTIONS/gi, 'Giả định triển khai chính')
+      .replace(/\(Provisional\s*[\-–—]\s*pending client confirmation\)/gi, '(Tạm thời — chờ khách hàng xác nhận)')
       .replace(/ASSUMPTIONS STATEMENT/gi, 'Giả định triển khai')
       .replace(/RUNNING WITH ASSUMPTIONS/gi, 'Giả định thực thi')
       .replace(/A4 COMPLIANCE REPORT/gi, 'Báo cáo tuân thủ & Pháp lý')
@@ -131,19 +133,97 @@ function CheckpointCard({
       .replace(/CONSTRAINTS:/gi, 'Ràng buộc & Hạn chế:')
       .replace(/STRATEGIC DIAGNOSIS/gi, 'Chẩn đoán chiến lược')
       .replace(/Campaign Scale:/gi, 'Quy mô chiến dịch:')
+      .replace(/Database Scale:/gi, 'Quy mô cơ sở dữ liệu:')
       .replace(/Database Size:/gi, 'Dung lượng dữ liệu:')
+      .replace(/Acquisition & Loyalty Mechanic:/gi, 'Cơ chế Thu hút & Tích điểm Loyalty:')
+      .replace(/Timeline Duration:/gi, 'Thời gian chiến dịch:')
       .replace(/Primary Objective:/gi, 'Mục tiêu chính:')
+      .replace(/Objective:/gi, 'Mục tiêu:')
+      .replace(/Total Provisional Budget:/gi, 'Tổng ngân sách dự kiến:')
       .replace(/Total Budget:/gi, 'Tổng ngân sách:')
       .replace(/Timeline:/gi, 'Thời gian triển khai:')
       .replace(/Client:/gi, 'Khách hàng:')
       .replace(/Industry:/gi, 'Ngành hàng:')
-      .replace(/Assumption (\d+)/gi, 'Giả định $1');
+      .replace(/Assumption (\d+)/gi, 'Giả định $1')
+      .replace(/Assumptions made:/gi, 'Giả định được đưa ra:')
+      .replace(/High reliance on mass media/gi, 'Phụ thuộc lớn vào truyền thông đại chúng');
 
     return s.trim();
   }
 
+  // Parse raw JSON objects/strings into clean human-readable Vietnamese text
+  function formatValueHumanReadable(val: unknown): string {
+    if (!val) return '';
+    let obj: Record<string, unknown> | null = null;
+
+    if (typeof val === 'object' && val !== null) {
+      obj = val as Record<string, unknown>;
+    } else if (typeof val === 'string') {
+      let rawStr = val.trim();
+      // Strip markdown code fences if present e.g. ```json { ... } ```
+      if (rawStr.startsWith('```')) {
+        rawStr = rawStr.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+      }
+      // If contains a JSON object pattern
+      const jsonMatch = rawStr.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          obj = JSON.parse(jsonMatch[0]);
+        } catch {
+          obj = null;
+        }
+      }
+    }
+
+    if (obj) {
+      const lines: string[] = [];
+      // Extract key fields into friendly format
+      if (obj.problem_statement) lines.push(`**Mục tiêu bài toán:** ${cleanAndTranslateCheckpointText(String(obj.problem_statement))}`);
+      if (obj.confidence_notes) lines.push(`**Ghi chú giả định:** ${cleanAndTranslateCheckpointText(String(obj.confidence_notes))}`);
+      if (obj.summary) lines.push(`**Tóm tắt:** ${cleanAndTranslateCheckpointText(String(obj.summary))}`);
+      if (obj.verdict) lines.push(`**Kết luận:** ${cleanAndTranslateCheckpointText(String(obj.verdict))}`);
+
+      // Handle gap analysis if present
+      if (obj.gap_analysis && typeof obj.gap_analysis === 'object') {
+        const gap = obj.gap_analysis as Record<string, unknown>;
+        if (gap.current_state) lines.push(`**Hiện trạng:** ${cleanAndTranslateCheckpointText(String(gap.current_state))}`);
+        if (gap.desired_state) lines.push(`**Mục tiêu hướng tới:** ${cleanAndTranslateCheckpointText(String(gap.desired_state))}`);
+      }
+
+      // Fallback for other keys if no standard field matched
+      if (lines.length === 0) {
+        Object.entries(obj).forEach(([k, v]) => {
+          if (['skill', 'status', 'agent', 'model'].includes(k)) return; // Skip internal dev fields
+          const label = k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+          const displayVal = typeof v === 'object' ? JSON.stringify(v) : String(v);
+          lines.push(`**${label}:** ${cleanAndTranslateCheckpointText(displayVal)}`);
+        });
+      }
+
+      return lines.join('\n\n');
+    }
+
+    let finalStr = cleanAndTranslateCheckpointText(String(val));
+    // If text still contains raw JSON snippet (e.g. {"skill": ...}), clean it completely
+    if (finalStr.includes('"skill":') || finalStr.includes('"status":')) {
+      finalStr = finalStr.replace(/\{[\s\S]*?\}/g, (match) => {
+        try {
+          const parsed = JSON.parse(match);
+          const parts = [];
+          if (parsed.problem_statement) parts.push(`**Bài toán:** ${parsed.problem_statement}`);
+          if (parsed.confidence_notes) parts.push(`**Ghi chú:** ${parsed.confidence_notes}`);
+          return parts.join('\n\n');
+        } catch {
+          return '';
+        }
+      });
+    }
+
+    return finalStr.trim();
+  }
+
   const formatBriefGroups = (groups: Record<string, Array<Record<string, string>>>) => (
-    <div className="space-y-3">
+    <div className="space-y-3 max-w-full overflow-hidden">
       {SOURCE_GROUPS.map(({ key, label, hint, tone }) => {
         const items = groups[key] || [];
         if (items.length === 0) return null;
@@ -153,16 +233,14 @@ function CheckpointCard({
               <span className={`text-[12px] font-semibold ${tone}`}>{label}</span>
               <span className="text-[11px] text-text-muted">{hint}</span>
             </div>
-            <table className="w-full border-collapse text-xs">
-              <tbody>
-                {items.map((item) => (
-                  <tr key={item.field} className="border-b border-border/50 last:border-0">
-                    <td className="py-2 px-3 font-medium text-text-muted w-2/5">{item.label}</td>
-                    <td className="py-2 px-3 text-text">{cleanAndTranslateCheckpointText(item.value)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="divide-y divide-border/50 text-xs">
+              {items.map((item) => (
+                <div key={item.field} className="p-3 flex flex-col sm:flex-row gap-1 sm:gap-4">
+                  <span className="font-medium text-text-muted shrink-0 sm:w-1/3">{item.label}</span>
+                  <span className="text-text break-words flex-1 min-w-0">{formatValueHumanReadable(item.value)}</span>
+                </div>
+              ))}
+            </div>
           </div>
         );
       })}
@@ -170,10 +248,10 @@ function CheckpointCard({
   );
 
   // Friendly Vietnamese Section Labels
-  const SECTION_LABELS: Record<string, { label: string; icon: string; bg: string; border: string }> = {
-    compliance: { label: '⚖️ Đánh giá Pháp lý & Tuân thủ (Compliance)', icon: '🛡️', bg: 'bg-amber-500/10 dark:bg-amber-900/20', border: 'border-amber-500/30' },
-    strategy: { label: '🎯 Định hình Chiến lược (Market Strategy)', icon: '📈', bg: 'bg-blue-500/10 dark:bg-blue-900/20', border: 'border-blue-500/30' },
-    solution: { label: '💡 Đề xuất Giải pháp & Gói sản phẩm (Product Solution)', icon: '🧩', bg: 'bg-purple-500/10 dark:bg-purple-900/20', border: 'border-purple-500/30' },
+  const SECTION_LABELS: Record<string, { label: string; bg: string; border: string }> = {
+    compliance: { label: '⚖️ Đánh giá Pháp lý & Tuân thủ (Compliance)', bg: 'bg-amber-500/10 dark:bg-amber-900/20', border: 'border-amber-500/30' },
+    strategy: { label: '🎯 Định hình Chiến lược (Market Strategy)', bg: 'bg-blue-500/10 dark:bg-blue-900/20', border: 'border-blue-500/30' },
+    solution: { label: '💡 Đề xuất Giải pháp & Gói sản phẩm (Product Solution)', bg: 'bg-purple-500/10 dark:bg-purple-900/20', border: 'border-purple-500/30' },
   };
 
   // Format preview with clear cards and Vietnamese labels
@@ -201,29 +279,27 @@ function CheckpointCard({
       });
 
       return (
-        <div className="space-y-3 my-2">
+        <div className="space-y-3 my-2 max-w-full overflow-hidden">
           {sortedEntries.map(([key, value]) => {
             const secInfo = SECTION_LABELS[key] || {
               label: key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-              icon: '📌',
               bg: 'bg-surface-2',
               border: 'border-border',
             };
 
-            const rawStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
-            const cleanedText = cleanAndTranslateCheckpointText(rawStr);
+            const cleanedText = formatValueHumanReadable(value);
 
             return (
               <div
                 key={key}
-                className={`rounded-xl border ${secInfo.border} ${secInfo.bg} p-3.5 shadow-sm transition-all`}
+                className={`rounded-xl border ${secInfo.border} ${secInfo.bg} p-3.5 shadow-sm transition-all max-w-full overflow-hidden`}
               >
                 <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/40">
-                  <span className="text-[13px] font-bold text-text flex items-center gap-1.5">
+                  <span className="text-[13px] font-bold text-text flex items-center gap-1.5 truncate">
                     {secInfo.label}
                   </span>
                 </div>
-                <div className="text-xs text-text leading-relaxed prose-sm max-w-none dark:prose-invert">
+                <div className="text-xs text-text leading-relaxed prose-sm max-w-full break-words overflow-x-auto dark:prose-invert">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanedText}</ReactMarkdown>
                 </div>
               </div>
@@ -234,8 +310,8 @@ function CheckpointCard({
     }
 
     return (
-      <div className="p-3 bg-surface-2 rounded-xl text-xs text-text leading-relaxed">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanAndTranslateCheckpointText(String(preview))}</ReactMarkdown>
+      <div className="p-3 bg-surface-2 rounded-xl text-xs text-text leading-relaxed break-words overflow-hidden">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{formatValueHumanReadable(preview)}</ReactMarkdown>
       </div>
     );
   };
@@ -274,26 +350,26 @@ function CheckpointCard({
   };
 
   return (
-    <div className="border-2 border-accent bg-accent-soft rounded-lg p-4 mb-4">
+    <div className="border-2 border-accent bg-accent-soft rounded-2xl p-4 mb-4 max-w-full overflow-hidden shadow-md">
       {/* Compliance Findings */}
       {checkpoint.compliance_findings && checkpoint.compliance_findings.length > 0 && (
-        <div className="mb-4">
+        <div className="mb-4 max-w-full overflow-hidden">
           {checkpoint.compliance_findings.map((finding, idx) => (
             <div
               key={idx}
               className={`
-                p-3 rounded mb-2 border
-                ${finding.severity === 'block' ? 'bg-red-500/10 border-red-500/30' : ''}
-                ${finding.severity === 'warn' ? 'bg-amber-500/10 border-amber-500/30' : ''}
-                ${finding.severity === 'info' ? 'bg-blue-500/10 border-blue-500/30' : ''}
+                p-3 rounded-xl mb-2 max-w-full overflow-hidden
+                ${finding.severity === 'block' ? 'bg-red-50 border border-red-200 text-red-900' : ''}
+                ${finding.severity === 'warn' ? 'bg-yellow-50 border border-yellow-200 text-yellow-900' : ''}
+                ${finding.severity === 'info' ? 'bg-blue-50 border border-blue-200 text-blue-900' : ''}
               `}
             >
               <div className="flex items-start gap-2">
                 <span>{finding.severity === 'block' ? '🔴' : finding.severity === 'warn' ? '⚠️' : 'ℹ️'}</span>
-                <div className="flex-1">
-                  <p className="text-[12px] font-medium text-text">{finding.message}</p>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[12px] font-medium break-words">{finding.message}</p>
                   {finding.suggestion && (
-                    <p className="text-xs text-text-muted mt-1">Suggestion: {finding.suggestion}</p>
+                    <p className="text-xs opacity-80 mt-1 break-words">Gợi ý: {finding.suggestion}</p>
                   )}
                 </div>
               </div>
@@ -302,9 +378,9 @@ function CheckpointCard({
         </div>
       )}
 
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-3 max-w-full overflow-hidden">
         <AlertTriangle size={24} className="text-accent shrink-0 mt-0.5" />
-        <div className="flex-1">
+        <div className="flex-1 min-w-0 max-w-full overflow-hidden">
           <h3 className="font-semibold text-accent-text mb-2">
             {checkpoint.action.type === 'confirm_brief'
               ? 'Chốt 1 — Xác nhận cách hiểu brief'

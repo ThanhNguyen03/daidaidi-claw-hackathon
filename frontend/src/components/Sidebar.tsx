@@ -127,19 +127,18 @@ export function Sidebar({
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [sessions, setSessions] = useState<Array<{ session_id: string; title: string; updated_at: string }>>([]); 
 
-  // Fetch session history when user is logged in
+  // Fetch session history (both logged in users and guests)
   useEffect(() => {
-    if (!currentUser) return;
-    const token = localStorage.getItem('auth_token');
-    if (!token) return;
     const fetchSessions = async () => {
       try {
+        const token = localStorage.getItem('auth_token');
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
         const apiBase = process.env.NEXT_PUBLIC_API_URL ||
           (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
             ? '' : 'http://localhost:8000');
-        const res = await fetch(`${apiBase}/api/user/sessions`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await fetch(`${apiBase}/api/user/sessions`, { headers });
         if (res.ok) {
           const data = await res.json();
           setSessions(data.sessions || []);
@@ -147,8 +146,12 @@ export function Sidebar({
       } catch { /* ignore */ }
     };
     fetchSessions();
-    const interval = setInterval(fetchSessions, 30000);
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchSessions, 5000);
+    window.addEventListener('session_updated', fetchSessions);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('session_updated', fetchSessions);
+    };
   }, [currentUser]);
 
   const displayAgents = currentMode === 'cs' ? CS_AGENTS : SALE_AGENTS;
@@ -297,24 +300,38 @@ export function Sidebar({
       </div>
 
       {/* Session History */}
-      {!isCollapsed && sessions.length > 0 && (
-        <div className="mt-3">
-          <p className="text-[10px] uppercase tracking-widest text-text-muted font-semibold px-1 mb-1.5">
-            Lịch sử
-          </p>
-          <div className="flex flex-col gap-0.5 max-h-40 overflow-y-auto">
-            {sessions.slice(0, 10).map((s) => (
-              <button
-                key={s.session_id}
-                onClick={() => onLoadSession?.(s.session_id)}
-                title={s.title}
-                className="w-full text-left px-2 py-1.5 rounded-md text-[11px] text-text-muted hover:bg-surface-hover hover:text-text transition-colors flex items-center gap-1.5"
-              >
-                <Clock size={10} className="shrink-0 opacity-50" />
-                <span className="truncate flex-1">{s.title}</span>
-              </button>
-            ))}
+      {!isCollapsed && (
+        <div className="mt-4 pt-3 border-t border-border/50">
+          <div className="flex items-center justify-between px-1 mb-2">
+            <p className="text-[10px] uppercase tracking-wider text-text-muted font-bold flex items-center gap-1">
+              <Clock size={11} className="text-accent" /> Lịch sử hội thoại
+            </p>
+            {sessions.length > 0 && (
+              <span className="text-[9px] bg-accent/10 text-accent font-medium px-1.5 py-0.5 rounded-full">
+                {sessions.length}
+              </span>
+            )}
           </div>
+
+          {sessions.length > 0 ? (
+            <div className="flex flex-col gap-1 max-h-48 overflow-y-auto pr-1 text-xs">
+              {sessions.slice(0, 15).map((s) => (
+                <button
+                  key={s.session_id}
+                  onClick={() => onLoadSession?.(s.session_id)}
+                  title={s.title}
+                  className="w-full text-left px-2.5 py-2 rounded-lg text-[12px] text-text-muted hover:bg-surface-2 hover:text-text transition-all flex items-center gap-2 group border border-transparent hover:border-border/60"
+                >
+                  <MessageCircle size={13} className="shrink-0 text-accent/60 group-hover:text-accent transition-colors" />
+                  <span className="truncate flex-1 font-medium">{s.title}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="px-2 py-1.5 text-[11px] text-text-muted italic opacity-75">
+              Chưa có cuộc trò chuyện nào. Hãy bắt đầu chat để tự động lưu!
+            </p>
+          )}
         </div>
       )}
 

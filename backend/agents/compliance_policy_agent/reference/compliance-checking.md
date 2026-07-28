@@ -197,8 +197,7 @@ These trigger an automatic 🔴 HIGH flag regardless of other context:
 ## 7. Output Format
 
 Return plain text to A2 Orchestrator in the following structure.
-**Language:** Match the language the user/Orchestrator used in the brief.
-If brief is in Vietnamese → output in Vietnamese. If in English → output in English.
+**Language:** DEFAULT TO 100% VIETNAMESE (TIẾNG VIỆT). Write all findings, notes, and conditions fully in Vietnamese. Only use English if the user explicitly writes in English or for technical terms.
 
 ```
 ═══════════════════════════════════════════
