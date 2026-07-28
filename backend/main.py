@@ -69,7 +69,6 @@ APP_NAME = "Multi-Agent Sales Assistant"
 APP_VERSION = "0.6.0"  # Day 6 version
 DEBUG = os.getenv("DEBUG", "true").lower() == "true"
 ACTIVE_MODE = "chat"
-COMING_SOON_MODES = {"planning", "execute", "brainstorm"}
 
 
 def _normalize_mode(mode: Optional[str]) -> str:

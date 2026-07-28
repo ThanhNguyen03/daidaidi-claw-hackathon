@@ -6,7 +6,7 @@
  */
 
 import React from 'react';
-import { MessageCircle, ClipboardList, Rocket, Lightbulb, Headphones, Plus, Menu, X, PanelRightClose } from 'lucide-react';
+import { MessageCircle, Headphones, Plus, Menu, X, PanelRightClose } from 'lucide-react';
 import type { ChatMode } from '../lib/types';
 
 interface MobileNavProps {
@@ -18,12 +18,9 @@ interface MobileNavProps {
   onToggleContextPanel?: () => void;
 }
 
-const MODES: { id: ChatMode; icon: React.ReactNode; label: string; comingSoon?: boolean }[] = [
+const MODES: { id: ChatMode; icon: React.ReactNode; label: string }[] = [
   { id: 'chat', icon: <MessageCircle size={20} />, label: 'Chat' },
   { id: 'cs', icon: <Headphones size={20} />, label: 'CS' },
-  { id: 'planning', icon: <ClipboardList size={20} />, label: 'Plan', comingSoon: true },
-  { id: 'execute', icon: <Rocket size={20} />, label: 'Execute', comingSoon: true },
-  { id: 'brainstorm', icon: <Lightbulb size={20} />, label: 'Brain', comingSoon: true },
 ];
 
 export function MobileNav({
@@ -92,12 +89,9 @@ export function MobileNav({
               <button
                 key={mode.id}
                 onClick={() => {
-                  if (!mode.comingSoon) {
-                    onModeChange(mode.id);
-                    onToggle();
-                  }
+                  onModeChange(mode.id);
+                  onToggle();
                 }}
-                disabled={mode.comingSoon}
                 className={`
                   flex items-center gap-3 rounded-md py-2.5 px-3 cursor-pointer
                   text-sm transition-all duration-150
@@ -105,16 +99,12 @@ export function MobileNav({
                     ? 'bg-accent-soft text-accent font-medium'
                     : 'text-text hover:bg-surface-hover'
                   }
-                  ${mode.comingSoon ? 'opacity-60 cursor-not-allowed' : ''}
                 `}
               >
                 <span className={currentMode === mode.id ? 'text-accent' : 'text-text-muted'}>
                   {mode.icon}
                 </span>
-                <span className="flex items-center gap-2">
-                  {mode.label}
-                  {mode.comingSoon && <span className="text-[10px] uppercase tracking-wide text-text-muted">Soon</span>}
-                </span>
+                <span className="flex items-center gap-2">{mode.label}</span>
               </button>
             ))}
           </div>
@@ -127,19 +117,13 @@ export function MobileNav({
           {MODES.map((mode) => (
             <button
               key={mode.id}
-              onClick={() => {
-                if (!mode.comingSoon) {
-                  onModeChange(mode.id);
-                }
-              }}
-              disabled={mode.comingSoon}
+              onClick={() => onModeChange(mode.id)}
               className={`
                 flex flex-col items-center gap-1 px-2 sm:px-3 py-2 rounded-lg transition-all
                 ${currentMode === mode.id
                   ? 'text-accent bg-accent/10'
                   : 'text-text-muted hover:text-text'
                 }
-                ${mode.comingSoon ? 'opacity-60 cursor-not-allowed' : ''}
               `}
             >
               {mode.icon}

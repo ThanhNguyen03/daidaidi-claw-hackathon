@@ -50,16 +50,6 @@ interface UseChatReturn {
   brief: Brief | null;  // Day 4: Current brief
   artifacts: Artifact[];  // Day 6: Generated artifacts
   proposalAssets: { deck_url?: string; pptx_url?: string } | null;
-  brainState: {  // Day 7: Brainstorm state
-    session_id: string;
-    participants: Array<{ agent_name: string; is_active: boolean; rounds_spoken: number }>;
-    current_speaker: string | null;
-    ask_lock_holder: string | null;
-    round_count: number;
-    max_rounds: number;
-    is_frozen: boolean;
-    is_ended: boolean;
-  } | null;
 
   // Actions
   sendMessage: (message: string, brief?: Brief, resume?: boolean) => Promise<void>;
@@ -75,11 +65,6 @@ interface UseChatReturn {
   editCheckpoint: (params: Record<string, unknown>) => Promise<void>;
   clearError: () => void;
   resetSession: () => void;  // Clear session and start fresh
-  // Day 7: Brainstorm actions
-  addParticipant: (agentName: string) => void;
-  removeParticipant: (agentName: string) => void;
-  requestAskLock: () => void;
-  releaseAskLock: () => void;
 }
 
 export function useChat(options: UseChatOptions): UseChatReturn {
@@ -123,18 +108,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
   // Proposal deck assets — set when wireframe_designer completes after proposal_assembler
   const [proposalAssets, setProposalAssets] = useState<{ deck_url?: string; pptx_url?: string } | null>(null);
-
-  // Day 7: Brainstorm state
-  const [brainState, setBrainState] = useState<{
-    session_id: string;
-    participants: Array<{ agent_name: string; is_active: boolean; rounds_spoken: number }>;
-    current_speaker: string | null;
-    ask_lock_holder: string | null;
-    round_count: number;
-    max_rounds: number;
-    is_frozen: boolean;
-    is_ended: boolean;
-  } | null>(null);
 
   // --- Mode isolation: save/restore state per mode ---
   const prevModeRef = useRef<string>(mode);
@@ -251,7 +224,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     setPendingQuestions([]);
     setActiveCheckpoint(null);
     setArtifacts([]);
-    setBrainState(null);
   }, [salespersonId, mode]);
 
   // Per-mode abort controllers so cancelling one mode's stream never kills another.
@@ -600,91 +572,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
             if (constraint) {
               setConstraints((prev) => [...prev, constraint]);
             }
-          }
-          break;
-
-        // Day 7: Brainstorm mode events
-        case 'brainstorm_start':
-          {
-            const sessionId_bs = data.session_id as string;
-            const participants_bs = data.participants as string[];
-            setBrainState({
-              session_id: sessionId_bs,
-              participants: participants_bs.map(name => ({
-                agent_name: name,
-                is_active: true,
-                rounds_spoken: 0,
-              })),
-              current_speaker: null,
-              ask_lock_holder: null,
-              round_count: 0,
-              max_rounds: 8,
-              is_frozen: false,
-              is_ended: false,
-            });
-          }
-          break;
-
-        case 'speaker_turn':
-          {
-            const speaker = data.speaker as string;
-            setBrainState(prev => prev ? {
-              ...prev,
-              current_speaker: speaker,
-              round_count: prev.round_count + 1,
-              participants: prev.participants.map(p => ({
-                ...p,
-                rounds_spoken: p.agent_name === speaker ? p.rounds_spoken + 1 : p.rounds_spoken,
-              })),
-            } : null);
-          }
-          break;
-
-        case 'brainstorm_end':
-          {
-            const reason = data.reason as string;
-            const summary = data.summary as string;
-            setBrainState(prev => prev ? {
-              ...prev,
-              is_ended: true,
-            } : null);
-            // Add summary as assistant message
-            const msg: Message = {
-              role: 'assistant',
-              content: `Brainstorm ended (${reason}): ${summary}`,
-              agent: 'moderator',
-              timestamp: new Date().toISOString(),
-            };
-            setMessages((prev) => [...prev, msg]);
-          }
-          break;
-
-        case 'continue':
-          {
-            const nextSpeaker = data.next_speaker as string;
-            setBrainState(prev => prev ? {
-              ...prev,
-              current_speaker: nextSpeaker,
-            } : null);
-          }
-          break;
-
-        case 'ask_lock_granted':
-          {
-            const holder = data.holder as string;
-            setBrainState(prev => prev ? {
-              ...prev,
-              ask_lock_holder: holder,
-            } : null);
-          }
-          break;
-
-        case 'ask_lock_released':
-          {
-            setBrainState(prev => prev ? {
-              ...prev,
-              ask_lock_holder: null,
-            } : null);
           }
           break;
 
@@ -1123,36 +1010,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     setError(null);
   }, []);
 
-  // Day 7: Brainstorm actions
-  const addParticipant = useCallback((agentName: string) => {
-    setBrainState(prev => prev ? {
-      ...prev,
-      participants: [...prev.participants, {
-        agent_name: agentName,
-        is_active: true,
-        rounds_spoken: 0,
-      }],
-    } : null);
-  }, []);
-
-  const removeParticipant = useCallback((agentName: string) => {
-    setBrainState(prev => prev ? {
-      ...prev,
-      participants: prev.participants.filter(p => p.agent_name !== agentName),
-    } : null);
-  }, []);
-
-  const requestAskLock = useCallback(() => {
-    // In a real implementation, this would call the backend
-    // For now, just update local state (backend will validate)
-    console.log('Requesting ask lock...');
-  }, []);
-
-  const releaseAskLock = useCallback(() => {
-    // In a real implementation, this would call the backend
-    console.log('Releasing ask lock...');
-  }, []);
-
   // Cleanup on unmount — abort all in-flight streams across all modes
   useEffect(() => {
     return () => {
@@ -1174,7 +1031,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     brief,  // Day 4
     artifacts,  // Day 6: Generated artifacts
     proposalAssets,
-    brainState,  // Day 7: Brainstorm state
     sendMessage,
     answerQuestion,
     answerAllQuestions,
@@ -1188,10 +1044,5 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     editCheckpoint,
     clearError,
     resetSession,
-    // Day 7: Brainstorm actions
-    addParticipant,
-    removeParticipant,
-    requestAskLock,
-    releaseAskLock,
   };
 }

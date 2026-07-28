@@ -132,6 +132,10 @@ MODEL_MAPPING = {
     "compliance": os.getenv("MODEL_COMPLIANCE", "qwen/qwen3-5-27b"),
     "client_simulator": os.getenv("MODEL_CLIENT_SIMULATOR", "qwen/qwen3-5-27b"),
     "design": os.getenv("MODEL_DESIGN", "minimax/minimax-m2.5"),
+    # config/agents.yaml declares this skill's env var as MODEL_WIREFRAME_DESIGNER;
+    # it was missing here, so the skill silently rode on sales_orchestrator's model
+    # and the env var had no effect.
+    "wireframe_designer": os.getenv("MODEL_WIREFRAME_DESIGNER", "minimax/minimax-m2.5"),
     # CS mode skills (default to minimax; override via env if needed)
     "cs_agent": os.getenv("MODEL_CS_AGENT", "minimax/minimax-m2.5"),
     "predict_agent": os.getenv("MODEL_PREDICT_AGENT", "minimax/minimax-m2.5"),

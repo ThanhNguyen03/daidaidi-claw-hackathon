@@ -8,7 +8,7 @@
 // Mode Types
 // =============================================================================
 
-export type ChatMode = 'chat' | 'planning' | 'execute' | 'brainstorm' | 'cs';
+export type ChatMode = 'chat' | 'cs';
 
 // =============================================================================
 // Brief
@@ -225,14 +225,7 @@ export type SSEEventType =
   | 'session_updated'
   | 'question'
   | 'question_card'
-  | 'checkpoint'
-  // Brainstorm mode events (Day 7)
-  | 'brainstorm_start'
-  | 'speaker_turn'
-  | 'brainstorm_end'
-  | 'continue'
-  | 'ask_lock_granted'
-  | 'ask_lock_released';
+  | 'checkpoint';
 
 export interface SSEEvent {
   type: SSEEventType;
