@@ -408,6 +408,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
             setSessionId(sid);
             if (typeof window !== 'undefined') {
               sessionStorage.setItem(`chat_session_${salespersonIdRef.current}`, sid);
+              // The backend has already written the row by the time it sends this,
+              // so tell the history list now. This is what makes a new conversation
+              // appear the moment it starts without the sidebar polling for it —
+              // and a turn can run for minutes before `session_updated` arrives.
+              window.dispatchEvent(new Event('session_updated'));
             }
           }
           // Sync brief from BE (provides latest accumulated brief on session resume)

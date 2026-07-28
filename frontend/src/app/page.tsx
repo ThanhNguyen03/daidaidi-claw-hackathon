@@ -114,6 +114,7 @@ export default function Home() {
 
   // Chat hook
   const {
+    sessionId,
     messages,
     isLoading,
     isThinking,
@@ -184,6 +185,14 @@ export default function Home() {
     window.location.reload();
   };
 
+  // A deleted conversation must not stay on screen: the transcript is gone
+  // server-side, so any further message would be answered against no history.
+  const handleSessionDeleted = (deletedId: string) => {
+    if (deletedId === sessionId) {
+      resetSession();
+    }
+  };
+
   // If auth not checked yet, show nothing (avoid flash)
   if (!authChecked) return null;
 
@@ -243,6 +252,8 @@ export default function Home() {
           onLogout={handleLogout}
           onOpenAdminPanel={() => setAdminPanelOpen(true)}
           onLoadSession={loadSession}
+          onSessionDeleted={handleSessionDeleted}
+          isBusy={isLoading}
         />
       </div>
 

@@ -62,6 +62,72 @@ _CENTRAL_SKILL = _load_central_skill()
 _SKILL_TIMEOUT_S = 270  # per-skill wall-clock timeout; increased to give slow GreenNode MAAS room
 _RECENT_HISTORY_WINDOW = 20
 _SYNTHESIS_HISTORY_WINDOW = 12
+
+# How many skills may be *in flight* at once. Mirrors the cap in llm/client.py, and
+# exists so the two agree about what "running" means.
+#
+# Without a gate here, a group of five skills all started their _SKILL_TIMEOUT_S clock
+# the moment their task was created, while llm/client.py's semaphore let exactly one of
+# them talk to the provider. The skills at the back of that queue spent their entire
+# 270s budget waiting for a slot and then timed out having issued no request at all —
+# so a turn cost 270s per queued skill and reported the ones it never ran as failures.
+# Rate-limit retries make it certain rather than likely: one skill waiting out a 429 is
+# enough to push the rest past their deadline.
+#
+# Holding the slot for the whole skill, not per call, is deliberate: a skill makes two
+# calls (its knowledge selector, then its own completion) and re-queueing between them
+# is what produced the unfair interleaving in the first place.
+_ADMISSION_LIMIT = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "3")))
+_admission: Optional[asyncio.Semaphore] = None
+
+# Ceiling on the whole skill phase of one turn.
+#
+# Serialising admission fixes the spurious timeouts but removes the accidental bound
+# that came with them: seven skills at up to 270s each, queued one at a time, is a
+# turn the rep watches for half an hour. Past this point the remaining skills are
+# skipped and the answer is synthesised from what did finish — which is worth far
+# more than a complete set of results nobody stayed to read. The skip is announced,
+# per the rule that a degraded artifact says so.
+_TURN_BUDGET_S = float(os.getenv("TURN_BUDGET_S", "600"))
+# Below this there is no point admitting a skill: it cannot finish, and starting it
+# only delays the synthesis it would be cut off for.
+_MIN_SKILL_S = 20.0
+
+
+class _TurnBudgetExhausted(Exception):
+    """Raised instead of running a skill the turn no longer has time for."""
+
+
+def _admission_gate() -> asyncio.Semaphore:
+    """The process-wide skill admission gate, created on first use.
+
+    Lazily, because a module-level asyncio.Semaphore is constructed before there is
+    a running loop.
+    """
+    global _admission
+    if _admission is None:
+        _admission = asyncio.Semaphore(_ADMISSION_LIMIT)
+    return _admission
+
+
+async def _run_skill(
+    skill, ctx: SkillContext, deadline: Optional[float] = None
+) -> SkillOutput:
+    """Run one skill, starting its timeout only once it has a slot.
+
+    `deadline` is a loop clock reading, not a duration — the point is that time spent
+    queueing counts against the turn, and does not count against this skill.
+    """
+    async with _admission_gate():
+        timeout = float(_SKILL_TIMEOUT_S)
+        if deadline is not None:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining < _MIN_SKILL_S:
+                raise _TurnBudgetExhausted()
+            timeout = min(timeout, remaining)
+        return await asyncio.wait_for(skill.execute(ctx), timeout=timeout)
+
+
 # Skills that must run after all analysis skills complete, each in its own group and
 # in this order: the deck is built from the assembler's finished proposal.
 #
@@ -1043,6 +1109,11 @@ class CentralAgent:
         # read again for the product agent, and the §14 log can account for the total.
         ledger = RequestLedger(request_id=f"{state.session_id}:{len(state.messages)}")
 
+        # The clock the whole skill phase runs against. Set once here, so every group
+        # shares it: a first group that ran long leaves less for the ones after it,
+        # which is the point — the rep is waiting on the turn, not on a group.
+        turn_deadline = asyncio.get_running_loop().time() + _TURN_BUDGET_S
+
         # Thinking trace: skill plan
         _plan_skills = [
             s.get("skill", "?")
@@ -1167,16 +1238,39 @@ class CentralAgent:
                     session_id=state.session_id,
                     ledger=ledger,
                 )
+                # The analysis skills are additive — four of five still makes a usable
+                # answer — so they run against the turn budget. The assembler and the
+                # deck are the deliverable itself: skipping one of those means the rep
+                # waited out the whole budget and got no proposal, which is strictly
+                # worse than waiting longer. Those stay bounded by _SKILL_TIMEOUT_S only.
                 t = asyncio.create_task(
-                    asyncio.wait_for(skill.execute(ctx), timeout=_SKILL_TIMEOUT_S)
+                    _run_skill(
+                        skill,
+                        ctx,
+                        None if skill_name in _ALWAYS_SEQUENTIAL else turn_deadline,
+                    )
                 )
                 tasks[t] = skill_name
-                yield {"type": "agent_status", "agent": skill_name, "status": "thinking", "task": task_desc[:200]}
+                # Only the first _ADMISSION_LIMIT of a group get a slot straight away;
+                # the rest are queued. Saying "thinking" for all of them showed the rep
+                # five agents working when one was, and the sidebar already has a
+                # distinct 'waiting' state for exactly this.
+                queued = len(tasks) > _ADMISSION_LIMIT
+                yield {
+                    "type": "agent_status",
+                    "agent": skill_name,
+                    "status": "waiting" if queued else "thinking",
+                    "task": task_desc[:200],
+                }
                 yield {
                     "type": "thinking_trace",
                     "step": "skill_start",
                     "agent": skill_name,
-                    "content": f"Khởi chạy agent {skill_name}: {task_desc[:120]}",
+                    "content": (
+                        f"Chờ lượt chạy agent {skill_name}"
+                        if queued
+                        else f"Khởi chạy agent {skill_name}: {task_desc[:120]}"
+                    ),
                 }
 
             if not tasks:
@@ -1228,6 +1322,20 @@ class CentralAgent:
                                 "agent": skill_name,
                                 "content": f"Agent {skill_name} thất bại: {(out.summary or 'Lỗi không xác định')[:120]}",
                             }
+                    except _TurnBudgetExhausted:
+                        # Not a failure of the skill — it was never given a chance. Say
+                        # that, so the rep can read the thin section as "ran out of time"
+                        # rather than "the analysis found nothing".
+                        print(f"[CentralAgent] {skill_name} skipped — turn budget "
+                              f"({_TURN_BUDGET_S:.0f}s) spent before it was admitted")
+                        yield {"type": "agent_status", "agent": skill_name, "status": "failed",
+                               "message": "Hết thời gian lượt chạy — agent chưa kịp chạy"}
+                        yield {
+                            "type": "thinking_trace",
+                            "step": "skill_skipped",
+                            "agent": skill_name,
+                            "content": f"Bỏ qua agent {skill_name}: lượt chạy đã hết thời gian",
+                        }
                     except asyncio.TimeoutError:
                         print(f"[CentralAgent] Skill {skill_name} timed out after {_SKILL_TIMEOUT_S}s")
                         yield {"type": "agent_status", "agent": skill_name, "status": "failed",
@@ -1265,9 +1373,7 @@ class CentralAgent:
                     )
                     yield {"type": "agent_status", "agent": auto_skill, "status": "thinking"}
                     try:
-                        auto_out = await asyncio.wait_for(
-                            auto.execute(auto_ctx), timeout=_SKILL_TIMEOUT_S
-                        )
+                        auto_out = await _run_skill(auto, auto_ctx)
                         all_outputs[auto_skill] = auto_out
                         state.outputs[auto_skill] = AgentOutput(
                             agent=auto_skill,
@@ -1325,9 +1431,7 @@ class CentralAgent:
                     )
                     yield {"type": "agent_status", "agent": "wireframe_designer", "status": "thinking"}
                     try:
-                        deck_out = await asyncio.wait_for(
-                            _deck_skill.execute(deck_ctx), timeout=_SKILL_TIMEOUT_S
-                        )
+                        deck_out = await _run_skill(_deck_skill, deck_ctx)
                         all_outputs["wireframe_designer"] = deck_out
                         state.outputs["wireframe_designer"] = AgentOutput(
                             agent="wireframe_designer",

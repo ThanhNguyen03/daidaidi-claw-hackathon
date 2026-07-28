@@ -42,6 +42,26 @@ POST /chat/stream
   ↓ _synthesize            streams the final answer
 ```
 
+### Where a conversation lives
+
+Two SQLite files, each with a table called `sessions`, and they are not the same thing:
+
+| File | Written by | Holds |
+|---|---|---|
+| `data/app.db` | `database.py` | users, org rules, and the transcript the history sidebar lists — `messages_json`, brief, constraints |
+| `data/sales_assistant.db` | `repos/memory_repo.py` | the whole serialised `SalesCaseState`, skill outputs included. Much the larger of the two |
+
+`GET /user/sessions` reads the first; a resumed turn loads state from the second. So
+anything that removes a conversation has to remove it from **both**, plus
+`_session_store`, plus the PII alias table, plus the deck/PPTX files in
+`data/artifacts/`. That is what `main.py:_purge_session_everywhere` is for — the
+`DELETE /user/sessions[/{id}]` endpoints and the trash buttons in the sidebar both go
+through it, and both `VACUUM` afterwards because a SQLite `DELETE` alone does not
+shrink the file.
+
+`DELETE /sessions/{id}` is the old endpoint and only drops the in-memory entry. The
+history UI does not use it.
+
 ---
 
 ## Invariants — do not route around these
@@ -127,7 +147,23 @@ LLM_REASONING_EFFORT=low
 LLM_MAX_CONCURRENCY=1
 LLM_RETRY_ATTEMPTS=6
 LLM_RETRY_MAX_WAIT_S=60
+TURN_BUDGET_S=600
 ```
+
+**`LLM_MAX_CONCURRENCY` is enforced twice, and both are needed.** `llm/client.py`
+holds a threading semaphore around every completion — that is what protects the
+provider. `central_agent/agent.py` holds an asyncio one around every *skill* — that
+is what makes the per-skill timeout mean anything. Without the second, a group's
+skills all started their 270s clock at task-creation time while only one could talk
+to the provider, so the ones at the back of the queue expired having sent no request
+at all. See the entry in "Bugs that bit us".
+
+**`TURN_BUDGET_S` bounds the analysis phase**, because serialised admission removed
+the accidental bound that the spurious timeouts used to provide. Once it is spent the
+queued analysis skills are skipped, announced as skipped, and the answer is built
+from what finished. `proposal_assembler` and `wireframe_designer` are exempt — they
+are the deliverable, and skipping one of those means the rep waited out the whole
+budget for nothing.
 
 Measured on this key's free tier — do not re-litigate these without re-measuring:
 
@@ -239,6 +275,33 @@ Present, unreferenced, and safe to delete when someone has time. Roughly 1,500 l
 
 ## Bugs that bit us, so they are not reintroduced
 
+- **A queued skill was spending its whole timeout in the queue.** Every skill in a
+  plan group got its own `asyncio.wait_for(..., 270s)` the moment its task was created,
+  but `llm/client.py`'s semaphore let exactly one of them reach the provider. So a
+  five-skill group cost 270s *per queued skill* and reported the ones that never ran as
+  failures — which is most of what "a run produced 28 rate-limit errors and failed four
+  skills" actually was. The clock now starts when a skill is admitted, not when it is
+  queued, and the sidebar shows the queued ones as `waiting` rather than `thinking`.
+- **Blocking SQLite on the event loop stalls every open stream.** The sidebar polled
+  `/user/sessions` every 5s — 12 requests a minute per tab — and the handler read
+  sqlite3 synchronously, so each poll froze the SSE stream the rep was watching. The
+  list is event-driven now (`session_updated`, fired at both ends of a turn, plus a 60s
+  fallback) and every session read and write goes through `asyncio.to_thread`.
+  `updated_at` is the last column of a row whose `messages_json` spills to overflow
+  pages, so the list query had to walk that chain per row; `idx_sessions_user_updated`
+  keeps it out of the row entirely.
+- **Both session writes are upserts, so deleting mid-turn resurrected the row.** The
+  save at the end of a turn runs long after the rep could have deleted the
+  conversation — which is exactly what they do to a turn that looks stuck. A bounded
+  tombstone list in `main.py` suppresses that final write, and a new turn on the same
+  id retracts the tombstone, because a second tab still using the session outranks the
+  delete.
+- **The deck HTML was re-serialised into the state row on every later turn.** Same
+  shape as the `pptx_bytes` bug below, minus the crash: `html_content` sat in
+  `wireframe_designer`'s payload, so a few hundred KB of HTML was rewritten into
+  `sales_assistant.db` on every subsequent message, for a string nothing reads again.
+  It goes to disk in `ARTIFACTS_DIR` now, like the PPTX beside it, which also means the
+  deck link survives a restart instead of 404ing.
 - **`pyyaml` is a hard dependency.** `tools/ingest.py` imports it to read
   `config/agents.yaml` and returns `[]` on ImportError — the entire knowledge base
   goes unindexed with only a stdout warning. It was absent from `requirements.txt`

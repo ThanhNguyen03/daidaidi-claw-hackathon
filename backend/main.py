@@ -9,6 +9,7 @@ import asyncio
 import os
 import json
 import uuid
+from collections import deque
 from datetime import datetime
 from typing import Optional, AsyncGenerator, Any, List, Literal
 
@@ -239,7 +240,11 @@ async def get_user_sessions(authorization: Optional[str] = Header(None)):
     payload = _get_current_user(authorization)
     user_id = payload["user_id"] if payload else None
     from database import db_list_user_sessions
-    return {"sessions": db_list_user_sessions(user_id)}
+    # Off the event loop. The sidebar polls this while a turn is streaming, and
+    # sqlite3 is blocking — a read here stalls every in-flight SSE stream for its
+    # duration, which is exactly when the rep is watching for progress.
+    sessions = await asyncio.to_thread(db_list_user_sessions, user_id)
+    return {"sessions": sessions}
 
 
 @app.get("/api/user/sessions/{session_id}")
@@ -247,12 +252,130 @@ async def get_user_sessions(authorization: Optional[str] = Header(None)):
 async def get_session_detail(session_id: str, authorization: Optional[str] = Header(None)):
     payload = _get_current_user(authorization)
     from database import db_load_session
-    session = db_load_session(session_id)
+    session = await asyncio.to_thread(db_load_session, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Không tìm thấy session")
     if session["user_id"] and payload and session["user_id"] != payload["user_id"]:
         raise HTTPException(status_code=403, detail="Không có quyền truy cập")
     return session
+
+
+async def _purge_session_everywhere(session_id: str) -> None:
+    """Drop every trace of one conversation.
+
+    A conversation is spread across five places, and leaving any of them behind
+    means the delete does not free what the rep expected: the transcript row in
+    app.db, the full serialised state in sales_assistant.db (much the larger of
+    the two — it carries every skill output), the in-memory session, the PII
+    alias table, and the deck/PPTX files on disk.
+    """
+    from database import db_delete_session
+
+    # Artifact ids live on the wireframe payload, so read them before the state goes.
+    state = _session_store.get(session_id)
+    if state is None:
+        try:
+            state = await get_memory_repo().load_session(session_id)
+        except Exception:
+            state = None
+
+    artifact_ids: list[str] = []
+    if state is not None:
+        wf = (state.outputs or {}).get("wireframe_designer")
+        payload = getattr(wf, "payload", None) if wf is not None else None
+        if isinstance(payload, dict):
+            artifact_ids = [
+                payload[k]
+                for k in ("deck_artifact_id", "pptx_artifact_id")
+                if payload.get(k)
+            ]
+
+    await asyncio.to_thread(db_delete_session, session_id)
+
+    try:
+        await get_memory_repo().delete_session(session_id)
+    except Exception as e:
+        print(f"[main] memory repo delete failed for {session_id}: {e}")
+
+    _session_store.pop(session_id, None)
+    _cs_session_store.pop(session_id, None)
+    _deleted_sessions.append(session_id)
+    # The alias table is the only place raw PII still exists in this process
+    # (BRD §13); it must go with the conversation it belongs to.
+    forget_masked_session(session_id)
+
+    for artifact_id in artifact_ids:
+        _artifact_store.pop(artifact_id, None)
+        for ext in (".pptx", ".html"):
+            path = os.path.join(ARTIFACTS_DIR, artifact_id + ext)
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError as e:
+                print(f"[main] could not remove artifact {path}: {e}")
+
+
+async def _reclaim_space() -> None:
+    """Compact both databases. Called once per delete request, never per session."""
+    from database import db_vacuum
+
+    await asyncio.to_thread(db_vacuum)
+    try:
+        await get_memory_repo().vacuum()
+    except Exception as e:
+        print(f"[main] state DB vacuum skipped: {e}")
+
+
+def _assert_may_delete(session_id: str, payload: Optional[dict]) -> None:
+    """404 when the conversation is gone, 403 when it is somebody else's."""
+    from database import db_get_session_owner
+
+    try:
+        owner_id = db_get_session_owner(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Không tìm thấy cuộc trò chuyện")
+    if owner_id is not None and (not payload or owner_id != payload["user_id"]):
+        raise HTTPException(status_code=403, detail="Không có quyền xoá cuộc trò chuyện này")
+
+
+@app.delete("/api/user/sessions/{session_id}")
+@app.delete("/user/sessions/{session_id}")  # Nginx strips /api/ prefix
+async def delete_user_session(
+    session_id: str, authorization: Optional[str] = Header(None)
+):
+    """Delete one conversation from the history list."""
+    payload = _get_current_user(authorization)
+    await asyncio.to_thread(_assert_may_delete, session_id, payload)
+
+    await _purge_session_everywhere(session_id)
+    await _reclaim_space()
+
+    print(f"[history] deleted session {session_id}")
+    return {"status": "deleted", "session_id": session_id}
+
+
+@app.delete("/api/user/sessions")
+@app.delete("/user/sessions")  # Nginx strips /api/ prefix
+async def delete_all_user_sessions(authorization: Optional[str] = Header(None)):
+    """Clear the whole history for the caller.
+
+    Scoped to the caller on purpose: a guest clears only the unowned rows, never
+    a logged-in rep's history.
+    """
+    from database import db_delete_user_sessions
+
+    payload = _get_current_user(authorization)
+    user_id = payload["user_id"] if payload else None
+
+    # Read and remove the app.db rows first — that list is what tells us which
+    # sessions the caller was entitled to clear.
+    session_ids = await asyncio.to_thread(db_delete_user_sessions, user_id)
+    for session_id in session_ids:
+        await _purge_session_everywhere(session_id)
+    await _reclaim_space()
+
+    print(f"[history] cleared {len(session_ids)} session(s) for user_id={user_id}")
+    return {"status": "deleted", "count": len(session_ids)}
 
 
 
@@ -385,6 +508,31 @@ _session_store: dict[str, SalesCaseState] = {}
 # CS mode has its own isolated session store (mode="cs", prefix "cs_sess_")
 _cs_session_store: dict[str, SalesCaseState] = {}
 
+# Sessions deleted while a turn was still in flight.
+#
+# Both session writes are upserts, and the one at the end of a turn runs after the
+# rep could have deleted the conversation — which is exactly what they do to a turn
+# that looks stuck. Without this the row came straight back, so the delete appeared
+# to fail. Bounded because an entry only has to outlive one in-flight turn.
+_deleted_sessions: deque[str] = deque(maxlen=256)
+
+
+def _is_deleted(session_id: str) -> bool:
+    return session_id in _deleted_sessions
+
+
+def _clear_deletion(session_id: str) -> None:
+    """Retract a tombstone because a new turn started on that session.
+
+    A second tab can still be holding a conversation someone deleted here. If it
+    sends a message, the rep is plainly using it again — persisting is right, and
+    the alternative is a session that silently stops saving forever.
+    """
+    try:
+        _deleted_sessions.remove(session_id)
+    except ValueError:
+        pass
+
 
 def _get_or_create_cs_session(
     session_id: Optional[str], salesperson_id: str
@@ -432,6 +580,24 @@ def _merge_brief_into_state(state: SalesCaseState, incoming: "Brief") -> None:
 
 _artifact_store: dict[str, dict] = {}
 ARTIFACTS_DIR = os.path.join(os.path.dirname(__file__), "data", "artifacts")
+
+
+def _artifact_available(artifact_id: Optional[str]) -> bool:
+    """Can we still serve this artifact?
+
+    The registry is in memory and dies with the container, but the files do not —
+    `/artifact/{id}` rehydrates an entry from ARTIFACTS_DIR. Checking only the
+    registry meant that after a restart the deck and PPTX buttons vanished from a
+    session whose files were sitting on disk the whole time.
+    """
+    if not artifact_id:
+        return False
+    if artifact_id in _artifact_store:
+        return True
+    return any(
+        os.path.exists(os.path.join(ARTIFACTS_DIR, artifact_id + ext))
+        for ext in (".pptx", ".html")
+    )
 
 
 def get_or_create_session(
@@ -1505,6 +1671,9 @@ async def chat_stream(request: Request, payload: ChatRequest):
 
     async def event_generator():
         try:
+            # A new turn on this session outranks any earlier delete of it.
+            _clear_deletion(state.session_id)
+
             # Save session to DB immediately on start so History list updates instantly
             try:
                 from database import db_save_session
@@ -1519,7 +1688,10 @@ async def chat_stream(request: Request, payload: ChatRequest):
                     if _brief else first_msg[:50]
                 )
                 brief_data = _brief_to_dict(_brief) if _brief else {}
-                db_save_session(
+                # In a thread: this writes the whole transcript, and it sits between
+                # the rep pressing send and the first byte of the stream.
+                await asyncio.to_thread(
+                    db_save_session,
                     session_id=state.session_id,
                     user_id=uid,
                     title=title,
@@ -1613,22 +1785,44 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 # since the PPTX bytes are dropped from state right after being stored
                 # (they break JSON persistence), a later "tải file" produced a deck
                 # link and no PPTX at all. Remembering the ids costs nothing.
-                if wp.get("deck_artifact_id") in _artifact_store:
+                if _artifact_available(wp.get("deck_artifact_id")):
                     assets["deck_url"] = f"/artifact/{wp['deck_artifact_id']}"
-                if wp.get("pptx_artifact_id") in _artifact_store:
+                if _artifact_available(wp.get("pptx_artifact_id")):
                     assets["pptx_url"] = f"/artifact/{wp['pptx_artifact_id']}"
 
                 html_content = "" if assets.get("deck_url") else wp.get("html_content", "")
                 if html_content:
                     deck_id = f"deck_{uuid.uuid4().hex[:10]}"
-                    _artifact_store[deck_id] = {
-                        "storage": "memory",
-                        "content": html_content.encode("utf-8"),
-                        "filename": "proposal_deck.html",
-                        "media_type": "text/html",
-                        "type": "deck",
-                        "title": "Proposal Deck (HTML)",
-                    }
+                    # To disk, like the PPTX beside it. Held in memory the deck was
+                    # lost on every restart, and the copy left behind in the payload
+                    # was re-serialised into the state row on every subsequent turn —
+                    # a few hundred KB of HTML rewritten per message, for a string
+                    # nothing reads again.
+                    try:
+                        os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+                        deck_path = os.path.join(ARTIFACTS_DIR, f"{deck_id}.html")
+                        with open(deck_path, "w", encoding="utf-8") as _f:
+                            _f.write(html_content)
+                        _artifact_store[deck_id] = {
+                            "storage": "file",
+                            "path": deck_path,
+                            "filename": "proposal_deck.html",
+                            "media_type": "text/html",
+                            "type": "deck",
+                            "title": "Proposal Deck (HTML)",
+                        }
+                        # Only safe to drop once the file is actually on disk.
+                        wp.pop("html_content", None)
+                    except Exception as _e:
+                        print(f"[main] deck disk save failed, using in-memory: {_e}")
+                        _artifact_store[deck_id] = {
+                            "storage": "memory",
+                            "content": html_content.encode("utf-8"),
+                            "filename": "proposal_deck.html",
+                            "media_type": "text/html",
+                            "type": "deck",
+                            "title": "Proposal Deck (HTML)",
+                        }
                     wp["deck_artifact_id"] = deck_id
                     assets["deck_url"] = f"/artifact/{deck_id}"
 
@@ -1673,7 +1867,14 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 # stopped being saved from that point on.
                 wp.pop("pptx_bytes", None)
 
-            # Save final state to in-memory store
+            # Save final state to in-memory store — unless the rep deleted this
+            # conversation while the turn was running, in which case every write
+            # below would put it back.
+            if _is_deleted(state.session_id):
+                print(f"[history] {state.session_id} deleted mid-turn — skipping final save")
+                yield done_chunk
+                return
+
             update_session(state)
 
             # Day 4: Also persist to database for cross-session resume & history UI
@@ -1693,7 +1894,11 @@ async def chat_stream(request: Request, payload: ChatRequest):
                     if _brief2 else first_msg[:50]
                 )
                 brief_data2 = _brief_to_dict(_brief2) if _brief2 else {}
-                db_save_session(
+                # Same reason, and it matters more here: this write is the last thing
+                # between the final token and the `done` event, so blocking on it
+                # leaves the rep watching a spinner over a finished answer.
+                await asyncio.to_thread(
+                    db_save_session,
                     session_id=state.session_id,
                     user_id=uid,
                     title=title2,

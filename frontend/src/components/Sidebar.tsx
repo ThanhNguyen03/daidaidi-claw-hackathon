@@ -5,7 +5,7 @@
  * Uses Tailwind CSS for styling.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   MessageCircle,
   Headphones,
@@ -20,6 +20,10 @@ import {
   ChevronRight,
   LogOut,
   ShieldCheck,
+  Trash2,
+  Check,
+  X,
+  Loader2,
 } from 'lucide-react';
 import type { ChatMode, User } from '../lib/types';
 
@@ -39,7 +43,32 @@ interface SidebarProps {
   onLogout?: () => void;
   onOpenAdminPanel?: () => void;
   onLoadSession?: (sessionId: string) => void;
+  /** Called after a conversation is deleted, so the open chat can reset if it was the one removed. */
+  onSessionDeleted?: (sessionId: string) => void;
+  /** True while a turn is streaming — history refreshes pause so a poll cannot compete with it. */
+  isBusy?: boolean;
 }
+
+/** NEXT_PUBLIC_API_URL already ends in /api; strip it before adding our own. */
+function apiBase(): string {
+  const raw =
+    process.env.NEXT_PUBLIC_API_URL ||
+    (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+      ? ''
+      : 'http://localhost:8000');
+  return raw.endsWith('/api') ? raw.slice(0, -4) : raw;
+}
+
+function authHeaders(): Record<string, string> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+// Revealed on hover on desktop, always visible below md — the sidebar is reachable
+// on mobile once opened, and a hover-only control cannot be tapped there at all.
+const DELETE_BTN_CLASS =
+  'p-1 mr-1.5 rounded text-text-muted opacity-60 md:opacity-0 md:group-hover:opacity-100 ' +
+  'focus:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0';
 
 interface AgentStatus {
   name: string;
@@ -122,39 +151,89 @@ export function Sidebar({
   onLogout,
   onOpenAdminPanel,
   onLoadSession,
+  onSessionDeleted,
+  isBusy = false,
 }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [sessions, setSessions] = useState<Array<{ session_id: string; title: string; updated_at: string }>>([]); 
+  const [sessions, setSessions] = useState<Array<{ session_id: string; title: string; updated_at: string }>>([]);
+  // Which row is asking "are you sure?" — deleting a rep's conversation is not undoable.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [confirmingClearAll, setConfirmingClearAll] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Reads the latest isBusy without making it an effect dependency — changing it
+  // must not tear down and rebuild the refresh timer on every turn.
+  const isBusyRef = useRef(isBusy);
+  useEffect(() => { isBusyRef.current = isBusy; }, [isBusy]);
 
   // Fetch session history (both logged in users and guests)
   useEffect(() => {
-    const fetchSessions = async () => {
+    const fetchSessions = async (force = false) => {
+      // The backend reads SQLite for this. While a turn is streaming, that read
+      // competes with the response the rep is waiting on — and `session_updated`
+      // already fires the moment anything changes, so a poll mid-turn buys nothing.
+      if (!force && isBusyRef.current) return;
       try {
-        const token = localStorage.getItem('auth_token');
-        const headers: Record<string, string> = {};
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        // NEXT_PUBLIC_API_URL already contains /api (e.g. https://domain/api)
-        // So we strip it before appending /api/user/sessions to avoid double /api
-        const rawBase = process.env.NEXT_PUBLIC_API_URL ||
-          (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
-            ? '' : 'http://localhost:8000');
-        const apiBase = rawBase.endsWith('/api') ? rawBase.slice(0, -4) : rawBase;
-        const res = await fetch(`${apiBase}/api/user/sessions`, { headers });
+        const res = await fetch(`${apiBase()}/api/user/sessions`, { headers: authHeaders() });
         if (res.ok) {
           const data = await res.json();
           setSessions(data.sessions || []);
         }
       } catch { /* ignore */ }
     };
-    fetchSessions();
-    const interval = setInterval(fetchSessions, 5000);
-    window.addEventListener('session_updated', fetchSessions);
+    const refreshNow = () => { void fetchSessions(true); };
+
+    void fetchSessions(true);
+    // A slow fallback only. The list is event-driven: the chat hook fires
+    // `session_updated` at the start and end of every turn. The old 5s interval
+    // meant 12 requests a minute per open tab, each one a blocking SQLite read
+    // on the same event loop that serves the SSE stream.
+    const interval = setInterval(() => { void fetchSessions(); }, 60000);
+    window.addEventListener('session_updated', refreshNow);
+    window.addEventListener('focus', refreshNow);
     return () => {
       clearInterval(interval);
-      window.removeEventListener('session_updated', fetchSessions);
+      window.removeEventListener('session_updated', refreshNow);
+      window.removeEventListener('focus', refreshNow);
     };
   }, [currentUser]);
+
+  const handleDelete = async (sessionId: string) => {
+    setDeletingId(sessionId);
+    try {
+      const res = await fetch(`${apiBase()}/api/user/sessions/${sessionId}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setSessions((prev) => prev.filter((s) => s.session_id !== sessionId));
+      onSessionDeleted?.(sessionId);
+    } catch (e) {
+      console.error('Failed to delete session:', e);
+    } finally {
+      setDeletingId(null);
+      setConfirmingId(null);
+    }
+  };
+
+  const handleClearAll = async () => {
+    const removed = sessions.map((s) => s.session_id);
+    setDeletingId('__all__');
+    try {
+      const res = await fetch(`${apiBase()}/api/user/sessions`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setSessions([]);
+      removed.forEach((id) => onSessionDeleted?.(id));
+    } catch (e) {
+      console.error('Failed to clear history:', e);
+    } finally {
+      setDeletingId(null);
+      setConfirmingClearAll(false);
+    }
+  };
 
   const displayAgents = currentMode === 'cs' ? CS_AGENTS : SALE_AGENTS;
 
@@ -306,25 +385,102 @@ export function Sidebar({
             <p className="text-[10px] uppercase tracking-wider text-text-muted font-bold flex items-center gap-1">
               <Clock size={11} className="text-accent" /> Lịch sử hội thoại
             </p>
-            {sessions.length > 0 && (
-              <span className="text-[9px] bg-accent/10 text-accent font-medium px-1.5 py-0.5 rounded-full">
-                {sessions.length}
-              </span>
-            )}
+            <div className="flex items-center gap-1">
+              {sessions.length > 0 && (
+                <span className="text-[9px] bg-accent/10 text-accent font-medium px-1.5 py-0.5 rounded-full">
+                  {sessions.length}
+                </span>
+              )}
+              {sessions.length > 0 && !confirmingClearAll && (
+                <button
+                  onClick={() => { setConfirmingClearAll(true); setConfirmingId(null); }}
+                  className="p-1 rounded text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                  title="Xoá toàn bộ lịch sử"
+                  aria-label="Xoá toàn bộ lịch sử"
+                >
+                  <Trash2 size={11} />
+                </button>
+              )}
+            </div>
           </div>
+
+          {confirmingClearAll && (
+            <div className="mb-2 px-2 py-2 rounded-lg border border-red-500/30 bg-red-500/5">
+              <p className="text-[11px] text-text mb-2">
+                Xoá {sessions.length} cuộc trò chuyện? Không thể hoàn tác.
+              </p>
+              <div className="flex gap-1">
+                <button
+                  onClick={handleClearAll}
+                  disabled={deletingId === '__all__'}
+                  className="flex-1 flex items-center justify-center gap-1 py-1 rounded text-[11px] font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-50"
+                >
+                  {deletingId === '__all__'
+                    ? <Loader2 size={11} className="animate-spin" />
+                    : <Trash2 size={11} />}
+                  Xoá hết
+                </button>
+                <button
+                  onClick={() => setConfirmingClearAll(false)}
+                  className="flex-1 py-1 rounded text-[11px] text-text-muted border border-border hover:bg-surface-hover transition-colors"
+                >
+                  Huỷ
+                </button>
+              </div>
+            </div>
+          )}
 
           {sessions.length > 0 ? (
             <div className="flex flex-col gap-1 max-h-48 overflow-y-auto pr-1 text-xs">
               {sessions.slice(0, 15).map((s) => (
-                <button
+                <div
                   key={s.session_id}
-                  onClick={() => onLoadSession?.(s.session_id)}
-                  title={s.title}
-                  className="w-full text-left px-2.5 py-2 rounded-lg text-[12px] text-text-muted hover:bg-surface-2 hover:text-text transition-all flex items-center gap-2 group border border-transparent hover:border-border/60"
+                  className="w-full flex items-center gap-1 rounded-lg group border border-transparent hover:border-border/60 hover:bg-surface-2 transition-all"
                 >
-                  <MessageCircle size={13} className="shrink-0 text-accent/60 group-hover:text-accent transition-colors" />
-                  <span className="truncate flex-1 font-medium">{s.title}</span>
-                </button>
+                  <button
+                    onClick={() => onLoadSession?.(s.session_id)}
+                    title={s.title}
+                    className="min-w-0 flex-1 text-left pl-2.5 py-2 text-[12px] text-text-muted group-hover:text-text transition-colors flex items-center gap-2"
+                  >
+                    <MessageCircle size={13} className="shrink-0 text-accent/60 group-hover:text-accent transition-colors" />
+                    <span className="truncate font-medium">{s.title}</span>
+                  </button>
+                  {confirmingId === s.session_id ? (
+                    // Two taps to delete, and the confirm lives on the row itself:
+                    // a window.confirm() is blocked in some embedded webviews, which
+                    // would make the button look broken rather than cautious.
+                    <span className="flex items-center gap-0.5 pr-1.5 shrink-0">
+                      <button
+                        onClick={() => handleDelete(s.session_id)}
+                        disabled={deletingId === s.session_id}
+                        className="p-1 rounded text-red-400 hover:bg-red-500/15 transition-colors disabled:opacity-50"
+                        title="Xác nhận xoá"
+                        aria-label="Xác nhận xoá"
+                      >
+                        {deletingId === s.session_id
+                          ? <Loader2 size={12} className="animate-spin" />
+                          : <Check size={12} />}
+                      </button>
+                      <button
+                        onClick={() => setConfirmingId(null)}
+                        className="p-1 rounded text-text-muted hover:bg-surface-hover transition-colors"
+                        title="Huỷ"
+                        aria-label="Huỷ xoá"
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => { setConfirmingId(s.session_id); setConfirmingClearAll(false); }}
+                      className={DELETE_BTN_CLASS}
+                      title="Xoá cuộc trò chuyện"
+                      aria-label={`Xoá cuộc trò chuyện ${s.title}`}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           ) : (
