@@ -1646,8 +1646,8 @@ async def chat_stream(request: Request, payload: ChatRequest):
 
                 from database import db_save_session
                 auth_header = request.headers.get("authorization")
-                payload = _get_current_user(auth_header)
-                uid = payload["user_id"] if payload else None
+                user_payload = _get_current_user(auth_header)
+                uid = user_payload["user_id"] if user_payload else None
                 first_msg = state.messages[0]["content"] if state.messages else "Hội thoại mới"
                 title = state.brief.brand_name or state.brief.industry or first_msg[:50]
                 db_save_session(
