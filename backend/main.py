@@ -1,4 +1,4 @@
-﻿"""
+"""
 Main FastAPI Application
 ========================
 Entry point for the multi-agent sales assistant backend.
@@ -233,24 +233,22 @@ async def auth_me(authorization: Optional[str] = Header(None)):
 @app.get("/api/user/sessions")
 async def get_user_sessions(authorization: Optional[str] = Header(None)):
     payload = _get_current_user(authorization)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Chưa đăng nhập")
+    user_id = payload["user_id"] if payload else None
     from database import db_list_user_sessions
-    return {"sessions": db_list_user_sessions(payload["user_id"])}
+    return {"sessions": db_list_user_sessions(user_id)}
 
 
 @app.get("/api/user/sessions/{session_id}")
 async def get_session_detail(session_id: str, authorization: Optional[str] = Header(None)):
     payload = _get_current_user(authorization)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Chưa đăng nhập")
     from database import db_load_session
     session = db_load_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Không tìm thấy session")
-    if session["user_id"] and session["user_id"] != payload["user_id"]:
+    if session["user_id"] and payload and session["user_id"] != payload["user_id"]:
         raise HTTPException(status_code=403, detail="Không có quyền truy cập")
     return session
+
 
 
 # --- Admin-only endpoints ---
@@ -1641,12 +1639,27 @@ async def chat_stream(request: Request, payload: ChatRequest):
             # Save final state to in-memory store
             update_session(state)
 
-            # Day 4: Also persist to database for cross-session resume
+            # Day 4: Also persist to database for cross-session resume & history UI
             try:
                 memory_repo = get_memory_repo()
                 await memory_repo.save_session(state)
+
+                from database import db_save_session
+                auth_header = request.headers.get("authorization")
+                payload = _get_current_user(auth_header)
+                uid = payload["user_id"] if payload else None
+                first_msg = state.messages[0]["content"] if state.messages else "Hội thoại mới"
+                title = state.brief.brand_name or state.brief.industry or first_msg[:50]
+                db_save_session(
+                    session_id=state.session_id,
+                    user_id=uid,
+                    title=title,
+                    brief_data=_brief_to_dict(state.brief),
+                    messages_data=state.messages,
+                    constraints_data=[c.to_dict() if hasattr(c, "to_dict") else c for c in state.constraints],
+                )
             except Exception as e:
-                print(f"Warning: Failed to persist session: {e}")
+                print(f"Warning: Failed to persist session to DB: {e}")
 
             # Send session update with latest brief (only non-None fields)
             yield _sse_data({'type': 'session_updated', 'session_id': state.session_id, 'brief': _brief_to_dict(state.brief)})

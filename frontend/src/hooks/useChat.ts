@@ -66,6 +66,7 @@ interface UseChatReturn {
   editCheckpoint: (params: Record<string, unknown>) => Promise<void>;
   clearError: () => void;
   resetSession: () => void;  // Clear session and start fresh
+  loadSession: (sid: string) => Promise<void>;  // Load a session from backend
 }
 
 export function useChat(options: UseChatOptions): UseChatReturn {
@@ -1053,6 +1054,33 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     };
   }, []);
 
+  // Load a session by session_id from backend
+  const loadSession = useCallback(async (targetSessionId: string) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const token = localStorage.getItem('auth_token');
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${BACKEND_URL}/api/user/sessions/${targetSessionId}`, { headers });
+      if (!res.ok) {
+        throw new Error('Không thể nạp lịch sử cuộc nói chuyện');
+      }
+      const data = await res.json();
+      setSessionId(data.session_id);
+      setMessages(data.messages || []);
+      if (data.brief) setBrief(data.brief);
+      setPendingQuestions([]);
+      setActiveCheckpoint(null);
+      setThinkingSteps([]);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Có lỗi khi tải session');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   return {
     sessionId,
     messages,
@@ -1081,5 +1109,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     editCheckpoint,
     clearError,
     resetSession,
+    loadSession,
   };
 }

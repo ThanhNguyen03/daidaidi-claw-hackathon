@@ -305,19 +305,29 @@ def db_load_session(session_id: str) -> Optional[dict[str, Any]]:
         conn.close()
 
 
-def db_list_user_sessions(user_id: int, limit: int = 30) -> list[dict[str, Any]]:
+def db_list_user_sessions(user_id: Optional[int], limit: int = 30) -> list[dict[str, Any]]:
     conn = get_db_connection()
     try:
-        rows = conn.execute(
-            """
-            SELECT session_id, title, updated_at FROM sessions
-            WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?
-            """,
-            (user_id, limit),
-        ).fetchall()
+        if user_id:
+            rows = conn.execute(
+                """
+                SELECT session_id, title, updated_at FROM sessions
+                WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT session_id, title, updated_at FROM sessions
+                ORDER BY updated_at DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
 
 
 # =============================================================================

@@ -136,6 +136,7 @@ export default function Home() {
     editCheckpoint,
     clearError,
     resetSession,
+    loadSession,
     thinkingSteps,
   } = useChat({
     salespersonId: salespersonName || 'demo_user',
@@ -241,6 +242,7 @@ export default function Home() {
           currentUser={currentUser}
           onLogout={handleLogout}
           onOpenAdminPanel={() => setAdminPanelOpen(true)}
+          onLoadSession={loadSession}
         />
       </div>
 
