@@ -1,4 +1,4 @@
-"""
+﻿"""
 Central Agent
 =============
 Single entry point that:
@@ -1209,7 +1209,7 @@ class CentralAgent:
 
     async def _plan(self, state: SalesCaseState, message: str) -> dict[str, Any]:
         """Single LLM call: match the brief to available skills, decide clarify or execute."""
-        from llm.greennode import get_llm_client
+        from llm.client import get_llm_client
 
         client = get_llm_client("central_agent")
 
@@ -1525,7 +1525,7 @@ class CentralAgent:
         prior_skill_names: set[str] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream a synthesized final response from all skill outputs."""
-        from llm.greennode import get_llm_client
+        from llm.client import get_llm_client
         from main import _ThinkFilter
 
         proposal_out = skill_outputs.get("proposal_assembler")
@@ -1985,7 +1985,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
 
     async def extract_desired_outputs(self, answer: str) -> list[str]:
         """Determine which output artifacts the user wants. Uses LLM — no keyword matching."""
-        from llm.greennode import get_llm_client
+        from llm.client import get_llm_client
         system = (
             "You are a parser. The user described what output artifact(s) they want. "
             "Return ONLY a JSON array of strings from this set: [\"pptx\", \"figma\", \"userflow\", \"quote\"]. "
@@ -2081,7 +2081,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
             setattr(brief, field, current + [v for v in incoming if v not in current])
 
     async def _extract_brief_from_text(self, state: SalesCaseState, text: str) -> dict:
-        from llm.greennode import get_llm_client
+        from llm.client import get_llm_client
         client = get_llm_client("central_agent")
         loop = asyncio.get_running_loop()
         try:

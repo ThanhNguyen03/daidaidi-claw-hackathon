@@ -1,4 +1,4 @@
-"""
+﻿"""
 Main FastAPI Application
 ========================
 Entry point for the multi-agent sales assistant backend.
@@ -37,7 +37,7 @@ from schemas.state import (
 from repos.memory_repo import get_memory_repo, SQLiteMemoryRepo
 
 # Import LLM
-from llm.greennode import get_llm_client
+from llm.client import get_llm_client
 
 # Multi-skills: central agent + skill registry
 from central_agent.agent import get_central_agent
@@ -1125,7 +1125,7 @@ async def root():
 async def health_check():
     """Health check endpoint."""
     # Check LLM configuration
-    from llm.greennode import validate_environment
+    from llm.client import validate_environment
 
     llm_status = validate_environment()
 
@@ -1165,7 +1165,7 @@ async def list_models():
     — so the response carries the caveat with it rather than leaving the UI to invent
     a confidence it does not have.
     """
-    from llm.greennode import (
+    from llm.client import (
         LLM_FALLBACK_MODELS,
         MODEL_MAPPING,
         get_model_overrides,
@@ -1202,7 +1202,7 @@ async def list_models():
 @app.post("/models/select")
 async def select_model(request: ModelSelectionRequest):
     """Switch models without a redeploy, for when one has run out of quota mid-demo."""
-    from llm.greennode import get_model_overrides, resolve_model, set_model_override
+    from llm.client import get_model_overrides, resolve_model, set_model_override
 
     set_model_override(request.agent, request.model)
     return {
@@ -2331,7 +2331,7 @@ async def get_checkpoint(checkpoint_id: str, session_id: Optional[str] = None):
 @app.get("/debug/config")
 async def debug_config():
     """Debug endpoint to check configuration."""
-    from llm.greennode import validate_environment
+    from llm.client import validate_environment
 
     result = validate_environment()
 
