@@ -172,7 +172,7 @@ export function AdminPanel({ isOpen, onClose, currentUser }: AdminPanelProps) {
 
         <div className="p-6">
           {error && (
-            <div className="mb-4 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs">
+            <div className="mb-4 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs">
               {error}
               <button className="ml-2 underline" onClick={() => setError(null)}>Đóng</button>
             </div>
@@ -260,7 +260,7 @@ export function AdminPanel({ isOpen, onClose, currentUser }: AdminPanelProps) {
                       <div className="flex items-start gap-3">
                         <button
                           onClick={() => toggleRule(rule.id)}
-                          className={`mt-0.5 flex-shrink-0 transition-colors ${rule.is_active ? 'text-green-400' : 'text-text-muted'}`}
+                          className={`mt-0.5 flex-shrink-0 transition-colors ${rule.is_active ? 'text-green-600 dark:text-green-400' : 'text-text-muted'}`}
                           title={rule.is_active ? 'Đang bật — bấm để tắt' : 'Đang tắt — bấm để bật'}
                         >
                           {rule.is_active ? <ToggleRight size={22} /> : <ToggleLeft size={22} />}
@@ -284,7 +284,7 @@ export function AdminPanel({ isOpen, onClose, currentUser }: AdminPanelProps) {
                           </button>
                           <button
                             onClick={() => deleteRule(rule.id)}
-                            className="p-1.5 rounded hover:bg-red-500/10 text-text-muted hover:text-red-400 transition-colors"
+                            className="p-1.5 rounded hover:bg-red-500/10 text-text-muted hover:text-red-600 dark:hover:text-red-400 transition-colors"
                             title="Xóa"
                           >
                             <Trash2 size={13} />

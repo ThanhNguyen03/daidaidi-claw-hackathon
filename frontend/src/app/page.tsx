@@ -71,8 +71,11 @@ export default function Home() {
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [modelPanelOpen, setModelPanelOpen] = useState(false);
 
-  // Sidebar state for responsive
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // This only controls the mobile drawer (MobileNav) — the desktop/tablet
+  // <Sidebar> is shown unconditionally above the md breakpoint by its own
+  // wrapper, regardless of this flag. Defaulting to closed means the drawer
+  // doesn't cover the chat the instant a phone opens the app.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // KB connection status
   const [isConnected, setIsConnected] = useState(false);
@@ -88,12 +91,6 @@ export default function Home() {
     document.documentElement.classList.toggle('dark', dark);
   }, []);
 
-  // Open context panel by default on large screens only
-  useEffect(() => {
-    if (window.innerWidth >= 1024) {
-      setContextPanelOpen(true);
-    }
-  }, []);
 
   // Toggle theme function
   const toggleTheme = () => {
@@ -222,6 +219,7 @@ export default function Home() {
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen(!sidebarOpen)}
         onToggleContextPanel={() => setContextPanelOpen(!contextPanelOpen)}
+        isContextPanelOpen={contextPanelOpen}
       />
 
       {/* Sidebar - hidden on mobile, shown on desktop */}
@@ -274,6 +272,7 @@ export default function Home() {
           onEditCheckpoint={editCheckpoint}
           onClearError={clearError}
           onToggleContextPanel={() => setContextPanelOpen(!contextPanelOpen)}
+          isContextPanelOpen={contextPanelOpen}
           onToggleMobileSidebar={() => setSidebarOpen(!sidebarOpen)}
           thinkingSteps={thinkingSteps}
         />

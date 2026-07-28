@@ -85,7 +85,7 @@ export function AttentionField() {
 
           // Opacity as attention weight: closer pairs bind more strongly.
           const w = (1 - dist / LINK_DISTANCE) * 0.22;
-          ctx.strokeStyle = `rgba(124, 108, 245, ${w})`;
+          ctx.strokeStyle = `rgba(0, 104, 255, ${w})`;
           ctx.lineWidth = 0.7;
           ctx.beginPath();
           ctx.moveTo(a.x, a.y);
@@ -93,7 +93,7 @@ export function AttentionField() {
           ctx.stroke();
         }
 
-        ctx.fillStyle = 'rgba(160, 148, 255, 0.55)';
+        ctx.fillStyle = 'rgba(61, 148, 255, 0.55)';
         ctx.beginPath();
         ctx.arc(a.x, a.y, a.r, 0, Math.PI * 2);
         ctx.fill();

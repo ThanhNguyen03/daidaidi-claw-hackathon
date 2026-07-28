@@ -20,6 +20,7 @@ import {
   ChevronRight,
   LogOut,
   ShieldCheck,
+  Bot,
 } from 'lucide-react';
 import type { ChatMode, User } from '../lib/types';
 
@@ -51,7 +52,7 @@ interface AgentStatus {
 
 
 const MODES: { id: ChatMode; label: string; icon: React.ReactNode; description: string }[] = [
-  { id: 'chat', label: 'Chat', icon: <MessageCircle size={18} />, description: 'Q&A & advisory' },
+  { id: 'chat', label: 'PreSales', icon: <MessageCircle size={18} />, description: 'Q&A & advisory' },
   { id: 'cs', label: 'Customer Services', icon: <Headphones size={18} />, description: 'Customer Service' },
 ];
 
@@ -165,7 +166,7 @@ export function Sidebar({
   return (
     <aside
       className={`
-        ${sidebarWidth} min-h-screen bg-surface border-r border-border overflow-y-auto
+        ${sidebarWidth} min-h-screen overflow-x-hidden bg-surface border-r border-border overflow-y-auto
         flex flex-col p-4 transition-sidebar sticky top-0 z-40 shrink-0
         ${!isOpen ? 'hidden md:flex' : 'flex'}
       `}
@@ -179,7 +180,9 @@ export function Sidebar({
           </>
         )}
         {isCollapsed && (
-          <div className="text-center text-[18px] font-bold text-accent">S</div>
+          <div className="w-8 h-8 mx-auto rounded-lg bg-accent flex items-center justify-center">
+            <Bot size={18} className="text-white" />
+          </div>
         )}
       </div>
 
@@ -187,9 +190,9 @@ export function Sidebar({
       <button
         onClick={onNewChat}
         className={`
-          flex items-center justify-center gap-2 w-full py-3 bg-accent text-white rounded-lg
+          flex items-center justify-center gap-2 bg-accent text-white rounded-lg
           font-medium text-[12px] mb-6 hover:opacity-90 transition-opacity
-          ${isCollapsed ? 'px-2' : 'px-4'}
+          ${isCollapsed ? 'w-8 h-8 mx-auto' : 'w-full px-4 py-3'}
         `}
       >
         <Plus size={18} />
@@ -209,13 +212,13 @@ export function Sidebar({
               key={mode.id}
               onClick={() => onModeChange(mode.id)}
               className={`
-                flex items-center gap-3 rounded-md py-2.5 cursor-pointer
+                flex items-center gap-3 rounded-md cursor-pointer
                 text-[12px] transition-all duration-150
                 ${currentMode === mode.id
                   ? 'bg-accent-soft text-accent font-medium'
                   : 'text-text hover:bg-surface-hover'
                 }
-                ${isCollapsed ? 'justify-center px-2' : 'px-3 justify-start'}
+                ${isCollapsed ? 'w-8 h-8 mx-auto justify-center' : 'py-2.5 px-3 justify-start'}
               `}
               title={mode.description}
             >
@@ -320,39 +323,59 @@ export function Sidebar({
 
       {/* User Info + Admin/Logout */}
       {currentUser && !isCollapsed && (
-        <div className="px-2 mt-2 mb-2">
-          <div className="sidebar-user-block" title={currentUser.full_name}>
-            <div className="sidebar-user-avatar">
-              {currentUser.full_name?.[0]?.toUpperCase() ?? '?'}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-text truncate">{currentUser.full_name}</p>
-              <p className="text-[10px] text-text-muted truncate">
-                {currentUser.role === 'admin' ? '🛡️ Admin' : currentUser.role === 'account_manager' ? '💼 AM' : '🎯 Sales'}
-              </p>
+        <div className="mt-2 mb-2 flex flex-col gap-2">
+          <div className="flex items-stretch gap-2">
+            <div className="sidebar-user-block flex-1 min-w-0" title={currentUser.full_name}>
+              <div className="sidebar-user-avatar">
+                {currentUser.full_name?.[0]?.toUpperCase() ?? '?'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-text truncate">{currentUser.full_name}</p>
+                <p className="text-[10px] text-text-muted truncate">
+                  {currentUser.role === 'admin' ? '🛡️ Admin' : currentUser.role === 'account_manager' ? '💼 AM' : '🎯 Sales'}
+                </p>
+              </div>
+              {onLogout && (
+                <button
+                  onClick={onLogout}
+                  className="p-2 flex items-center justify-center aspect-square shrink-0 rounded-lg text-text-muted hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                  title="Đăng xuất"
+                >
+                  <LogOut size={16} />
+                </button>
+              )}
             </div>
           </div>
-          <div className="flex gap-1">
-            {currentUser.role === 'admin' && onOpenAdminPanel && (
-              <button
-                onClick={onOpenAdminPanel}
-                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-medium bg-accent/10 hover:bg-accent/20 text-accent transition-colors border border-accent/20"
-                title="Admin Panel"
-              >
-                <ShieldCheck size={11} />
-                Admin Panel
-              </button>
-            )}
-            {onLogout && (
-              <button
-                onClick={onLogout}
-                className="flex items-center justify-center gap-1 p-1.5 rounded-lg text-[11px] text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors border border-border"
-                title="Đăng xuất"
-              >
-                <LogOut size={12} />
-              </button>
-            )}
+          {currentUser.role === 'admin' && onOpenAdminPanel && (
+            <button
+              onClick={onOpenAdminPanel}
+              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-medium bg-accent/10 hover:bg-accent/20 text-accent transition-colors border border-accent/20"
+              title="Admin Panel"
+            >
+              <ShieldCheck size={11} />
+              Admin Panel
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Collapsed user info — just the avatar (as a tooltip identity cue)
+          plus a reachable logout button; the full name/role card and admin
+          shortcut only make sense at full width. */}
+      {currentUser && isCollapsed && (
+        <div className="mt-2 mb-2 flex flex-col items-center gap-2">
+          <div className="sidebar-user-avatar" title={currentUser.full_name}>
+            {currentUser.full_name?.[0]?.toUpperCase() ?? '?'}
           </div>
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              className="flex items-center justify-center w-8 h-8 rounded-lg text-text-muted hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 transition-colors border border-border"
+              title="Đăng xuất"
+            >
+              <LogOut size={16} />
+            </button>
+          )}
         </div>
       )}
 
@@ -366,13 +389,13 @@ export function Sidebar({
       >
         <Database size={14} />
         {!isCollapsed && (
-          <>
+          <div className='flex items-center justify-between w-full'>
+            {isConnected ? 'Backend Ready' : 'Backend Offline'}
             <span
               className={`w-2 h-2 rounded-full ${isConnected ? 'bg-status-completed' : 'bg-status-failed'}`}
               style={{ backgroundColor: isConnected ? 'var(--color-status-completed)' : 'var(--color-status-failed)' }}
             />
-            {isConnected ? 'Backend Ready' : 'Backend Offline'}
-          </>
+          </div>
         )}
       </div>
 
@@ -393,9 +416,9 @@ export function Sidebar({
         <button
           onClick={onToggleTheme}
           className={`
-            flex items-center justify-center gap-2 p-2 rounded-md
+            flex items-center justify-center gap-2 rounded-md
             border border-border text-text-muted hover:bg-surface-hover transition-colors
-            ${isCollapsed ? 'w-full' : 'flex-1'}
+            ${isCollapsed ? 'w-8 h-8 mx-auto' : 'flex-1 h-9'}
           `}
           title={isDarkMode ? 'Switch to Light mode' : 'Switch to Dark mode'}
         >
@@ -403,15 +426,27 @@ export function Sidebar({
           {!isCollapsed && (isDarkMode ? 'Light' : 'Dark')}
         </button>
 
-        {/* Collapse/Expand Toggle - always visible on larger screens when needed */}
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="flex items-center justify-center p-2 rounded-md border border-border text-text-muted hover:bg-surface-hover"
-          title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-        </button>
+        {/* Collapse/Expand Toggle */}
+        {!isCollapsed && (
+          <button
+            onClick={() => setIsCollapsed(true)}
+            className="flex items-center justify-center h-9 w-9 shrink-0 rounded-md border border-border text-text-muted hover:bg-surface-hover"
+            title="Collapse sidebar"
+          >
+            <ChevronLeft size={16} />
+          </button>
+        )}
       </div>
+
+      {isCollapsed && (
+        <button
+          onClick={() => setIsCollapsed(false)}
+          className="flex items-center justify-center w-8 h-8 mx-auto mt-2 rounded-md border border-border text-text-muted hover:bg-surface-hover"
+          title="Expand sidebar"
+        >
+          <ChevronRight size={16} />
+        </button>
+      )}
     </aside>
   );
 }

@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, Mic, MicOff } from 'lucide-react';
+import { Send, Loader2, PanelRightClose, PanelRightOpen, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, Mic, MicOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MessageBubble } from './MessageBubble';
@@ -31,6 +31,7 @@ interface ChatWindowProps {
   onEditCheckpoint: (params: Record<string, unknown>) => void;
   onClearError: () => void;
   onToggleContextPanel?: () => void;
+  isContextPanelOpen?: boolean;
   onToggleMobileSidebar?: () => void;
   thinkingSteps?: ThinkingStep[];
 }
@@ -281,18 +282,18 @@ function CheckpointCard({
             <div
               key={idx}
               className={`
-                p-3 rounded mb-2
-                ${finding.severity === 'block' ? 'bg-red-50 border border-red-200' : ''}
-                ${finding.severity === 'warn' ? 'bg-yellow-50 border border-yellow-200' : ''}
-                ${finding.severity === 'info' ? 'bg-blue-50 border border-blue-200' : ''}
+                p-3 rounded mb-2 border
+                ${finding.severity === 'block' ? 'bg-red-500/10 border-red-500/30' : ''}
+                ${finding.severity === 'warn' ? 'bg-amber-500/10 border-amber-500/30' : ''}
+                ${finding.severity === 'info' ? 'bg-blue-500/10 border-blue-500/30' : ''}
               `}
             >
               <div className="flex items-start gap-2">
                 <span>{finding.severity === 'block' ? '🔴' : finding.severity === 'warn' ? '⚠️' : 'ℹ️'}</span>
                 <div className="flex-1">
-                  <p className="text-[12px] font-medium">{finding.message}</p>
+                  <p className="text-[12px] font-medium text-text">{finding.message}</p>
                   {finding.suggestion && (
-                    <p className="text-xs opacity-80 mt-1">Suggestion: {finding.suggestion}</p>
+                    <p className="text-xs text-text-muted mt-1">Suggestion: {finding.suggestion}</p>
                   )}
                 </div>
               </div>
@@ -388,7 +389,7 @@ function CheckpointCard({
                   disabled={hasBlocking}
                   className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all shadow-sm active:scale-95 ${
                     hasBlocking
-                      ? 'bg-red-500/20 text-red-400 cursor-not-allowed'
+                      ? 'bg-red-500/20 text-red-600 dark:text-red-400 cursor-not-allowed'
                       : 'bg-accent text-white hover:opacity-90'
                   }`}
                 >
@@ -432,6 +433,7 @@ export function ChatWindow({
   onEditCheckpoint,
   onClearError,
   onToggleContextPanel,
+  isContextPanelOpen = false,
   onToggleMobileSidebar,
   thinkingSteps = [],
 }: ChatWindowProps) {
@@ -565,7 +567,7 @@ export function ChatWindow({
   return (
     <div className="flex-1 flex flex-col h-full bg-bg overflow-hidden">
       {/* Header - compact */}
-      <header className="shrink-0 sticky top-0 z-30 px-3 sm:px-4 md:px-6 py-2.5 sm:py-3 bg-surface border-b border-border flex items-center justify-between">
+      <header className="shrink-0 sticky top-0 z-30 h-14 px-3 sm:px-4 md:px-6 bg-surface border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2 sm:gap-3">
           {/* Mobile sidebar toggle */}
           <button
@@ -579,8 +581,8 @@ export function ChatWindow({
           <div className="relative">
             <h2 className="text-sm sm:text-base font-semibold text-text flex items-center gap-1.5 sm:gap-2">
               <span className="text-accent text-base sm:text-lg">💬</span>
-              <span className="hidden sm:inline">Chat</span>
-              <span className="sm:hidden">Chat</span>
+              <span className="hidden sm:inline">PreSales</span>
+              <span className="sm:hidden">PreSales</span>
               <span className="hidden sm:inline">Mode</span>
             </h2>
             {/* Per-mode accent underline */}
@@ -600,9 +602,13 @@ export function ChatWindow({
             <button
               onClick={onToggleContextPanel}
               className="hidden md:flex p-2 border border-border rounded-lg hover:bg-surface-hover transition-all"
-              title="Toggle Context Panel"
+              title={isContextPanelOpen ? 'Close Context Panel' : 'Open Context Panel'}
             >
-              <PanelRightClose size={18} className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+              {isContextPanelOpen ? (
+                <PanelRightClose size={18} className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+              ) : (
+                <PanelRightOpen size={18} className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+              )}
             </button>
           )}
         </div>
@@ -610,8 +616,8 @@ export function ChatWindow({
 
       {/* Error display */}
       {error && (
-        <div className="shrink-0 px-3 md:px-6 py-3 bg-red-50 border-b border-red-200 flex items-center justify-between">
-          <span className="text-red-600 text-[12px]">{error}</span>
+        <div className="shrink-0 px-3 md:px-6 py-3 bg-red-500/10 border-b border-red-500/30 flex items-center justify-between">
+          <span className="text-red-600 dark:text-red-400 text-[12px]">{error}</span>
           <button onClick={onClearError} className="text-text-muted hover:text-text">
             <X size={16} />
           </button>
@@ -759,10 +765,11 @@ export function ChatWindow({
 
       {/* Input area - refined composer */}
       <div className="px-3 sm:px-4 md:px-6 py-2 sm:py-3 bg-bg border-t border-border pb-safe">
-        <div className="flex gap-2 items-end max-w-6xl mx-auto">
-          <div className="flex-1 relative">
+        <div className="flex gap-2 items-center max-w-6xl mx-auto">
+          <div className="flex relative items-center justify-center w-full">
             <textarea
               ref={textareaRef}
+              id='promt'
               value={input}
               onChange={(e) => {
                 setInput(e.target.value);
@@ -783,15 +790,17 @@ export function ChatWindow({
               style={{ lineHeight: '1.5' }}
             />
           </div>
-          {/* Voice input button */}
+          {/* Voice input button — fixed to match the textarea's own
+              min-height exactly, so the row lines up instead of the
+              buttons floating shorter than the input pill. */}
           <button
             type="button"
             onClick={toggleVoice}
             disabled={isLoading}
             title={isRecording ? 'Dừng ghi âm' : 'Nhập bằng giọng nói (tiếng Việt)'}
-            className={`shrink-0 p-2.5 sm:p-3 rounded-2xl transition-all border ${
+            className={`shrink-0 flex items-center justify-center h-11 w-11 sm:h-12 sm:w-12 rounded-2xl transition-all border ${
               isRecording
-                ? 'bg-red-500/10 border-red-500/50 text-red-400 animate-pulse'
+                ? 'bg-red-500/10 border-red-500/50 text-red-600 dark:text-red-400 animate-pulse'
                 : 'bg-surface-2 border-border text-text-muted hover:text-accent hover:border-accent/50'
             } ${isLoading ? 'opacity-40 cursor-not-allowed' : ''}`}
           >
@@ -801,10 +810,10 @@ export function ChatWindow({
             type="button"
             onClick={handleSubmit}
             disabled={!input.trim() || isLoading}
-            className={`shrink-0 p-2.5 sm:p-3 rounded-2xl transition-all ${
+            className={`shrink-0 flex items-center justify-center h-11 w-11 sm:h-12 sm:w-12 rounded-2xl border transition-all ${
               input.trim() && !isLoading
-                ? 'bg-accent text-white hover:opacity-90 active:scale-95'
-                : 'bg-surface-2 text-text-muted cursor-not-allowed'
+                ? 'bg-accent border-accent text-white hover:opacity-90 active:scale-95'
+                : 'bg-surface-2 border-border text-text-muted cursor-not-allowed'
             }`}
           >
             <Send size={16} className="w-4 h-4 sm:w-4.5 sm:h-4.5" />

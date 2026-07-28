@@ -469,7 +469,7 @@ function BriefDocument({ content }: { content: string }) {
         <div
           className="rounded-t-xl px-6 py-4"
           style={{
-            background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
+            background: 'linear-gradient(135deg, #0068ff 0%, #0091ff 100%)',
           }}
         >
           <h2 className="text-white text-lg font-semibold m-0 flex items-center gap-2">
@@ -506,8 +506,8 @@ function BriefDocument({ content }: { content: string }) {
                 <div
                   className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
                   style={{
-                    backgroundColor: 'rgba(79, 70, 229, 0.1)',
-                    color: '#4f46e5',
+                    backgroundColor: 'rgba(0, 104, 255, 0.1)',
+                    color: '#0068ff',
                   }}
                 >
                   {icon}
@@ -950,14 +950,14 @@ function PhoneScreenSection({ specs }: { specs: ScreenSpec[] }) {
             {/* Screen */}
             <div style={{ flex: 1, background: '#f8f8f8', borderRadius: '14px', overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
               {/* App bar */}
-              <div style={{ background: '#F65009', padding: '5px 8px', flexShrink: 0, textAlign: 'center' }}>
+              <div style={{ background: '#0068ff', padding: '5px 8px', flexShrink: 0, textAlign: 'center' }}>
                 <span style={{ color: '#fff', fontSize: '9px', fontWeight: 700, letterSpacing: '0.03em' }}>{spec.appName || 'Mini App'}</span>
               </div>
               {/* Content */}
               <div style={{ flex: 1, overflow: 'hidden', padding: '5px 4px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
                 {spec.items.map((item, ii) => {
                   if (item.type === 'button') return (
-                    <div key={ii} style={{ background: '#F65009', borderRadius: '5px', padding: '5px 6px', textAlign: 'center', color: '#fff', fontSize: '7.5px', fontWeight: 700, margin: '2px 3px', flexShrink: 0 }}>
+                    <div key={ii} style={{ background: '#0068ff', borderRadius: '5px', padding: '5px 6px', textAlign: 'center', color: '#fff', fontSize: '7.5px', fontWeight: 700, margin: '2px 3px', flexShrink: 0 }}>
                       {item.text}
                     </div>
                   );
@@ -1308,7 +1308,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
     <div className={`flex gap-2 sm:gap-3 animate-message-appear ${isGrouped ? 'mt-1' : 'mt-3 sm:mt-4'}`}>
       {/* Avatar */}
       {!isGrouped && (
-        <div className="shrink-0 aspect-square p-2 size-fit rounded-full flex items-center justify-center text-white bg-blue-500">
+        <div className="shrink-0 aspect-square p-2 size-fit rounded-full flex items-center justify-center text-white bg-accent">
           <Bot size={16} className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
         </div>
       )}
@@ -1353,7 +1353,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
               marginTop: '16px',
               padding: '14px 18px',
               borderRadius: '10px',
-              border: '1.5px solid rgba(246,80,9,0.5)',
+              border: '1.5px solid rgba(0,104,255,0.35)',
               background: 'var(--color-surface)',
               display: 'flex',
               alignItems: 'center',
@@ -1375,7 +1375,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
                   gap: '6px',
                   padding: '7px 16px',
                   borderRadius: '6px',
-                  background: '#0F9B8E',
+                  background: '#0068ff',
                   color: '#fff',
                   fontSize: '13px',
                   fontWeight: 600,
@@ -1396,8 +1396,9 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
                   gap: '6px',
                   padding: '7px 16px',
                   borderRadius: '6px',
-                  background: '#F65009',
-                  color: '#fff',
+                  background: 'transparent',
+                  border: '1.5px solid #0068ff',
+                  color: 'var(--color-accent)',
                   fontSize: '13px',
                   fontWeight: 600,
                   textDecoration: 'none',

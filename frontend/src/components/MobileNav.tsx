@@ -6,7 +6,7 @@
  */
 
 import React from 'react';
-import { MessageCircle, Headphones, Plus, Menu, X, PanelRightClose } from 'lucide-react';
+import { MessageCircle, Headphones, Plus, Menu, X, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import type { ChatMode } from '../lib/types';
 
 interface MobileNavProps {
@@ -16,6 +16,7 @@ interface MobileNavProps {
   isOpen: boolean;
   onToggle: () => void;
   onToggleContextPanel?: () => void;
+  isContextPanelOpen?: boolean;
 }
 
 const MODES: { id: ChatMode; icon: React.ReactNode; label: string }[] = [
@@ -30,11 +31,14 @@ export function MobileNav({
   isOpen,
   onToggle,
   onToggleContextPanel,
+  isContextPanelOpen = false,
 }: MobileNavProps) {
   return (
     <>
-      {/* Mobile menu toggle - visible on small screens */}
-      <div className="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-3 py-2.5 bg-surface border-b border-border safe-area-inset-top">
+      {/* Mobile menu toggle - visible on small screens. z-[60] so this bar
+          — the only context-panel control on mobile — stays clickable even
+          while the panel (z-50) is open over it. */}
+      <div className="md:hidden fixed top-0 left-0 right-0 z-[60] flex items-center justify-between px-3 py-2.5 bg-surface border-b border-border safe-area-inset-top">
         <button
           onClick={onToggle}
           className="p-2 -ml-1 border border-transparent hover:border-border hover:bg-surface-hover rounded-lg transition-all"
@@ -47,9 +51,9 @@ export function MobileNav({
             <button
               onClick={onToggleContextPanel}
               className="p-2.5 text-text-muted hover:text-text hover:bg-surface-hover rounded-lg transition-all"
-              title="Context Panel"
+              title={isContextPanelOpen ? 'Close Context Panel' : 'Open Context Panel'}
             >
-              <PanelRightClose size={20} />
+              {isContextPanelOpen ? <PanelRightClose size={20} /> : <PanelRightOpen size={20} />}
             </button>
           )}
           <button

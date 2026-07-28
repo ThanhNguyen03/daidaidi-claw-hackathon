@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from 'react';
-import { ChevronRight, X, RefreshCw, Info, AlertCircle, Download, FileText, GitBranch, Image, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { ChevronRight, X, RefreshCw, Info, AlertCircle, Download, FileText, GitBranch, Image } from 'lucide-react';
 import type { Brief, FeedbackRule as FeedbackRuleType } from '../lib/types';
 
 // Artifact types
@@ -52,49 +52,32 @@ export function ContextPanel({
     setExpandedSections((prev) => ({ ...prev, [section]: !prev[section] }));
   };
 
-  // Toggle button when closed
-  if (!isOpen) {
-    return (
-      <button
-        onClick={onToggle}
-        className="fixed right-0 top-1/2 -translate-y-1/2 bg-accent text-white border-none py-3 sm:py-4 px-1.5 sm:px-2 rounded-l-lg cursor-pointer text-xs font-medium z-50 flex items-center gap-1 shadow-card hover:opacity-90 transition-all"
-        title="Open Context Panel"
-      >
-        <PanelRightOpen size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-        <span className="hidden sm:inline text-[11px] sm:text-xs">Context</span>
-      </button>
-    );
-  }
+  // Opening/closing is driven by the single toggle button in the chat header
+  // (and the mobile top bar) — this panel used to also render its own
+  // floating tab here, which meant two controls did the same job. It stays
+  // mounted at all times now (rather than returning null when closed) so the
+  // slide/width transitions below actually have something to animate.
 
   return (
     <>
       {/* Backdrop for mobile and tablet (below lg) */}
-      <div
-        onClick={onToggle}
-        className="lg:hidden fixed inset-0 bg-black/40 z-40"
-      />
+      {isOpen && (
+        <div
+          onClick={onToggle}
+          className="lg:hidden fixed inset-0 bg-black/40 z-40"
+        />
+      )}
 
-      {/* Drawer panel - overlay on mobile/tablet, in-flow sticky panel on lg+ */}
-      <aside className="
-        bg-surface border-l border-border flex flex-col
-        fixed right-0 top-0 bottom-0 z-50 shrink-0
-        w-80 sm:w-80
-        lg:sticky lg:top-0 lg:bottom-auto lg:h-screen lg:w-80
-        transform transition-transform duration-300 ease-out
-        lg:transform-none
-        pb-20 lg:pb-0
-      ">
-        {/* Header */}
-        <div className="px-4 py-3 sm:py-4 border-b border-border flex items-center justify-between">
+      {/* Drawer panel — slides in as a fixed overlay on mobile/tablet, and
+          widens/narrows in place as a docked column on lg+. Both are
+          animated so open/close always has motion, not a hard cut. */}
+      <aside
+        aria-hidden={!isOpen}
+        className={`bg-surface border-l border-border flex flex-col fixed right-0 top-0 bottom-0 z-50 shrink-0 w-80 transform transition-transform duration-300 ease-out ${isOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none'} lg:translate-x-0 lg:pointer-events-auto lg:sticky lg:top-0 lg:bottom-auto lg:h-screen lg:overflow-hidden lg:transition-[width] lg:duration-300 lg:ease-out ${isOpen ? 'lg:w-80' : 'lg:w-0 lg:border-l-0'} pb-20 lg:pb-0`}>
+        {/* Header — no close button here; the chat header's single toggle
+            (or the backdrop tap on mobile/tablet) closes this panel. */}
+        <div className="h-14 px-4 border-b border-border flex items-center">
           <h3 className="text-sm sm:text-base font-semibold text-text">Context</h3>
-          <button
-            onClick={onToggle}
-            className="flex items-center gap-1.5 bg-transparent border-none cursor-pointer text-text-muted hover:text-text p-1.5 sm:p-0 rounded-lg sm:rounded-none hover:bg-surface-hover sm:bg-transparent transition-all"
-            title="Close Context Panel"
-          >
-            <span className="hidden lg:inline text-[12px]">Close</span>
-            <PanelRightClose size={18} />
-          </button>
         </div>
 
         {/* Content */}
@@ -125,7 +108,7 @@ export function ContextPanel({
                       <div>
                         <span className="text-xs text-text-muted">Budget</span>
                         <p className="text-[12px] text-text">
-                          {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 }).format(brief.budget_vnd)}
+                          {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 }).format(Number(brief.budget_vnd))}
                         </p>
                       </div>
                     )}
@@ -159,7 +142,7 @@ export function ContextPanel({
             </button>
 
             {expandedSections.constraints && (
-              <div className="p-3 bg-red-50 rounded-lg">
+              <div className="p-3 bg-surface-2 rounded-lg">
                 {isLoading ? (
                   <div className="flex items-center gap-2 text-text-muted">
                     <RefreshCw size={14} className="animate-spin" />
@@ -170,12 +153,15 @@ export function ContextPanel({
                     {constraints.map((constraint) => (
                       <div
                         key={constraint.rule_id}
-                        className="flex items-start gap-2 p-2 bg-white rounded border border-red-100"
+                        className={`flex items-start gap-2 p-2 rounded border ${
+                          constraint.type === 'NEGATIVE_CONSTRAINT'
+                            ? 'bg-red-500/10 border-red-500/30'
+                            : 'bg-green-500/10 border-green-500/30'
+                        }`}
                       >
                         <AlertCircle
                           size={16}
-                          className={constraint.type === 'NEGATIVE_CONSTRAINT' ? 'text-red-600' : 'text-green-600'}
-                          style={{ color: constraint.type === 'NEGATIVE_CONSTRAINT' ? '#dc2626' : '#16a34a' }}
+                          className={constraint.type === 'NEGATIVE_CONSTRAINT' ? 'text-red-600 dark:text-red-400 shrink-0' : 'text-green-600 dark:text-green-400 shrink-0'}
                         />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs text-text break-words">{constraint.rule}</p>
@@ -244,30 +230,30 @@ export function ContextPanel({
                   {artifacts.map((artifact) => (
                     <div
                       key={artifact.id}
-                      className="p-3 bg-sky-50 rounded-lg border border-sky-200"
+                      className="p-3 bg-surface-2 rounded-lg border border-border"
                     >
                       <div className="flex items-center gap-2 mb-2">
-                        {artifact.type === 'pptx' && <FileText size={16} className="text-sky-600" />}
-                        {artifact.type === 'userflow' && <GitBranch size={16} className="text-violet-600" />}
-                        {artifact.type === 'wireframe' && <Image size={16} className="text-emerald-600" />}
-                        {artifact.type === 'quote' && <FileText size={16} className="text-red-600" />}
-                        <span className="text-xs font-medium text-sky-900">{artifact.title}</span>
+                        {artifact.type === 'pptx' && <FileText size={16} className="text-accent" />}
+                        {artifact.type === 'userflow' && <GitBranch size={16} className="text-violet-600 dark:text-violet-400" />}
+                        {artifact.type === 'wireframe' && <Image size={16} className="text-emerald-600 dark:text-emerald-400" />}
+                        {artifact.type === 'quote' && <FileText size={16} className="text-red-600 dark:text-red-400" />}
+                        <span className="text-xs font-medium text-text">{artifact.title}</span>
                       </div>
 
                       {artifact.type === 'userflow' && artifact.data && (
-                        <div className="bg-white p-2 rounded text-[10px] font-mono text-gray-600 overflow-hidden text-ellipsis max-h-12 mb-2">
+                        <div className="bg-surface p-2 rounded text-[10px] font-mono text-text-muted overflow-hidden text-ellipsis max-h-12 mb-2">
                           {artifact.data.substring(0, 200)}...
                         </div>
                       )}
 
                       {artifact.preview && (
-                        <p className="text-xs text-sky-700 mb-2">{artifact.preview}</p>
+                        <p className="text-xs text-text-muted mb-2">{artifact.preview}</p>
                       )}
 
                       {onDownloadArtifact && (
                         <button
                           onClick={() => onDownloadArtifact(artifact)}
-                          className="flex items-center gap-1 bg-sky-600 text-white border-none rounded py-1.5 px-3 text-xs cursor-pointer hover:bg-sky-700"
+                          className="flex items-center gap-1 bg-accent text-white border-none rounded py-1.5 px-3 text-xs cursor-pointer hover:opacity-90"
                         >
                           <Download size={12} />
                           Download
