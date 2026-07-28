@@ -382,8 +382,6 @@ export function ChatWindow({
   // Voice input via Web Speech API
   const toggleVoice = useCallback(() => {
     interface SpeechRec { lang: string; continuous: boolean; interimResults: boolean; onstart: (() => void) | null; onresult: ((e: {resultIndex: number; results: Array<{isFinal: boolean; 0: {transcript: string}}>}) => void) | null; onend: (() => void) | null; onerror: (() => void) | null; start: () => void; stop: () => void; }
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore -- SpeechRecognition is not in TS lib but exists in Chrome/Edge
     const SpeechRecognitionAPI: (new () => SpeechRec) | undefined = (window as unknown as {SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec}).SpeechRecognition ?? (window as unknown as {SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec}).webkitSpeechRecognition;
     if (!SpeechRecognitionAPI) {
       alert('Trình duyệt không hỗ trợ nhận giọng nói. Dùng Chrome/Edge nhé!');
