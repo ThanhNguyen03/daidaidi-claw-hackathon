@@ -402,10 +402,36 @@ def _build_solution_checkpoint(state, outputs):
 
     from schemas.state import Checkpoint, CheckpointAction
 
-    def _head(name: str, limit: int = 900) -> str:
+    import re as _re
+
+    def _clean_text(name: str, limit: int = 900) -> str:
         out = outputs.get(name)
         text = getattr(out, "content", "") if out else ""
-        return text[:limit]
+        if not text:
+            return ""
+        # Strip ASCII header lines like === A4 COMPLIANCE REPORT ===
+        cleaned = _re.sub(r'^[-=]{3,}\s*[A-Z0-9_\s—\-]*\s*[-=]*$', '', text, flags=_re.MULTILINE)
+        cleaned = _re.sub(r'^([=]{3,}|-{3,})$', '', cleaned, flags=_re.MULTILINE)
+
+        # For compliance, ensure overall verdict & risk summary come first
+        if name == "compliance":
+            verdict_match = _re.search(r'(OVERALL VERDICT:.*?)(?=\n\n|\n[A-Z]|$)', cleaned, _re.DOTALL | _re.IGNORECASE)
+            risk_match = _re.search(r'(Risk summary:.*?)(?=\n\n|\n[A-Z]|$)', cleaned, _re.DOTALL | _re.IGNORECASE)
+            prefix = ""
+            if verdict_match:
+                prefix += f"**{verdict_match.group(1).strip()}**\n\n"
+            if risk_match and risk_match.group(1) not in prefix:
+                prefix += f"{risk_match.group(1).strip()}\n\n"
+            if prefix:
+                return (prefix + cleaned)[:limit]
+
+        return cleaned.strip()[:limit]
+
+    preview_data = {
+        "compliance": _clean_text("compliance", 600),
+        "strategy": _clean_text("market_strategy", 750),
+        "solution": _clean_text("product_solution", 750),
+    }
 
     return Checkpoint(
         id=f"cp_solution_{_uuid.uuid4().hex[:10]}",
@@ -417,17 +443,9 @@ def _build_solution_checkpoint(state, outputs):
                 "vẫn giữ nguyên."
             ),
             parameters={},
-            preview={
-                "strategy": _head("market_strategy"),
-                "solution": _head("product_solution"),
-                "compliance": _head("compliance", 500),
-            },
+            preview=preview_data,
         ),
-        preview={
-            "strategy": _head("market_strategy"),
-            "solution": _head("product_solution"),
-            "compliance": _head("compliance", 500),
-        },
+        preview=preview_data,
     )
 
 
