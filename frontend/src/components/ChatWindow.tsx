@@ -291,14 +291,14 @@ function CheckpointCard({
             return (
               <div
                 key={key}
-                className={`rounded-xl border ${secInfo.border} ${secInfo.bg} p-3.5 shadow-sm transition-all max-w-full overflow-hidden`}
+                className={`rounded-xl border ${secInfo.border} ${secInfo.bg} p-3.5 shadow-sm transition-all max-w-full`}
               >
                 <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/40">
                   <span className="text-[13px] font-bold text-text flex items-center gap-1.5 truncate">
                     {secInfo.label}
                   </span>
                 </div>
-                <div className="text-xs text-text leading-relaxed prose-sm max-w-full break-words overflow-x-auto dark:prose-invert">
+                <div className="text-sm text-text leading-relaxed max-w-full break-words dark:prose-invert">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanedText}</ReactMarkdown>
                 </div>
               </div>
