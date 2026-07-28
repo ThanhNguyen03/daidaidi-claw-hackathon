@@ -202,7 +202,23 @@ function CheckpointCard({
       return lines.join('\n\n');
     }
 
-    return cleanAndTranslateCheckpointText(String(val));
+    let finalStr = cleanAndTranslateCheckpointText(String(val));
+    // If text still contains raw JSON snippet (e.g. {"skill": ...}), clean it completely
+    if (finalStr.includes('"skill":') || finalStr.includes('"status":')) {
+      finalStr = finalStr.replace(/\{[\s\S]*?\}/g, (match) => {
+        try {
+          const parsed = JSON.parse(match);
+          const parts = [];
+          if (parsed.problem_statement) parts.push(`**Bài toán:** ${parsed.problem_statement}`);
+          if (parsed.confidence_notes) parts.push(`**Ghi chú:** ${parsed.confidence_notes}`);
+          return parts.join('\n\n');
+        } catch {
+          return '';
+        }
+      });
+    }
+
+    return finalStr.trim();
   }
 
   const formatBriefGroups = (groups: Record<string, Array<Record<string, string>>>) => (

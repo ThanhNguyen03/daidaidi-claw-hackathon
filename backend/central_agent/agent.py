@@ -404,19 +404,104 @@ def _build_solution_checkpoint(state, outputs):
 
     import re as _re
 
-    def _clean_text(name: str, limit: int = 900) -> str:
+    import json as _json
+
+    def _clean_text(name: str, limit: int = 600) -> str:
         out = outputs.get(name)
         text = getattr(out, "content", "") if out else ""
         if not text:
             return ""
+
+        # If output is JSON (from skills), extract human readable fields
+        parsed_obj = None
+        raw = text.strip()
+        if raw.startswith("```"):
+            raw = _re.sub(r"^```[a-z]*\n?", "", raw, flags=_re.IGNORECASE)
+            raw = _re.sub(r"\n?```$", "", raw).strip()
+
+        json_match = _re.search(r"\{[\s\S]*\}", raw)
+        if json_match:
+            try:
+                parsed_obj = _json.loads(json_match.group(0))
+            except Exception:
+                parsed_obj = None
+
+        if parsed_obj and isinstance(parsed_obj, dict):
+            lines = []
+            prob = parsed_obj.get("problem_statement")
+            conf = parsed_obj.get("confidence_notes")
+            summ = parsed_obj.get("summary")
+            verd = parsed_obj.get("verdict")
+            gap = parsed_obj.get("gap_analysis")
+
+            if prob:
+                lines.append(f"**Bài toán:** {prob}")
+            if conf:
+                lines.append(f"**Giả định & Lưu ý:** {conf}")
+            if summ:
+                lines.append(f"**Tóm tắt giải pháp:** {summ}")
+            if verd:
+                lines.append(f"**Đánh giá:** {verd}")
+            if isinstance(gap, dict):
+                if gap.get("current_state"):
+                    lines.append(f"**Hiện trạng:** {gap.get('current_state')}")
+                if gap.get("desired_state"):
+                    lines.append(f"**Mục tiêu:** {gap.get('desired_state')}")
+
+            if not lines:
+                for k, v in parsed_obj.items():
+                    if k in ("skill", "status", "agent", "model"):
+                        continue
+                    if isinstance(v, (str, int, float)):
+                        lines.append(f"**{k.replace('_', ' ').title()}:** {v}")
+
+            text = "\n\n".join(lines)
+
         # Strip ASCII header lines like === A4 COMPLIANCE REPORT ===
         cleaned = _re.sub(r'^[-=]{3,}\s*[A-Z0-9_\s—\-]*\s*[-=]*$', '', text, flags=_re.MULTILINE)
         cleaned = _re.sub(r'^([=]{3,}|-{3,})$', '', cleaned, flags=_re.MULTILINE)
 
+        # Translate common English phrases to Vietnamese
+        translations = [
+          (r"OVERALL VERDICT:\s*⚠️?\s*PROCEED WITH CONDITIONS", "📌 Kết luận: ĐƯỢC TRIỂN KHAI CÓ ĐIỀU KIỆN ⚠️"),
+          (r"OVERALL VERDICT:\s*PROCEED", "📌 Kết luận: ĐƯỢC PHÉP TRIỂN KHAI 🟢"),
+          (r"OVERALL VERDICT:\s*BLOCK", "📌 Kết luận: CẦN TẠM DỪNG / CHẶN 🔴"),
+          (r"Risk summary:\s*(\d+)\s*High\s*\|\s*(\d+)\s*Medium\s*\|\s*(\d+)\s*Note", r"📊 Mức độ rủi ro: \1 Cao | \2 Vừa | \3 Lưu ý"),
+          (r"EXPLICIT ASSUMPTIONS", "Giả định triển khai chính"),
+          (r"\(Provisional\s*[\-–—]\s*pending client confirmation\)", "(Tạm thời — chờ xác nhận)"),
+          (r"ASSUMPTIONS STATEMENT", "Giả định triển khai"),
+          (r"RUNNING WITH ASSUMPTIONS", "Giả định thực thi"),
+          (r"A4 COMPLIANCE REPORT", "Báo cáo tuân thủ & Pháp lý"),
+          (r"PROPOSAL:\s*", "Đề xuất: "),
+          (r"SOLUTION ARCHITECTURE & PACKAGE MAPPING", "Kiến trúc giải pháp & Gói dịch vụ"),
+          (r"SPECIFIC REQUIREMENTS:", "Yêu cầu cụ thể:"),
+          (r"CONSTRAINTS:", "Ràng buộc & Hạn chế:"),
+          (r"STRATEGIC DIAGNOSIS", "Chẩn đoán chiến lược"),
+          (r"Campaign Scale:", "Quy mô chiến dịch:"),
+          (r"Database Scale:", "Quy mô cơ sở dữ liệu:"),
+          (r"Database Size:", "Dung lượng dữ liệu:"),
+          (r"Acquisition & Loyalty Mechanic:", "Cơ chế Thu hút & Tích điểm Loyalty:"),
+          (r"Timeline Duration:", "Thời gian chiến dịch:"),
+          (r"Primary Objective:", "Mục tiêu chính:"),
+          (r"Objective:", "Mục tiêu:"),
+          (r"Total Provisional Budget:", "Tổng ngân sách dự kiến:"),
+          (r"Total Budget:", "Tổng ngân sách:"),
+          (r"Timeline:", "Thời gian triển khai:"),
+          (r"Client:", "Khách hàng:"),
+          (r"Industry:", "Ngành hàng:"),
+          (r"Assumptions applied:", "Giả định áp dụng:"),
+          (r"The FMCG beverage brand needs to increase repeat purchase frequency", "Thương hiệu nước giải khát FMCG cần tăng tần suất mua lại"),
+          (r"and build direct consumer data because category switching is high", "và xây dựng dữ liệu khách hàng trực tiếp"),
+          (r"High reliance on traditional trade/modern trade with zero direct consumer data", "Phụ thuộc nhiều vào kênh bán lẻ truyền thống, chưa có dữ liệu khách hàng trực tiếp"),
+          (r"An owned Zalo Mini App loyalty ecosystem", "Hệ sinh thái Zalo Mini App Loyalty riêng"),
+        ]
+        for pat, repl in translations:
+            cleaned = _re.sub(pat, repl, cleaned, flags=_re.IGNORECASE)
+
         # For compliance, ensure overall verdict & risk summary come first
         if name == "compliance":
-            verdict_match = _re.search(r'(OVERALL VERDICT:.*?)(?=\n\n|\n[A-Z]|$)', cleaned, _re.DOTALL | _re.IGNORECASE)
-            risk_match = _re.search(r'(Risk summary:.*?)(?=\n\n|\n[A-Z]|$)', cleaned, _re.DOTALL | _re.IGNORECASE)
+            verdict_match = _re.search(r'(📌 Kết luận:.*?)(?=\n\n|\n[A-Z]|$)', cleaned, _re.DOTALL)
+            risk_match = _re.search(r'(📊 Mức độ rủi ro:.*?)(?=\n\n|\n[A-Z]|$)', cleaned, _re.DOTALL)
             prefix = ""
             if verdict_match:
                 prefix += f"**{verdict_match.group(1).strip()}**\n\n"
@@ -428,9 +513,9 @@ def _build_solution_checkpoint(state, outputs):
         return cleaned.strip()[:limit]
 
     preview_data = {
-        "compliance": _clean_text("compliance", 600),
-        "strategy": _clean_text("market_strategy", 750),
-        "solution": _clean_text("product_solution", 750),
+        "compliance": _clean_text("compliance", 500),
+        "strategy": _clean_text("market_strategy", 500),
+        "solution": _clean_text("product_solution", 500),
     }
 
     return Checkpoint(
