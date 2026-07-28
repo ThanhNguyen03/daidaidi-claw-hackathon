@@ -121,6 +121,8 @@ function CheckpointCard({
       .replace(/OVERALL VERDICT:\s*PROCEED/gi, '📌 Kết luận: ĐƯỢC PHÉP TRIỂN KHAI 🟢')
       .replace(/OVERALL VERDICT:\s*BLOCK/gi, '📌 Kết luận: CẦN TẠM DỪNG / CHẶN 🔴')
       .replace(/Risk summary:\s*(\d+)\s*High\s*\|\s*(\d+)\s*Medium\s*\|\s*(\d+)\s*Note/gi, '📊 Mức độ rủi ro: $1 Cao | $2 Vừa | $3 Lưu ý')
+      .replace(/EXPLICIT ASSUMPTIONS/gi, 'Giả định triển khai chính')
+      .replace(/\(Provisional\s*[\-–—]\s*pending client confirmation\)/gi, '(Tạm thời — chờ khách hàng xác nhận)')
       .replace(/ASSUMPTIONS STATEMENT/gi, 'Giả định triển khai')
       .replace(/RUNNING WITH ASSUMPTIONS/gi, 'Giả định thực thi')
       .replace(/A4 COMPLIANCE REPORT/gi, 'Báo cáo tuân thủ & Pháp lý')
@@ -130,13 +132,20 @@ function CheckpointCard({
       .replace(/CONSTRAINTS:/gi, 'Ràng buộc & Hạn chế:')
       .replace(/STRATEGIC DIAGNOSIS/gi, 'Chẩn đoán chiến lược')
       .replace(/Campaign Scale:/gi, 'Quy mô chiến dịch:')
+      .replace(/Database Scale:/gi, 'Quy mô cơ sở dữ liệu:')
       .replace(/Database Size:/gi, 'Dung lượng dữ liệu:')
+      .replace(/Acquisition & Loyalty Mechanic:/gi, 'Cơ chế Thu hút & Tích điểm Loyalty:')
+      .replace(/Timeline Duration:/gi, 'Thời gian chiến dịch:')
       .replace(/Primary Objective:/gi, 'Mục tiêu chính:')
+      .replace(/Objective:/gi, 'Mục tiêu:')
+      .replace(/Total Provisional Budget:/gi, 'Tổng ngân sách dự kiến:')
       .replace(/Total Budget:/gi, 'Tổng ngân sách:')
       .replace(/Timeline:/gi, 'Thời gian triển khai:')
       .replace(/Client:/gi, 'Khách hàng:')
       .replace(/Industry:/gi, 'Ngành hàng:')
-      .replace(/Assumption (\d+)/gi, 'Giả định $1');
+      .replace(/Assumption (\d+)/gi, 'Giả định $1')
+      .replace(/Assumptions made:/gi, 'Giả định được đưa ra:')
+      .replace(/High reliance on mass media/gi, 'Phụ thuộc lớn vào truyền thông đại chúng');
 
     return s.trim();
   }
@@ -148,27 +157,36 @@ function CheckpointCard({
 
     if (typeof val === 'object' && val !== null) {
       obj = val as Record<string, unknown>;
-    } else if (typeof val === 'string' && val.trim().startsWith('{') && val.trim().endsWith('}')) {
-      try {
-        obj = JSON.parse(val.trim());
-      } catch {
-        obj = null;
+    } else if (typeof val === 'string') {
+      let rawStr = val.trim();
+      // Strip markdown code fences if present e.g. ```json { ... } ```
+      if (rawStr.startsWith('```')) {
+        rawStr = rawStr.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+      }
+      // If contains a JSON object pattern
+      const jsonMatch = rawStr.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          obj = JSON.parse(jsonMatch[0]);
+        } catch {
+          obj = null;
+        }
       }
     }
 
     if (obj) {
       const lines: string[] = [];
       // Extract key fields into friendly format
-      if (obj.problem_statement) lines.push(`**Mục tiêu bài toán:** ${obj.problem_statement}`);
-      if (obj.confidence_notes) lines.push(`**Ghi chú giả định:** ${obj.confidence_notes}`);
-      if (obj.summary) lines.push(`**Tóm tắt:** ${obj.summary}`);
-      if (obj.verdict) lines.push(`**Kết luận:** ${obj.verdict}`);
+      if (obj.problem_statement) lines.push(`**Mục tiêu bài toán:** ${cleanAndTranslateCheckpointText(String(obj.problem_statement))}`);
+      if (obj.confidence_notes) lines.push(`**Ghi chú giả định:** ${cleanAndTranslateCheckpointText(String(obj.confidence_notes))}`);
+      if (obj.summary) lines.push(`**Tóm tắt:** ${cleanAndTranslateCheckpointText(String(obj.summary))}`);
+      if (obj.verdict) lines.push(`**Kết luận:** ${cleanAndTranslateCheckpointText(String(obj.verdict))}`);
 
       // Handle gap analysis if present
       if (obj.gap_analysis && typeof obj.gap_analysis === 'object') {
         const gap = obj.gap_analysis as Record<string, unknown>;
-        if (gap.current_state) lines.push(`**Hiện trạng:** ${gap.current_state}`);
-        if (gap.desired_state) lines.push(`**Mục tiêu hướng tới:** ${gap.desired_state}`);
+        if (gap.current_state) lines.push(`**Hiện trạng:** ${cleanAndTranslateCheckpointText(String(gap.current_state))}`);
+        if (gap.desired_state) lines.push(`**Mục tiêu hướng tới:** ${cleanAndTranslateCheckpointText(String(gap.desired_state))}`);
       }
 
       // Fallback for other keys if no standard field matched
@@ -177,11 +195,11 @@ function CheckpointCard({
           if (['skill', 'status', 'agent', 'model'].includes(k)) return; // Skip internal dev fields
           const label = k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
           const displayVal = typeof v === 'object' ? JSON.stringify(v) : String(v);
-          lines.push(`**${label}:** ${displayVal}`);
+          lines.push(`**${label}:** ${cleanAndTranslateCheckpointText(displayVal)}`);
         });
       }
 
-      return cleanAndTranslateCheckpointText(lines.join('\n\n'));
+      return lines.join('\n\n');
     }
 
     return cleanAndTranslateCheckpointText(String(val));
