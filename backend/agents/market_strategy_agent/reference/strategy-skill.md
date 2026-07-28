@@ -1,4 +1,4 @@
-﻿---
+---
 name: strategy-skill
 description: >
   Strategy & Marketing skill for Adtima's proposal system.
@@ -180,6 +180,7 @@ If `adtimabox-case-studies` returns no match, set `"alias": "no_match"` with a n
 ## Output Format
 
 Return a single JSON object. This is machine-readable output for other agents — completeness and valid JSON are required.
+**CRITICAL LANGUAGE MANDATE:** All string values inside the JSON MUST be written entirely in Vietnamese (Tiếng Việt). Do NOT write English sentences. (Exceptions: "skill", "status", and "industry" enum values, and technical terms like Zalo OA, Mini App).
 
 ```json
 {
