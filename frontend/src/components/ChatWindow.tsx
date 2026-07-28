@@ -783,13 +783,15 @@ export function ChatWindow({
           isThinking ||
           (messages.length > 0 && messages[messages.length - 1].role === 'user')
         ) && (
-          <div className="flex gap-3 mt-4">
-            <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-accent">
+          <div className="flex gap-3 mt-4 animate-fade-in-up">
+            <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-accent animate-pulse-glow glow-border">
               <Bot size={16} className="text-white" />
             </div>
-            <div className="flex items-center gap-2 text-text-muted bg-surface border border-border rounded-xl px-3 py-2">
-              <Loader2 size={14} className="animate-spin" />
-              <span className="text-[12px]">{isThinking ? 'Reasoning...' : 'Thinking...'}</span>
+            <div className="flex items-center gap-2 text-text-muted glass-panel border border-border rounded-xl px-4 py-2" style={{boxShadow: '0 4px 10px rgba(0,0,0,0.1)'}}>
+              <Loader2 size={14} className="animate-spin text-accent" />
+              <span className="text-[12px] font-medium bg-clip-text text-transparent bg-gradient-to-r from-accent to-[#38bdf8] animate-pulse">
+                {isThinking ? 'Analyzing data...' : 'Processing...'}
+              </span>
             </div>
           </div>
         )}

@@ -168,7 +168,7 @@ export function Sidebar({
   return (
     <aside
       className={`
-        ${sidebarWidth} min-h-screen bg-surface border-r border-border overflow-y-auto
+        ${sidebarWidth} min-h-screen glass-panel border-r border-border overflow-y-auto
         flex flex-col p-4 transition-sidebar sticky top-0 z-40 shrink-0
         ${!isOpen ? 'hidden md:flex' : 'flex'}
       `}
@@ -177,7 +177,7 @@ export function Sidebar({
       <div className="mb-6">
         {!isCollapsed && (
           <>
-            <h1 className="text-[18px] font-bold text-text">AdtimaBox Sales Agent</h1>
+            <h1 className="text-[18px] font-bold text-gradient-tech">AdtimaBox Sales Agent</h1>
             <p className="text-xs text-text-muted">Multi-Agent Assistant</p>
           </>
         )}

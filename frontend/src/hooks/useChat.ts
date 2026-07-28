@@ -276,9 +276,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         : JSON.stringify({ message, session_id: sessionId, salesperson_id: salespersonId, mode, brief, resume });
 
       try {
+        const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+        const fetchHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) fetchHeaders['Authorization'] = `Bearer ${token}`;
+
         response = await fetch(`${BACKEND_URL}${isCs ? '/cs/chat/stream' : '/chat/stream'}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: fetchHeaders,
           body: requestBody,
           signal: controller.signal,
         });

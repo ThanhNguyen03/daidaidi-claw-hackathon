@@ -76,7 +76,7 @@ export function ContextPanel({
 
       {/* Drawer panel - overlay on mobile/tablet, in-flow sticky panel on lg+ */}
       <aside className="
-        bg-surface border-l border-border flex flex-col
+        glass-panel border-l border-border flex flex-col
         fixed right-0 top-0 bottom-0 z-50 shrink-0
         w-80 sm:w-80
         lg:sticky lg:top-0 lg:bottom-auto lg:h-screen lg:w-80
@@ -86,7 +86,7 @@ export function ContextPanel({
       ">
         {/* Header */}
         <div className="px-4 py-3 sm:py-4 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm sm:text-base font-semibold text-text">Context</h3>
+          <h3 className="text-sm sm:text-base font-semibold text-gradient-tech">Context</h3>
           <button
             onClick={onToggle}
             className="flex items-center gap-1.5 bg-transparent border-none cursor-pointer text-text-muted hover:text-text p-1.5 sm:p-0 rounded-lg sm:rounded-none hover:bg-surface-hover sm:bg-transparent transition-all"
