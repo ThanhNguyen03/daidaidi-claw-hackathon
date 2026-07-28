@@ -497,7 +497,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           // Stream complete
           break;
 
-        case 'session':
         case 'session_updated':
           // Session state updated — sync brief and persist session id
           if (data.session_id) {
@@ -531,6 +530,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           {
             const questionCardData = data.questions as Question[];
             if (questionCardData) {
+              setIsLoading(false); // pause loading UI while waiting for user answers
               setIsThinking(false);
               setPendingQuestions(questionCardData);
             }
@@ -543,6 +543,8 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           {
             const checkpoint = data.checkpoint as Checkpoint;
             if (checkpoint) {
+              setIsLoading(false); // pause loading UI while waiting for user approval
+              setIsThinking(false);
               setActiveCheckpoint(checkpoint);
             }
           }
