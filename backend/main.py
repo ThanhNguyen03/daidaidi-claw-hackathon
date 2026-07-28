@@ -1512,12 +1512,18 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 user_payload = _get_current_user(auth_header)
                 uid = user_payload["user_id"] if user_payload else None
                 first_msg = state.messages[0]["content"] if state.messages else payload.message[:50]
-                title = state.brief.brand_name or state.brief.industry or first_msg[:50]
+                # Guard against state.brief being None on the very first message
+                _brief = state.brief
+                title = (
+                    (getattr(_brief, "brand_name", None) or getattr(_brief, "industry", None) or first_msg[:50])
+                    if _brief else first_msg[:50]
+                )
+                brief_data = _brief_to_dict(_brief) if _brief else {}
                 db_save_session(
                     session_id=state.session_id,
                     user_id=uid,
                     title=title,
-                    brief_data=_brief_to_dict(state.brief),
+                    brief_data=brief_data,
                     messages_data=state.messages,
                     constraints_data=[c.to_dict() if hasattr(c, "to_dict") else c for c in state.constraints],
                 )
@@ -1680,12 +1686,18 @@ async def chat_stream(request: Request, payload: ChatRequest):
                 user_payload = _get_current_user(auth_header)
                 uid = user_payload["user_id"] if user_payload else None
                 first_msg = state.messages[0]["content"] if state.messages else "Hội thoại mới"
-                title = state.brief.brand_name or state.brief.industry or first_msg[:50]
+                # Guard against state.brief being None
+                _brief2 = state.brief
+                title2 = (
+                    (getattr(_brief2, "brand_name", None) or getattr(_brief2, "industry", None) or first_msg[:50])
+                    if _brief2 else first_msg[:50]
+                )
+                brief_data2 = _brief_to_dict(_brief2) if _brief2 else {}
                 db_save_session(
                     session_id=state.session_id,
                     user_id=uid,
-                    title=title,
-                    brief_data=_brief_to_dict(state.brief),
+                    title=title2,
+                    brief_data=brief_data2,
                     messages_data=state.messages,
                     constraints_data=[c.to_dict() if hasattr(c, "to_dict") else c for c in state.constraints],
                 )
