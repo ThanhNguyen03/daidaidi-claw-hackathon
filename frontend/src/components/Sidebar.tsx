@@ -5,7 +5,7 @@
  * Uses Tailwind CSS for styling.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   MessageCircle,
   Headphones,
@@ -38,6 +38,7 @@ interface SidebarProps {
   currentUser?: User | null;
   onLogout?: () => void;
   onOpenAdminPanel?: () => void;
+  onLoadSession?: (sessionId: string) => void;
 }
 
 interface AgentStatus {
@@ -120,8 +121,34 @@ export function Sidebar({
   currentUser,
   onLogout,
   onOpenAdminPanel,
+  onLoadSession,
 }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [sessions, setSessions] = useState<Array<{ session_id: string; title: string; updated_at: string }>>([]); 
+
+  // Fetch session history when user is logged in
+  useEffect(() => {
+    if (!currentUser) return;
+    const token = localStorage.getItem('auth_token');
+    if (!token) return;
+    const fetchSessions = async () => {
+      try {
+        const apiBase = process.env.NEXT_PUBLIC_API_URL ||
+          (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+            ? '' : 'http://localhost:8000');
+        const res = await fetch(`${apiBase}/api/user/sessions`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSessions(data.sessions || []);
+        }
+      } catch { /* ignore */ }
+    };
+    fetchSessions();
+    const interval = setInterval(fetchSessions, 30000);
+    return () => clearInterval(interval);
+  }, [currentUser]);
 
   const displayAgents = currentMode === 'cs' ? CS_AGENTS : SALE_AGENTS;
 
@@ -265,6 +292,28 @@ export function Sidebar({
           })}
         </div>
       </div>
+
+      {/* Session History */}
+      {!isCollapsed && sessions.length > 0 && (
+        <div className="mt-3">
+          <p className="text-[10px] uppercase tracking-widest text-text-muted font-semibold px-1 mb-1.5">
+            Lịch sử
+          </p>
+          <div className="flex flex-col gap-0.5 max-h-40 overflow-y-auto">
+            {sessions.slice(0, 10).map((s) => (
+              <button
+                key={s.session_id}
+                onClick={() => onLoadSession?.(s.session_id)}
+                title={s.title}
+                className="w-full text-left px-2 py-1.5 rounded-md text-[11px] text-text-muted hover:bg-surface-hover hover:text-text transition-colors flex items-center gap-1.5"
+              >
+                <Clock size={10} className="shrink-0 opacity-50" />
+                <span className="truncate flex-1">{s.title}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Spacer */}
       <div className="flex-1" />

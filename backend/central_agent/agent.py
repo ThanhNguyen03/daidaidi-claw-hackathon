@@ -1,4 +1,4 @@
-﻿"""
+"""
 Central Agent
 =============
 Single entry point that:
@@ -1629,7 +1629,55 @@ class CentralAgent:
                 "role": "assistant", "content": content,
                 "agent": "central_agent", "timestamp": datetime.now().isoformat(),
             })
+            # ── AI Deal Score ────────────────────────────────────────────────
+            try:
+                brief = state.brief or {}
+                score_prompt = (
+                    f"Dựa trên proposal sau, chấm điểm khả năng chốt deal (0-100) theo 4 tiêu chí. "
+                    f"Trả lời ĐÚNG format JSON sau, không giải thích thêm:\n"
+                    f"{{\"score\":80,\"budget_fit\":85,\"timeline\":75,\"compliance\":90,\"risk\":\"Low\","
+                    f"\"action\":\"Gửi ngay và follow-up sau 2 ngày\","
+                    f"\"strength\":\"Ngân sách phù hợp, giải pháp đúng pain point\","
+                    f"\"risk_note\":\"Cần xác nhận thời gian triển khai với khách\"}}\n\n"
+                    f"Brief: {brief.get('industry','')}, Budget: {brief.get('budget','')}, "
+                    f"Goal: {brief.get('goal','')}\n\nProposal (200 từ đầu):\n{content[:600]}"
+                )
+                llm = get_llm_client()
+                score_resp = await llm.async_create_completion(
+                    messages=[{"role": "user", "content": score_prompt}],
+                    max_tokens=250,
+                )
+                score_raw = score_resp.choices[0].message.content or ""
+                import re as _re, json as _json
+                m = _re.search(r'\{.*\}', score_raw, _re.DOTALL)
+                if m:
+                    sc = _json.loads(m.group())
+                    score_val = min(100, max(0, int(sc.get("score", 0))))
+                    risk = sc.get("risk", "Medium")
+                    action = sc.get("action", "")
+                    strength = sc.get("strength", "")
+                    risk_note = sc.get("risk_note", "")
+                    if score_val >= 75: emoji = "🟢"
+                    elif score_val >= 50: emoji = "🟡"
+                    else: emoji = "🔴"
+                    score_block = (
+                        f"\n\n---\n"
+                        f"## 🎯 AI Deal Score\n"
+                        f"**{emoji} {score_val}/100** &nbsp;|&nbsp; Risk: **{risk}** "
+                        f"&nbsp;|&nbsp; Budget Fit: {sc.get('budget_fit',0)}% "
+                        f"&nbsp;|&nbsp; Timeline: {sc.get('timeline',0)}%\n\n"
+                        f"**💪 Điểm mạnh:** {strength}\n\n"
+                        f"**⚠️ Lưu ý:** {risk_note}\n\n"
+                        f"**→ Khuyến nghị hành động:** {action}"
+                    )
+                    yield {"type": "content", "content": score_block}
+                    state.messages[-1]["content"] += score_block
+            except Exception:
+                pass  # Deal score is non-critical — never block the response
+            # ─────────────────────────────────────────────────────────────────
             return
+
+
 
         outputs_block = "\n\n".join(
             f"### {name}\n{out.content}"

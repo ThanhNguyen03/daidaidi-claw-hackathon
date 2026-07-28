@@ -5,8 +5,8 @@
  * Uses Tailwind CSS for styling.
  */
 
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, Mic, MicOff } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
 import { QuestionCard } from './QuestionCard';
 import { ThinkingTrace } from './ThinkingTrace';
@@ -373,10 +373,55 @@ export function ChatWindow({
 }: ChatWindowProps) {
   const [input, setInput] = useState('');
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  // Track whether user is at the bottom so we only auto-scroll when appropriate
+
+  // Voice input via Web Speech API
+  const toggleVoice = useCallback(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    const SpeechRecognitionAPI = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SpeechRecognitionAPI) {
+      alert('Trình duyệt không hỗ trợ nhận giọng nói. Dùng Chrome/Edge nhé!');
+      return;
+    }
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+    const recognition = new SpeechRecognitionAPI();
+    recognition.lang = 'vi-VN';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    let finalTranscript = '';
+    recognition.onstart = () => setIsRecording(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (e: any) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalTranscript += t;
+        else interim = t;
+      }
+      setInput((prev) => (prev.trim() ? prev + ' ' : '') + finalTranscript + interim);
+    };
+    recognition.onend = () => {
+      setIsRecording(false);
+      recognitionRef.current = null;
+      textareaRef.current?.focus();
+    };
+    recognition.onerror = () => { setIsRecording(false); recognitionRef.current = null; };
+    recognitionRef.current = recognition;
+    recognition.start();
+  }, [isRecording]);
+
+  // Stop recording on unmount
+  useEffect(() => () => { recognitionRef.current?.stop(); }, []);
   const isAtBottomRef = useRef(true);
 
   // Streaming rewrites the last message on every token, so this effect fires dozens
@@ -677,6 +722,20 @@ export function ChatWindow({
               style={{ lineHeight: '1.5' }}
             />
           </div>
+          {/* Voice input button */}
+          <button
+            type="button"
+            onClick={toggleVoice}
+            disabled={isLoading}
+            title={isRecording ? 'Dừng ghi âm' : 'Nhập bằng giọng nói (tiếng Việt)'}
+            className={`shrink-0 p-2.5 sm:p-3 rounded-2xl transition-all border ${
+              isRecording
+                ? 'bg-red-500/10 border-red-500/50 text-red-400 animate-pulse'
+                : 'bg-surface-2 border-border text-text-muted hover:text-accent hover:border-accent/50'
+            } ${isLoading ? 'opacity-40 cursor-not-allowed' : ''}`}
+          >
+            {isRecording ? <MicOff size={16} /> : <Mic size={16} />}
+          </button>
           <button
             type="button"
             onClick={handleSubmit}
