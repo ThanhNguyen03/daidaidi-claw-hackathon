@@ -729,6 +729,19 @@ class CentralAgent:
         intent = self._resolve_intent(assessment, message)
         print(f"[intent] {intent}")
 
+        # Thinking trace: intent classification
+        _INTENT_LABELS = {
+            "lookup": "Tra cứu thông tin sản phẩm",
+            "coaching": "Luyện tập / phản biện",
+            "brief": "Phân tích brief khách hàng",
+            "casual": "Trò chuyện thông thường",
+        }
+        yield {
+            "type": "thinking_trace",
+            "step": "intent",
+            "content": f"Phân loại yêu cầu: {_INTENT_LABELS.get(intent, intent)}",
+        }
+
         verdict = gate.evaluate(
             brief=state.brief,
             message=message,
@@ -736,6 +749,36 @@ class CentralAgent:
             history=state.messages,
         )
         print(verdict.log_line())
+
+        # Thinking trace: gate evaluation
+        _GATE_LABELS = {
+            "CHAN_HOI_LAI": "Chưa đủ thông tin — cần hỏi thêm",
+            "CHAY_CO_PHONG_DOAN": "Chạy với giả định (thiếu một số trường)",
+            "CHAY_DAY_DU": "Đủ thông tin — sẵn sàng phân tích",
+        }
+        _gate_detail = _GATE_LABELS.get(verdict.state.value, verdict.state.value)
+        if verdict.missing:
+            _missing_names = ", ".join(m.field for m in verdict.missing)
+            _gate_detail += f" (thiếu: {_missing_names})"
+        yield {
+            "type": "thinking_trace",
+            "step": "gate",
+            "content": _gate_detail,
+        }
+
+        # Thinking trace: brief status details
+        if state.brief:
+            _brief_details = []
+            if state.brief.industry: _brief_details.append(f"Ngành: {state.brief.industry}")
+            if state.brief.budget_vnd: _brief_details.append(f"Ngân sách: {state.brief.budget_vnd:,} VNĐ")
+            if state.brief.goal: _brief_details.append(f"Mục tiêu: {state.brief.goal}")
+            if state.brief.timeline: _brief_details.append(f"Thời gian: {state.brief.timeline}")
+            if _brief_details:
+                yield {
+                    "type": "thinking_trace",
+                    "step": "brief_extract",
+                    "content": f"Thông tin brief ghi nhận: {', '.join(_brief_details)}",
+                }
 
         # Step 2c: the model provider is down. Say so. Every skill uses the same
         # client, so nothing useful can happen this turn, and dressing the outage up
@@ -897,6 +940,19 @@ class CentralAgent:
         # read again for the product agent, and the §14 log can account for the total.
         ledger = RequestLedger(request_id=f"{state.session_id}:{len(state.messages)}")
 
+        # Thinking trace: skill plan
+        _plan_skills = [
+            s.get("skill", "?")
+            for group in skill_plan
+            for s in group
+        ]
+        if _plan_skills:
+            yield {
+                "type": "thinking_trace",
+                "step": "plan",
+                "content": f"Kế hoạch thực thi: {', '.join(_plan_skills)}",
+            }
+
         # When the gate let this run on assumptions, every skill is told what is being
         # assumed so the output declares it rather than passing a guess off as fact.
         assumption_note = gate.assumption_notice(verdict)
@@ -992,7 +1048,13 @@ class CentralAgent:
                     asyncio.wait_for(skill.execute(ctx), timeout=_SKILL_TIMEOUT_S)
                 )
                 tasks[t] = skill_name
-                yield {"type": "agent_status", "agent": skill_name, "status": "thinking"}
+                yield {"type": "agent_status", "agent": skill_name, "status": "thinking", "task": task_desc[:200]}
+                yield {
+                    "type": "thinking_trace",
+                    "step": "skill_start",
+                    "agent": skill_name,
+                    "content": f"Khởi chạy agent {skill_name}: {task_desc[:120]}",
+                }
 
             if not tasks:
                 continue
@@ -1025,12 +1087,24 @@ class CentralAgent:
                         if out.status == "COMPLETE":
                             yield {"type": "agent_status", "agent": skill_name,
                                    "status": "completed", "model": model_used}
+                            yield {
+                                "type": "thinking_trace",
+                                "step": "skill_done",
+                                "agent": skill_name,
+                                "content": f"Agent {skill_name} hoàn tất: {(out.summary or 'Đã xử lý xong')[:150]}",
+                            }
                         else:
                             print(f"[CentralAgent] {skill_name} returned {out.status}: "
                                   f"{(out.summary or '')[:120]}")
                             yield {"type": "agent_status", "agent": skill_name,
                                    "status": "failed", "message": out.summary,
                                    "model": model_used}
+                            yield {
+                                "type": "thinking_trace",
+                                "step": "skill_failed",
+                                "agent": skill_name,
+                                "content": f"Agent {skill_name} thất bại: {(out.summary or 'Lỗi không xác định')[:120]}",
+                            }
                     except asyncio.TimeoutError:
                         print(f"[CentralAgent] Skill {skill_name} timed out after {_SKILL_TIMEOUT_S}s")
                         yield {"type": "agent_status", "agent": skill_name, "status": "failed",
@@ -1151,6 +1225,11 @@ class CentralAgent:
 
         # Step 4: Synthesize final response
         if all_outputs:
+            yield {
+                "type": "thinking_trace",
+                "step": "synthesis",
+                "content": f"Tổng hợp thông tin từ {len(all_outputs)} agent(s) để tạo câu trả lời...",
+            }
             async for event in self._synthesize(state, message, all_outputs, prior_skill_names):
                 yield event
         else:
@@ -1230,6 +1309,19 @@ class CentralAgent:
         # template alone.
         if _CENTRAL_SKILL:
             system_prompt = f"{_CENTRAL_SKILL}\n\n---\n\n{system_prompt}"
+
+        # Inject Admin-configured Org Rules (learning from Admin Panel)
+        try:
+            from database import get_active_rules
+            rules = get_active_rules(scope="all")
+            if rules:
+                rules_block = "\n".join(f"- {r}" for r in rules)
+                system_prompt = (
+                    f"{system_prompt}\n\n"
+                    f"## Quy tắc tổ chức bắt buộc tuân thủ\n{rules_block}"
+                )
+        except Exception:
+            pass  # DB not available yet — non-fatal
 
         brief_block = self._format_brief(state.brief)
         history_block = self._format_history(state.messages[-_RECENT_HISTORY_WINDOW:])
@@ -1743,6 +1835,16 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                 "Respond directly to the Current Request. Be thorough on the specific topics asked. "
                 "Do not repeat what was already covered in the previous response."
             )
+
+        # Inject Admin-configured Org Rules into synthesis too
+        try:
+            from database import get_active_rules
+            syn_rules = get_active_rules(scope="all")
+            if syn_rules:
+                rules_block = "\n".join(f"- {r}" for r in syn_rules)
+                system = f"{system}\n\n## Quy tắc tổ chức bắt buộc tuân thủ\n{rules_block}"
+        except Exception:
+            pass
 
         client = get_llm_client("central_agent")
         loop = asyncio.get_running_loop()

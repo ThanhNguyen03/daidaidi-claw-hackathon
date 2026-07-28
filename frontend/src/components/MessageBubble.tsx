@@ -7,10 +7,11 @@
 
 import React, { useMemo, useRef, useEffect, useState } from 'react';
 import type { Message } from '../lib/types';
-import { Bot, User, Sparkles, FileText, Users, Target, Clock, TrendingUp } from 'lucide-react';
+import { Bot, User, Sparkles, FileText, Users, Target, Clock, TrendingUp, ZoomIn, ZoomOut } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { tryRenderAsciiChart, wrapAsciiBoxes } from './AsciiChartRenderer';
+import { ImageLightbox } from './ImageLightbox';
 
 // Mermaid diagram renderer — dynamically imports mermaid to avoid SSR issues
 let _mermaidIdCounter = 0;
@@ -217,16 +218,10 @@ function MermaidDiagram({ chart, isStreaming = false }: { chart: string; isStrea
   const containerRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(`mermaid-diag-${++_mermaidIdCounter}`);
   const isDarkMode = useDarkMode();
-  // Height of the last successful render, held while a re-render is in flight so
-  // the container does not collapse and shove everything below it upward.
   const lastHeight = useRef<number>(0);
+  const [isZoomed, setIsZoomed] = useState(false);
 
   useEffect(() => {
-    // A diagram half-written is not a diagram. While tokens are still arriving
-    // `chart` changes on every one of them, so this effect re-ran per token and
-    // swapped in a differently-sized SVG each time — every swap moved the content
-    // below it, which is the jump people see when scrolling a long answer.
-    // Wait for the message to finish, then render once.
     if (isStreaming) return;
 
     let cancelled = false;
@@ -265,7 +260,6 @@ function MermaidDiagram({ chart, isStreaming = false }: { chart: string; isStrea
           } : {}),
         });
 
-        // Parse first so we can distinguish syntax problems from render/runtime problems.
         await mermaid.parse(cleaned);
 
         const { svg } = await mermaid.render(idRef.current, cleaned);
@@ -276,16 +270,13 @@ function MermaidDiagram({ chart, isStreaming = false }: { chart: string; isStrea
             svgEl.style.background = 'transparent';
             const isGantt = cleaned.trim().toLowerCase().startsWith('gantt');
             if (isGantt) {
-              // Gantt charts need full width to be readable
               svgEl.style.width = '100%';
               svgEl.style.height = 'auto';
               svgEl.style.maxWidth = 'none';
             } else {
-              // Flowcharts/sequence diagrams: cap at 78% width so diagram doesn't
-              // dwarf the surrounding text
               svgEl.removeAttribute('width');
               svgEl.removeAttribute('height');
-              svgEl.style.maxWidth = '78%';
+              svgEl.style.maxWidth = '85%';
               svgEl.style.height = 'auto';
               svgEl.style.display = 'block';
               svgEl.style.margin = '0 auto';
@@ -310,7 +301,6 @@ function MermaidDiagram({ chart, isStreaming = false }: { chart: string; isStrea
   }, [chart, isDarkMode, isStreaming]);
 
   if (isStreaming) {
-    // Same box the finished diagram will occupy, so nothing shifts when it lands.
     return (
       <div
         className="mermaid-diagram my-4 flex items-center justify-center"
@@ -327,11 +317,27 @@ function MermaidDiagram({ chart, isStreaming = false }: { chart: string; isStrea
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="mermaid-diagram my-4 flex justify-center overflow-x-auto"
-      style={{ minHeight: '80px', background: 'var(--color-surface-2)', borderRadius: '8px', padding: '8px' }}
-    />
+    <div className="relative group my-4 rounded-xl border border-border/80 bg-surface-2/60 overflow-hidden shadow-sm hover:border-accent/60 transition-all">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-surface-2/90 border-b border-border/50 text-xs">
+        <span className="font-semibold text-[11px] uppercase tracking-wider text-text-muted flex items-center gap-1.5">
+          📊 Sơ đồ quy trình (Diagram)
+        </span>
+        <button
+          type="button"
+          onClick={() => setIsZoomed(!isZoomed)}
+          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-surface border border-border hover:bg-surface-2 text-[11px] font-medium text-text transition-colors shadow-xs"
+        >
+          {isZoomed ? <ZoomOut size={13} /> : <ZoomIn size={13} />}
+          <span>{isZoomed ? 'Thu nhỏ' : 'Phóng to / Zoom'}</span>
+        </button>
+      </div>
+      <div
+        ref={containerRef}
+        className={`mermaid-diagram flex justify-center overflow-auto transition-all ${
+          isZoomed ? 'max-h-[85vh] p-4' : 'max-h-[260px] p-3'
+        }`}
+      />
+    </div>
   );
 }
 
@@ -1000,7 +1006,35 @@ const AGENT_NAMES: Record<string, string> = {
   system: 'System',
 };
 
+function cleanSectionHeadersAndDividers(content: string): string {
+  if (!content) return content;
+  let text = content
+    .replace(/\$*\\+rightarrow\$*/gi, ' → ')
+    .replace(/\$*\\+Rightarrow\$*/gi, ' ⇒ ')
+    .replace(/\$*\\+leftarrow\$*/gi, ' ← ')
+    .replace(/\$*\\+Leftarrow\$*/gi, ' ⇐ ');
+
+  // Convert raw section lines like "------------------ SECTION 7 — NEXT STEPS ------------------" or "================== SECTION 7 — NEXT STEPS =================="
+  text = text.replace(/^[-=]{3,}\s*(SECTION\s*\d*\s*[—-]?\s*[^-\n=]*)[-=]*$/gim, (_m, title) => {
+    const cleanTitle = title.replace(/^[—-]\s*/, '').trim();
+    return `\n\n### ${cleanTitle}\n\n`;
+  });
+
+  // Convert lines like "=========================================== Prepared by AdtimaBox | 2026-07-28 This proposal is confidential..."
+  text = text.replace(/^[-=]{3,}\s*(Prepared by [^\n=]*)[-=]*$/gim, (_m, title) => {
+    return `\n\n---\n*${title.trim()}*\n\n`;
+  });
+
+  // Convert uppercase headings like "KEY DECISIONS FOR CLIENT:", "ITEMS REQUIRING TECH CONFIRMATION (before signing):", "DOCUMENTS TO REQUEST FROM CLIENT:"
+  text = text.replace(/^(KEY DECISIONS FOR CLIENT|ITEMS REQUIRING TECH CONFIRMATION|DOCUMENTS TO REQUEST FROM CLIENT|SUGGESTED TIMELINE)(:|\s*\(.*?\):)/gim, (_m, title) => {
+    return `\n\n#### ${title.trim()}\n`;
+  });
+
+  return text;
+}
+
 function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }: MessageBubbleProps) {
+  const [selectedImageSrc, setSelectedImageSrc] = useState<string | null>(null);
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const agentName = message.agent ? AGENT_NAMES[message.agent] || message.agent : null;
@@ -1008,10 +1042,20 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
 
   const showHeader = !isGrouped && !isUser && !isSystem && agentName;
   const isAI = !isUser && !isSystem;
-  const processedContent = wrapAsciiBoxes(fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(fixBareMermaidBlocks(convertScreenSpecsToPhoneBlock(message.content))))));
+  const processedContent = cleanSectionHeadersAndDividers(wrapAsciiBoxes(fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(fixBareMermaidBlocks(convertScreenSpecsToPhoneBlock(message.content)))))));
   const contentBlocks = useMemo(() => splitContentIntoBlocks(processedContent), [processedContent]);
   const markdownComponents: any = {
-    p: ({ children }: { children: React.ReactNode }) => <p style={{ margin: '0.5rem 0', lineHeight: 1.7 }}>{children}</p>,
+    p: ({ children }: { children: React.ReactNode }) => {
+      const text = React.Children.toArray(children).map(c => typeof c === 'string' ? c : '').join('');
+      if (/^[—\s]*SECTION\s*\d*\s*—/i.test(text.trim())) {
+        return (
+          <div className="my-5 p-3 rounded-xl border border-accent/40 bg-accent/5 flex items-center justify-between shadow-sm">
+            <span className="text-xs font-bold text-accent tracking-wider uppercase">{text.replace(/^[—\s]*/, '').replace(/—[—\s]*$/, '')}</span>
+          </div>
+        );
+      }
+      return <p style={{ margin: '0.6rem 0', lineHeight: 1.75 }}>{children}</p>;
+    },
     h1: ({ children }: { children: React.ReactNode }) => (
       <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: '1.5rem 0 0.75rem', color: 'var(--color-text)' }}>
         {children}
@@ -1022,13 +1066,25 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
         {children}
       </h2>
     ),
-    h3: ({ children }: { children: React.ReactNode }) => (
-      <h3 style={{ fontSize: '1.1rem', fontWeight: 600, margin: '1rem 0 0.5rem', color: 'var(--color-text)' }}>
-        {children}
-      </h3>
-    ),
+    h3: ({ children }: { children: React.ReactNode }) => {
+      const text = React.Children.toArray(children).map(c => typeof c === 'string' ? c : '').join('');
+      if (/SECTION\s*\d*/i.test(text)) {
+        return (
+          <div className="my-5 p-3 rounded-xl border border-accent/40 bg-accent/10 flex items-center gap-2 shadow-sm">
+            <span className="px-2 py-0.5 rounded bg-accent text-white text-[10px] font-bold uppercase tracking-wider">Section</span>
+            <h3 className="text-sm font-bold text-text m-0">{text.replace(/^[—\s]*SECTION\s*\d*\s*—?\s*/i, '')}</h3>
+          </div>
+        );
+      }
+      return (
+        <h3 className="text-base font-bold my-4 text-text border-l-4 border-accent pl-3 py-0.5">
+          {children}
+        </h3>
+      );
+    },
     h4: ({ children }: { children: React.ReactNode }) => (
-      <h4 style={{ fontSize: '1rem', fontWeight: 600, margin: '1rem 0 0.5rem', color: 'var(--color-text)' }}>
+      <h4 className="text-sm font-semibold my-3 text-text flex items-center gap-2">
+        <span className="w-1.5 h-1.5 rounded-full bg-accent inline-block shrink-0" />
         {children}
       </h4>
     ),
@@ -1159,20 +1215,34 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
         </pre>
       );
     },
-    hr: () => <hr style={{ border: 'none', borderTop: '1px solid var(--color-border)', margin: '1.5rem 0' }} />,
+    hr: () => (
+      <div className="my-6 flex items-center gap-3 opacity-80">
+        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+        <span className="w-1.5 h-1.5 rounded-full bg-accent/50" />
+        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+      </div>
+    ),
     blockquote: ({ children }: { children: React.ReactNode }) => (
-      <blockquote style={{
-        borderLeft: '4px solid var(--color-accent)',
-        paddingLeft: '1rem',
-        margin: '1rem 0',
-        fontStyle: 'italic',
-        color: 'var(--color-text-muted)',
-        backgroundColor: 'var(--color-surface-2)',
-        padding: '0.75rem 1rem',
-        borderRadius: '0 8px 8px 0',
-      }}>
+      <blockquote className="my-4 p-3.5 rounded-xl border-l-4 border-accent bg-surface-2/60 text-text-muted text-xs sm:text-sm italic shadow-sm">
         {children}
       </blockquote>
+    ),
+    img: ({ src, alt }: { src?: string; alt?: string }) => (
+      <div className="relative group inline-block my-2 overflow-hidden rounded-xl border border-border shadow-md transition-all hover:shadow-lg hover:border-accent">
+        <img
+          src={src}
+          alt={alt || 'Thumbnail preview'}
+          className="max-w-[260px] max-h-[160px] object-cover cursor-pointer transition-transform duration-300 group-hover:scale-[1.03]"
+          onClick={() => src && setSelectedImageSrc(src)}
+        />
+        <div
+          className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer pointer-events-none"
+        >
+          <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface/90 text-[11px] font-medium text-text shadow">
+            <ZoomIn size={14} /> Zoom
+          </span>
+        </div>
+      </div>
     ),
   };
 
@@ -1231,7 +1301,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
 
   // AI messages: render without bubble (document-style like ChatGPT/Claude)
   return (
-    <div className={`flex gap-2 sm:gap-3 ${isGrouped ? 'mt-1' : 'mt-3 sm:mt-4'}`}>
+    <div className={`flex gap-2 sm:gap-3 animate-message-appear ${isGrouped ? 'mt-1' : 'mt-3 sm:mt-4'}`}>
       {/* Avatar */}
       {!isGrouped && (
         <div className="shrink-0 aspect-square p-2 size-fit rounded-full flex items-center justify-center text-white bg-blue-500">
@@ -1343,6 +1413,13 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
           </span>
         )}
       </div>
+
+      {/* Image Lightbox Modal */}
+      <ImageLightbox
+        src={selectedImageSrc || ''}
+        isOpen={!!selectedImageSrc}
+        onClose={() => setSelectedImageSrc(null)}
+      />
     </div>
   );
 }

@@ -87,6 +87,13 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup/shutdown."""
+    # Startup: initialize SQLite database (users, sessions, org_rules)
+    try:
+        from database import init_db
+        init_db()
+    except Exception as e:
+        print(f"Warning: database init failed (non-fatal): {e}")
+
     # Startup: warm up skill registry
     print("Starting up: loading skill registry...")
     try:
@@ -143,6 +150,181 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         status_code=429,
         content={"detail": "Rate limit exceeded. Please try again later."}
     )
+
+
+# =============================================================================
+# Auth & Admin Endpoints
+# =============================================================================
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    full_name: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserRoleRequest(BaseModel):
+    user_id: int
+    role: str
+
+
+class OrgRuleCreateRequest(BaseModel):
+    title: str
+    content: str
+    scope: str = "all"
+
+
+class OrgRuleUpdateRequest(BaseModel):
+    title: str
+    content: str
+    scope: str
+    is_active: bool
+
+
+def _get_current_user(authorization: Optional[str] = None) -> Optional[dict]:
+    """Extract user from Authorization: Bearer <token> header."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization[7:]
+    try:
+        from database import verify_token
+        return verify_token(token)
+    except Exception:
+        return None
+
+
+@app.post("/api/auth/register")
+async def auth_register(req: RegisterRequest):
+    from database import register_user
+    try:
+        user = register_user(req.username, req.password, req.full_name)
+        return user
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/auth/login")
+async def auth_login(req: LoginRequest):
+    from database import login_user
+    try:
+        user = login_user(req.username, req.password)
+        return user
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+
+@app.get("/api/auth/me")
+async def auth_me(authorization: Optional[str] = Header(None)):
+    payload = _get_current_user(authorization)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Chưa đăng nhập")
+    from database import get_user_by_id
+    user = get_user_by_id(payload["user_id"])
+    if not user:
+        raise HTTPException(status_code=404, detail="Không tìm thấy user")
+    return user
+
+
+@app.get("/api/user/sessions")
+async def get_user_sessions(authorization: Optional[str] = Header(None)):
+    payload = _get_current_user(authorization)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Chưa đăng nhập")
+    from database import db_list_user_sessions
+    return {"sessions": db_list_user_sessions(payload["user_id"])}
+
+
+@app.get("/api/user/sessions/{session_id}")
+async def get_session_detail(session_id: str, authorization: Optional[str] = Header(None)):
+    payload = _get_current_user(authorization)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Chưa đăng nhập")
+    from database import db_load_session
+    session = db_load_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Không tìm thấy session")
+    if session["user_id"] and session["user_id"] != payload["user_id"]:
+        raise HTTPException(status_code=403, detail="Không có quyền truy cập")
+    return session
+
+
+# --- Admin-only endpoints ---
+
+def _require_admin(authorization: Optional[str]) -> dict:
+    payload = _get_current_user(authorization)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Chưa đăng nhập")
+    from database import get_user_by_id
+    user = get_user_by_id(payload["user_id"])
+    if not user or user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Chỉ Admin mới có quyền thực hiện thao tác này")
+    return user
+
+
+@app.get("/api/admin/users")
+async def admin_list_users(authorization: Optional[str] = Header(None)):
+    _require_admin(authorization)
+    from database import list_all_users
+    return {"users": list_all_users()}
+
+
+@app.put("/api/admin/users/role")
+async def admin_set_role(req: UserRoleRequest, authorization: Optional[str] = Header(None)):
+    _require_admin(authorization)
+    from database import update_user_role
+    try:
+        update_user_role(req.user_id, req.role)
+        return {"ok": True}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/admin/rules")
+async def admin_list_rules(authorization: Optional[str] = Header(None)):
+    _require_admin(authorization)
+    from database import list_org_rules
+    return {"rules": list_org_rules()}
+
+
+@app.post("/api/admin/rules")
+async def admin_create_rule(req: OrgRuleCreateRequest, authorization: Optional[str] = Header(None)):
+    user = _require_admin(authorization)
+    from database import create_org_rule
+    rule = create_org_rule(req.title, req.content, req.scope, user["id"])
+    return rule
+
+
+@app.put("/api/admin/rules/{rule_id}")
+async def admin_update_rule(rule_id: int, req: OrgRuleUpdateRequest, authorization: Optional[str] = Header(None)):
+    _require_admin(authorization)
+    from database import update_org_rule
+    update_org_rule(rule_id, req.title, req.content, req.scope, req.is_active)
+    return {"ok": True}
+
+
+@app.patch("/api/admin/rules/{rule_id}/toggle")
+async def admin_toggle_rule(rule_id: int, authorization: Optional[str] = Header(None)):
+    _require_admin(authorization)
+    from database import list_org_rules, toggle_org_rule
+    rules = list_org_rules()
+    rule = next((r for r in rules if r["id"] == rule_id), None)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule không tồn tại")
+    toggle_org_rule(rule_id, not rule["is_active"])
+    return {"ok": True, "is_active": not rule["is_active"]}
+
+
+@app.delete("/api/admin/rules/{rule_id}")
+async def admin_delete_rule(rule_id: int, authorization: Optional[str] = Header(None)):
+    _require_admin(authorization)
+    from database import delete_org_rule
+    delete_org_rule(rule_id)
+    return {"ok": True}
 
 
 # =============================================================================
