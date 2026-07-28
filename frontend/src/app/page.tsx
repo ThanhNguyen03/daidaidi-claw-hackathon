@@ -14,15 +14,50 @@ import { ContextPanel } from '../components/ContextPanel';
 import { ModelPanel } from '../components/ModelPanel';
 import { MobileNav } from '../components/MobileNav';
 import { AttentionField } from '../components/AttentionField';
+import { AuthModal } from '../components/AuthModal';
+import { AdminPanel } from '../components/AdminPanel';
 import { useChat } from '../hooks/useChat';
-import type { ChatMode } from '../lib/types';
+import type { ChatMode, User } from '../lib/types';
 import { getApiBaseUrl } from '../lib/api';
 
 export default function Home() {
-  // Identity state (demo mode - simple name input)
-  const [isIdentified, setIsIdentified] = useState(false);
+  // Auth state
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
+
+  // Identity state (for chat hook compatibility)
   const [salespersonName, setSalespersonName] = useState('');
   const [isBooting, setIsBooting] = useState(false);
+  const isIdentified = !!currentUser;
+
+  // Load persisted auth from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('auth_user');
+      if (stored) {
+        const user = JSON.parse(stored) as User;
+        setCurrentUser(user);
+        setSalespersonName(user.full_name || user.username);
+      }
+    } catch { /* ignore */ }
+    setAuthChecked(true);
+  }, []);
+
+  const handleAuthSuccess = (user: User) => {
+    setCurrentUser(user);
+    setSalespersonName(user.full_name || user.username);
+    setIsBooting(true);
+    setTimeout(() => setIsBooting(false), 950);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('auth_user');
+    setCurrentUser(null);
+    setSalespersonName('');
+    window.location.reload();
+  };
 
   // Mode state
   const [mode, setMode] = useState<ChatMode>('chat');
@@ -101,6 +136,7 @@ export default function Home() {
     editCheckpoint,
     clearError,
     resetSession,
+    thinkingSteps,
   } = useChat({
     salespersonId: salespersonName || 'demo_user',
     displayName: salespersonName,
@@ -134,15 +170,6 @@ export default function Home() {
     }
   }, [isIdentified, salespersonName, loadConstraints, loadProfile]);
 
-  // Handle identity submission. The boot animation runs first, then the app
-  // mounts — 950ms, matched to the CSS keyframes in globals.css (.tf-lock).
-  const handleIdentify = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (salespersonName.trim() && !isBooting) {
-      setIsBooting(true);
-      setTimeout(() => setIsIdentified(true), 950);
-    }
-  };
 
   // Handle new chat — clears all session data (both modes) and reloads
   const handleNewChat = () => {
@@ -156,80 +183,34 @@ export default function Home() {
     window.location.reload();
   };
 
-  // If not identified, show welcome screen
-  if (!isIdentified) {
+  // If auth not checked yet, show nothing (avoid flash)
+  if (!authChecked) return null;
+
+  // If not logged in, show Auth Modal
+  if (!currentUser) {
     return (
-      <div
-        className={`tf-stage min-h-screen flex items-center justify-center bg-bg p-4 md:p-6 ${
-          isBooting ? 'tf-booting' : ''
-        }`}
-      >
-        <AttentionField />
-
-        {/* Boot overlay: three rings propagating outward, then a horizontal wipe. */}
-        {isBooting && (
-          <>
-            <span className="tf-ring" />
-            <span className="tf-ring" />
-            <span className="tf-ring" />
-            <span className="tf-wipe" />
-          </>
-        )}
-
-        <div className="tf-card p-5 sm:p-6 md:p-8 rounded-2xl max-w-sm sm:max-w-md w-full mx-2 sm:mx-4">
-          <div className="text-center mb-5 sm:mb-6">
-            <div className="tf-mark w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-3 sm:mb-4 bg-accent rounded-2xl flex items-center justify-center">
-              <span className="text-3xl sm:text-4xl">🤖</span>
-            </div>
-            <h1 className="text-xl sm:text-[22px] font-bold text-text mb-1.5 sm:mb-2">AdtimaBox Sales Agent</h1>
-            <p className="text-xs sm:text-[12px] text-text-muted">Multi-Agent AI for Sales Teams</p>
-          </div>
-
-          <form onSubmit={handleIdentify}>
-            <div className="mb-4 sm:mb-5">
-              <label htmlFor="name" className="block text-xs sm:text-[12px] font-medium text-text mb-2">
-                Your Name
-              </label>
-              <input
-                type="text"
-                id="name"
-                value={salespersonName}
-                onChange={(e) => setSalespersonName(e.target.value)}
-                placeholder="Enter your name..."
-                autoFocus
-                disabled={isBooting}
-                className="w-full px-4 py-3 sm:py-3.5 border border-border rounded-lg text-sm sm:text-[13px] bg-surface/60 text-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
-                autoComplete="off"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={!salespersonName.trim() || isBooting}
-              className={`w-full py-3 sm:py-3.5 rounded-lg font-medium text-sm ${
-                salespersonName.trim() && !isBooting
-                  ? 'bg-accent text-white hover:opacity-90 active:scale-[0.98] transition-all'
-                  : 'bg-text-muted/50 text-white/70 cursor-not-allowed'
-              }`}
-            >
-              {isBooting ? 'Initializing…' : 'Start Chatting'}
-            </button>
-          </form>
-
-          {isBooting ? (
-            <p className="tf-boot-line text-[11px] sm:text-xs text-accent-text text-center mt-4 font-mono tracking-wide">
-              ▸ 7 agents online · knowledge base linked
-            </p>
-          ) : (
-            <p className="text-[11px] sm:text-xs text-text-muted text-center mt-4">
-              Demo mode — no authentication required
-            </p>
-          )}
-        </div>
+      <div className={isDarkMode ? 'dark' : ''}>
+        <AuthModal onSuccess={handleAuthSuccess} />
       </div>
     );
   }
 
+  // If booting (just logged in), show boot animation briefly
+  if (isBooting) {
+    return (
+      <div className={`tf-stage min-h-screen flex items-center justify-center bg-bg p-4 ${isDarkMode ? 'dark' : ''}`}>
+        <span className="tf-ring" />
+        <span className="tf-ring" />
+        <span className="tf-ring" />
+        <span className="tf-wipe" />
+        <div className="tf-card p-8 rounded-2xl text-center">
+          <p className="tf-boot-line text-xs text-accent-text font-mono tracking-wide">
+            ▸ 7 agents online · knowledge base linked
+          </p>
+        </div>
+      </div>
+    );
+  }
   // Main app layout
   return (
     <div className="flex h-dvh overflow-hidden">
@@ -257,10 +238,21 @@ export default function Home() {
           isDarkMode={isDarkMode}
           onToggleTheme={toggleTheme}
           onOpenModelPanel={() => setModelPanelOpen(true)}
+          currentUser={currentUser}
+          onLogout={handleLogout}
+          onOpenAdminPanel={() => setAdminPanelOpen(true)}
         />
       </div>
 
       <ModelPanel isOpen={modelPanelOpen} onClose={() => setModelPanelOpen(false)} />
+
+      {currentUser && (
+        <AdminPanel
+          isOpen={adminPanelOpen}
+          onClose={() => setAdminPanelOpen(false)}
+          currentUser={currentUser}
+        />
+      )}
 
       {/* Main chat area */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden pt-14 md:pt-0 pb-16 md:pb-0">
@@ -283,6 +275,7 @@ export default function Home() {
           onClearError={clearError}
           onToggleContextPanel={() => setContextPanelOpen(!contextPanelOpen)}
           onToggleMobileSidebar={() => setSidebarOpen(!sidebarOpen)}
+          thinkingSteps={thinkingSteps}
         />
       </main>
 

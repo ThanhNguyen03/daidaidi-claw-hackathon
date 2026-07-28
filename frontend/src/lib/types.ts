@@ -189,6 +189,19 @@ export interface Message {
   agent?: string;
   timestamp: string;
   proposalAssets?: { deck_url?: string; pptx_url?: string };
+  thinkingSteps?: ThinkingStep[];
+}
+
+// =============================================================================
+// Thinking Step (Agent reasoning trace)
+// =============================================================================
+
+export interface ThinkingStep {
+  step: string;
+  content: string;
+  timestamp: string;
+  agent?: string;
+  status?: 'running' | 'completed' | 'failed';
 }
 
 // =============================================================================
@@ -225,7 +238,9 @@ export type SSEEventType =
   | 'session_updated'
   | 'question'
   | 'question_card'
-  | 'checkpoint';
+  | 'checkpoint'
+  | 'agent_status'
+  | 'thinking_trace';
 
 export interface SSEEvent {
   type: SSEEventType;
@@ -307,4 +322,42 @@ export interface UIState {
     name: string;
     status: 'idle' | 'thinking' | 'waiting' | 'failed';
   }>;
+}
+
+// =============================================================================
+// Auth & User Types
+// =============================================================================
+
+export type UserRole = 'admin' | 'account_manager' | 'sales_rep';
+
+export interface User {
+  id: number;
+  username: string;
+  full_name: string;
+  role: UserRole;
+  token: string;
+}
+
+// =============================================================================
+// Org Rule (Admin Learning System)
+// =============================================================================
+
+export interface OrgRule {
+  id: number;
+  title: string;
+  content: string;
+  scope: string;
+  is_active: number; // 1 = on, 0 = off
+  created_by: number | null;
+  created_at: string;
+}
+
+// =============================================================================
+// Chat Session History
+// =============================================================================
+
+export interface ChatSessionSummary {
+  session_id: string;
+  title: string;
+  updated_at: string;
 }

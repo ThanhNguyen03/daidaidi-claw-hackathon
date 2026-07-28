@@ -1,4 +1,4 @@
-"""
+﻿"""
 Base Skill Contract
 ===================
 Abstract base for all skills in the multi-skills architecture.
@@ -349,7 +349,7 @@ TIMELINES:
         temperature: float = 0.4,
     ) -> str:
         """Call LLM (non-streaming) and return stripped response text."""
-        from llm.greennode import get_llm_client
+        from llm.client import get_llm_client
 
         client = get_llm_client(self.name)
         messages = [{"role": "system", "content": system}]

@@ -1,4 +1,4 @@
-"""
+﻿"""
 AdtimaBox HTML Deck Generator.
 Extraction prompt + slide schemas: agents/wireframe_designer_agent/SKILL.md (single
 source of truth — this module only configures the LLM call and renders the result).
@@ -640,7 +640,7 @@ class HTMLDeckGenerator:
         return slides
 
     async def _extract_slides(self, proposal_text: str, brief: dict, attempt: int = 0) -> list[dict]:
-        from llm.greennode import get_llm_client
+        from llm.client import get_llm_client
         from skills.base import strip_think_blocks, extract_json_block, repair_json_escapes
 
         # Dedicated slot rather than the design skill's model, so this call can be

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Knowledge Loader
 ================
 The single place in the system that reads agent knowledge (BRD §5.1).
@@ -286,7 +286,7 @@ async def select(agent: str, task: str, catalog: list[ReferenceEntry]) -> list[s
         import asyncio
         from functools import partial
 
-        from llm.greennode import get_llm_client
+        from llm.client import get_llm_client
 
         client = get_llm_client(os.getenv("KNOWLEDGE_SELECTOR_AGENT", "central_agent"))
         loop = asyncio.get_running_loop()

@@ -38,6 +38,7 @@ _LIMITS_PATH = os.path.normpath(
 # the real window.
 _RPM_WINDOW_S = 60
 _RPD_WINDOW_S = 24 * 60 * 60
+_STATS_FILE = os.path.normpath(os.path.join(_HERE, "..", "data", "usage_stats.json"))
 
 
 def _load_limits() -> dict[str, dict]:
@@ -82,6 +83,30 @@ class ModelUsageTracker:
         # running rather than what is configured — they differ the moment a
         # fallback fires, and that difference is the whole point of showing it.
         self._last_model_by_agent: dict[str, str] = {}
+        _load_stats(self)
+
+    def _save(self) -> None:
+        try:
+            os.makedirs(os.path.dirname(_STATS_FILE), exist_ok=True)
+            data = {}
+            now = time.time()
+            cutoff = now - _RPD_WINDOW_S
+            for model, r in self._models.items():
+                valid_calls = [t for t in r.calls if t >= cutoff]
+                data[model] = {
+                    "calls": valid_calls,
+                    "ok": r.ok,
+                    "rate_limited": r.rate_limited,
+                    "other_errors": r.other_errors,
+                    "day_exhausted_at": r.day_exhausted_at,
+                    "minute_limited_at": r.minute_limited_at,
+                    "last_error": r.last_error,
+                }
+            with open(_STATS_FILE, "w", encoding="utf-8") as f:
+                import json
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"[usage] warning: could not save stats ({e})")
 
     # -- recording ---------------------------------------------------------
     def _rec(self, model: str) -> _ModelRecord:
@@ -101,10 +126,12 @@ class ModelUsageTracker:
             if len(r.calls) > 4096:
                 r.calls = [t for t in r.calls if t >= cutoff]
             self._last_model_by_agent[agent] = model
+            self._save()
 
     def record_success(self, model: str) -> None:
         with self._lock:
             self._rec(model).ok += 1
+            self._save()
 
     def record_rate_limit(self, model: str, daily: bool, detail: str = "") -> None:
         now = time.time()
@@ -116,12 +143,13 @@ class ModelUsageTracker:
                 r.day_exhausted_at = now
             else:
                 r.minute_limited_at = now
+            self._save()
 
     def record_error(self, model: str, detail: str = "") -> None:
         with self._lock:
-            r = self._rec(model)
-            r.other_errors += 1
-            r.last_error = detail[:200]
+            self._rec(model).other_errors += 1
+            self._rec(model).last_error = detail[:200]
+            self._save()
 
     def last_model_for(self, agent: str) -> str | None:
         with self._lock:
@@ -187,6 +215,31 @@ class ModelUsageTracker:
                     "'hết quota hôm nay' thì lấy trực tiếp từ lỗi 429 của Google."
                 ),
             }
+
+
+def _load_stats(tracker: ModelUsageTracker) -> None:
+    try:
+        if not os.path.exists(_STATS_FILE):
+            return
+        import json
+        with open(_STATS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f) or {}
+        now = time.time()
+        cutoff = now - _RPD_WINDOW_S
+        for model, d in data.items():
+            calls = [t for t in d.get("calls", []) if isinstance(t, (int, float)) and t >= cutoff]
+            r = _ModelRecord(
+                calls=calls,
+                ok=d.get("ok", 0),
+                rate_limited=d.get("rate_limited", 0),
+                other_errors=d.get("other_errors", 0),
+                day_exhausted_at=d.get("day_exhausted_at"),
+                minute_limited_at=d.get("minute_limited_at"),
+                last_error=d.get("last_error", ""),
+            )
+            tracker._models[model] = r
+    except Exception as e:
+        print(f"[usage] warning: could not load stats ({e})")
 
 
 _tracker: ModelUsageTracker | None = None

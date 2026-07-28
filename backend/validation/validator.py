@@ -1,4 +1,4 @@
-"""
+﻿"""
 Validation Validator
 ====================
 Provides validation pre-pass using Gemma 4 fast model.
@@ -10,7 +10,7 @@ from typing import Optional
 
 
 from schemas.state import Brief, SalespersonProfile, ValidationReport, Ambiguity
-from llm.greennode import get_llm_client, GreenNodeClient
+from llm.client import get_llm_client, GreenNodeClient
 
 # =============================================================================
 # Validation Service
