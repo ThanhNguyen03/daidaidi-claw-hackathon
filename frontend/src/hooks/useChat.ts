@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { ChatRequest, Message, Brief, ChatMode, Question, Checkpoint, FeedbackRule, SalespersonProfile } from '../lib/types';
+import type { ChatRequest, Message, Brief, ChatMode, Question, Checkpoint, FeedbackRule, SalespersonProfile, ThinkingStep } from '../lib/types';
 import { getApiBaseUrl } from '../lib/api';
 
 const BACKEND_URL = getApiBaseUrl();
@@ -50,6 +50,7 @@ interface UseChatReturn {
   brief: Brief | null;  // Day 4: Current brief
   artifacts: Artifact[];  // Day 6: Generated artifacts
   proposalAssets: { deck_url?: string; pptx_url?: string } | null;
+  thinkingSteps: ThinkingStep[];  // Live thinking trace for current turn
 
   // Actions
   sendMessage: (message: string, brief?: Brief, resume?: boolean) => Promise<void>;
@@ -109,6 +110,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   // Proposal deck assets — set when wireframe_designer completes after proposal_assembler
   const [proposalAssets, setProposalAssets] = useState<{ deck_url?: string; pptx_url?: string } | null>(null);
 
+  // Thinking trace — accumulated steps for the current turn, shown live in the chat
+  const [thinkingSteps, setThinkingSteps] = useState<ThinkingStep[]>([]);
+  // Ref mirrors the state so SSE callbacks can read the latest value without stale closures
+  const thinkingStepsRef = useRef<ThinkingStep[]>([]);
   // --- Mode isolation: save/restore state per mode ---
   const prevModeRef = useRef<string>(mode);
   type ModeSnapshot = {
@@ -250,6 +255,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       setError(null);
       setIsThinking(false);
       resetAgentStatuses();
+      // Reset thinking trace for the new turn
+      thinkingStepsRef.current = [];
+      setThinkingSteps([]);
 
       // Add user message immediately
       const userMessage: Message = {
@@ -413,6 +421,12 @@ export function useChat(options: UseChatOptions): UseChatReturn {
             const agentContent = (data.content as string) || '';
             if (agentContent) {
               setIsThinking(false);
+              // Attach accumulated thinking steps to the first assistant message of this turn
+              const steps = thinkingStepsRef.current.length > 0 ? [...thinkingStepsRef.current] : undefined;
+              if (steps) {
+                thinkingStepsRef.current = [];
+                setThinkingSteps([]);
+              }
               setMessages((prev) => [
                 ...prev,
                 {
@@ -420,6 +434,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
                   content: agentContent,
                   agent: agentName,
                   timestamp: new Date().toISOString(),
+                  thinkingSteps: steps,
                 },
               ]);
             }
@@ -441,13 +456,19 @@ export function useChat(options: UseChatOptions): UseChatReturn {
             const content = data.content as string;
             // Determine agent name for this streaming turn
             const streamAgent = mode === 'cs' ? 'cs_agent' : 'sales_orchestrator';
+            // Attach accumulated thinking steps to the first assistant message of this turn
+            const steps = thinkingStepsRef.current.length > 0 ? [...thinkingStepsRef.current] : undefined;
+            if (steps) {
+              thinkingStepsRef.current = [];
+              setThinkingSteps([]);
+            }
             setMessages((prev) => {
               const last = prev[prev.length - 1];
               if (last && last.role === 'assistant') {
                 // Append to existing assistant message (any agent - within same streaming turn)
                 return [...prev.slice(0, -1), { ...last, content: last.content + content }];
               } else {
-                // Create new assistant message
+                // Create new assistant message — attach thinking steps
                 return [
                   ...prev,
                   {
@@ -455,6 +476,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
                     content,
                     agent: streamAgent,
                     timestamp: new Date().toISOString(),
+                    thinkingSteps: steps,
                   },
                 ];
               }
@@ -562,6 +584,20 @@ export function useChat(options: UseChatOptions): UseChatReturn {
                 return [...prev, newAgent];
               });
             }
+          }
+          break;
+
+        case 'thinking_trace':
+          // Agent reasoning step — accumulate for display
+          {
+            const traceStep: ThinkingStep = {
+              step: (data.step as string) || 'unknown',
+              content: (data.content as string) || '',
+              agent: (data.agent as string) || undefined,
+              timestamp: new Date().toISOString(),
+            };
+            thinkingStepsRef.current = [...thinkingStepsRef.current, traceStep];
+            setThinkingSteps([...thinkingStepsRef.current]);
           }
           break;
 
@@ -1031,6 +1067,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     brief,  // Day 4
     artifacts,  // Day 6: Generated artifacts
     proposalAssets,
+    thinkingSteps,  // Live thinking trace
     sendMessage,
     answerQuestion,
     answerAllQuestions,

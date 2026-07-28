@@ -124,12 +124,14 @@ def _is_present(value: Any) -> bool:
     return True
 
 
-def said_proceed_anyway(text: str, history: Optional[list[dict]] = None) -> bool:
-    """Did the rep explicitly accept running on assumptions?
+def said_proceed_anyway(
+    text: str,
+    history: Optional[list[dict]] = None,
+    brief: Optional[Any] = None,
+) -> bool:
+    """Did the rep explicitly accept running on assumptions or request proposal/recommendation?
 
-    Checked against the current message and this session's earlier user turns,
-    because the permission should persist once given rather than having to be
-    repeated every turn.
+    Checked against the current message, session history, and brief fields.
     """
     policy = load_policy()
     phrases = [p.lower() for p in policy.get("proceed_anyway_phrases", [])]
@@ -137,6 +139,11 @@ def said_proceed_anyway(text: str, history: Optional[list[dict]] = None) -> bool
     for m in history or []:
         if m.get("role") == "user":
             haystack += " " + (m.get("content") or "").lower()
+    if brief:
+        for attr in ("additional_context", "specific_requirements", "constraints", "goal", "industry"):
+            val = getattr(brief, attr, None)
+            if val:
+                haystack += " " + str(val).lower()
     return any(p in haystack for p in phrases)
 
 
@@ -190,7 +197,7 @@ def evaluate(
             MissingField(e["field"], e.get("why", ""), blocking=True)
             for e in policy.get("required", [])
         ]
-        if said_proceed_anyway(message, history):
+        if said_proceed_anyway(message, history, brief):
             return GateVerdict(
                 state=GateState.RUN_WITH_ASSUMPTIONS,
                 missing=missing,
@@ -232,13 +239,13 @@ def evaluate(
             state=GateState.RUN_COMPLETE, reason="all required fields present"
         )
 
-    if said_proceed_anyway(message, history):
+    if said_proceed_anyway(message, history, brief):
         # The field is NOT dropped — it becomes an assumption the output must label (§8.2).
         return GateVerdict(
             state=GateState.RUN_WITH_ASSUMPTIONS,
             missing=missing,
             assumptions=[m.field for m in missing],
-            reason="rep asked to proceed anyway; missing fields carried as labelled assumptions",
+            reason="rep asked to proceed anyway or requested recommendations; missing fields carried as labelled assumptions",
         )
 
     return GateVerdict(

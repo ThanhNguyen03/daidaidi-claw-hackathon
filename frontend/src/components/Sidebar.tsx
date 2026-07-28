@@ -18,8 +18,10 @@ import {
   Moon,
   ChevronLeft,
   ChevronRight,
+  LogOut,
+  ShieldCheck,
 } from 'lucide-react';
-import type { ChatMode } from '../lib/types';
+import type { ChatMode, User } from '../lib/types';
 
 interface SidebarProps {
   currentMode: ChatMode;
@@ -33,6 +35,9 @@ interface SidebarProps {
   isDarkMode: boolean;
   onToggleTheme: () => void;
   onOpenModelPanel?: () => void;
+  currentUser?: User | null;
+  onLogout?: () => void;
+  onOpenAdminPanel?: () => void;
 }
 
 interface AgentStatus {
@@ -112,6 +117,9 @@ export function Sidebar({
   isDarkMode,
   onToggleTheme,
   onOpenModelPanel,
+  currentUser,
+  onLogout,
+  onOpenAdminPanel,
 }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -260,6 +268,44 @@ export function Sidebar({
 
       {/* Spacer */}
       <div className="flex-1" />
+
+      {/* User Info + Admin/Logout */}
+      {currentUser && !isCollapsed && (
+        <div className="px-2 mt-2 mb-2">
+          <div className="sidebar-user-block" title={currentUser.full_name}>
+            <div className="sidebar-user-avatar">
+              {currentUser.full_name?.[0]?.toUpperCase() ?? '?'}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-text truncate">{currentUser.full_name}</p>
+              <p className="text-[10px] text-text-muted truncate">
+                {currentUser.role === 'admin' ? '🛡️ Admin' : currentUser.role === 'account_manager' ? '💼 AM' : '🎯 Sales'}
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-1">
+            {currentUser.role === 'admin' && onOpenAdminPanel && (
+              <button
+                onClick={onOpenAdminPanel}
+                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-medium bg-accent/10 hover:bg-accent/20 text-accent transition-colors border border-accent/20"
+                title="Admin Panel"
+              >
+                <ShieldCheck size={11} />
+                Admin Panel
+              </button>
+            )}
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="flex items-center justify-center gap-1 p-1.5 rounded-lg text-[11px] text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors border border-border"
+                title="Đăng xuất"
+              >
+                <LogOut size={12} />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* KB/Backend Status */}
       <div

@@ -9,7 +9,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
 import { QuestionCard } from './QuestionCard';
-import type { Message, Question, Checkpoint, Brief, ChatMode } from '../lib/types';
+import { ThinkingTrace } from './ThinkingTrace';
+import type { Message, Question, Checkpoint, Brief, ChatMode, ThinkingStep } from '../lib/types';
 
 interface ChatWindowProps {
   messages: Message[];
@@ -29,6 +30,7 @@ interface ChatWindowProps {
   onClearError: () => void;
   onToggleContextPanel?: () => void;
   onToggleMobileSidebar?: () => void;
+  thinkingSteps?: ThinkingStep[];
 }
 
 // Openers for an empty chat. Written as briefs a rep would actually paste, not as
@@ -99,6 +101,15 @@ function CheckpointCard({
     { key: 'assumed', label: 'Đang phỏng đoán', hint: 'chưa có dữ liệu, mình sẽ giả định', tone: 'text-amber-600' },
   ];
 
+  function cleanArrowSymbols(text: string): string {
+    if (!text) return text;
+    return text
+      .replace(/\$*\\+rightarrow\$*/gi, ' → ')
+      .replace(/\$*\\+Rightarrow\$*/gi, ' ⇒ ')
+      .replace(/\$*\\+leftarrow\$*/gi, ' ← ')
+      .replace(/\$*\\+Leftarrow\$*/gi, ' ⇐ ');
+  }
+
   const formatBriefGroups = (groups: Record<string, Array<Record<string, string>>>) => (
     <div className="space-y-3">
       {SOURCE_GROUPS.map(({ key, label, hint, tone }) => {
@@ -115,7 +126,7 @@ function CheckpointCard({
                 {items.map((item) => (
                   <tr key={item.field} className="border-b border-border last:border-0">
                     <td className="py-2 px-3 font-medium text-text-muted w-2/5">{item.label}</td>
-                    <td className="py-2 px-3 text-text">{item.value}</td>
+                    <td className="py-2 px-3 text-text">{cleanArrowSymbols(item.value)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -151,7 +162,7 @@ function CheckpointCard({
                     {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                   </td>
                   <td className="py-2 px-3 text-text">
-                    {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                    {cleanArrowSymbols(typeof value === 'object' ? JSON.stringify(value) : String(value))}
                   </td>
                 </tr>
               ))}
@@ -358,6 +369,7 @@ export function ChatWindow({
   onClearError,
   onToggleContextPanel,
   onToggleMobileSidebar,
+  thinkingSteps = [],
 }: ChatWindowProps) {
   const [input, setInput] = useState('');
   const [showScrollButton, setShowScrollButton] = useState(false);
@@ -566,11 +578,26 @@ export function ChatWindow({
           const prevMsg = index > 0 ? messages[index - 1] : null;
           const isGrouped = prevMsg && prevMsg.role === msg.role && prevMsg.agent === msg.agent;
           const isLastMsg = index === messages.length - 1;
-          return <MessageBubble key={index} message={msg} isGrouped={!!isGrouped} isStreaming={isLastMsg && isLoading && msg.role === 'assistant'} />;
+          return (
+            <React.Fragment key={index}>
+              {/* Render attached thinking trace above each assistant message that has steps */}
+              {msg.role === 'assistant' && msg.thinkingSteps && msg.thinkingSteps.length > 0 && (
+                <ThinkingTrace steps={msg.thinkingSteps} isActive={false} />
+              )}
+              <MessageBubble message={msg} isGrouped={!!isGrouped} isStreaming={isLastMsg && isLoading && msg.role === 'assistant'} />
+            </React.Fragment>
+          );
         })}
 
+        {/* Live Thinking Trace — shows during processing before first content arrives */}
+        {isLoading && thinkingSteps.length > 0 && (
+          messages.length === 0 || messages[messages.length - 1].role === 'user'
+        ) && (
+          <ThinkingTrace steps={thinkingSteps} isActive={true} />
+        )}
+
         {/* Thinking Indicator — shows while waiting for first content OR during <think> reasoning */}
-        {isLoading && (
+        {isLoading && thinkingSteps.length === 0 && (
           isThinking ||
           (messages.length > 0 && messages[messages.length - 1].role === 'user')
         ) && (
