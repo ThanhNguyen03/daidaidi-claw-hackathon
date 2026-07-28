@@ -134,9 +134,12 @@ export function Sidebar({
         const headers: Record<string, string> = {};
         if (token) headers['Authorization'] = `Bearer ${token}`;
 
-        const apiBase = process.env.NEXT_PUBLIC_API_URL ||
+        // NEXT_PUBLIC_API_URL already contains /api (e.g. https://domain/api)
+        // So we strip it before appending /api/user/sessions to avoid double /api
+        const rawBase = process.env.NEXT_PUBLIC_API_URL ||
           (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
             ? '' : 'http://localhost:8000');
+        const apiBase = rawBase.endsWith('/api') ? rawBase.slice(0, -4) : rawBase;
         const res = await fetch(`${apiBase}/api/user/sessions`, { headers });
         if (res.ok) {
           const data = await res.json();

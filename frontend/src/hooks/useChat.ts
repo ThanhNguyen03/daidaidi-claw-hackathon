@@ -1071,7 +1071,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch(`${BACKEND_URL}/api/user/sessions/${targetSessionId}`, { headers });
+      // BACKEND_URL already contains /api (e.g. https://domain/api)
+      // Strip it before appending /api/user/sessions to avoid double /api
+      const sessionBaseUrl = BACKEND_URL.endsWith('/api') ? BACKEND_URL.slice(0, -4) : BACKEND_URL;
+      const res = await fetch(`${sessionBaseUrl}/api/user/sessions/${targetSessionId}`, { headers });
       if (!res.ok) {
         throw new Error('Không thể nạp lịch sử cuộc nói chuyện');
       }
