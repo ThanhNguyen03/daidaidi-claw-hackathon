@@ -8,9 +8,6 @@
 import React, { useState } from 'react';
 import {
   MessageCircle,
-  ClipboardList,
-  Rocket,
-  Lightbulb,
   Headphones,
   Plus,
   Clock,
@@ -47,12 +44,9 @@ interface AgentStatus {
 }
 
 
-const MODES: { id: ChatMode; label: string; icon: React.ReactNode; description: string; comingSoon?: boolean }[] = [
+const MODES: { id: ChatMode; label: string; icon: React.ReactNode; description: string }[] = [
   { id: 'chat', label: 'Chat', icon: <MessageCircle size={18} />, description: 'Q&A & advisory' },
   { id: 'cs', label: 'Customer Services', icon: <Headphones size={18} />, description: 'Customer Service' },
-  { id: 'planning', label: 'Planning', icon: <ClipboardList size={18} />, description: 'Coming soon', comingSoon: true },
-  { id: 'execute', label: 'Execute', icon: <Rocket size={18} />, description: 'Coming soon', comingSoon: true },
-  { id: 'brainstorm', label: 'Brainstorm', icon: <Lightbulb size={18} />, description: 'Coming soon', comingSoon: true },
 ];
 
 const SALE_AGENTS: { name: string; display_name: string }[] = [
@@ -178,12 +172,7 @@ export function Sidebar({
           {MODES.map((mode) => (
             <button
               key={mode.id}
-              onClick={() => {
-                if (!mode.comingSoon) {
-                  onModeChange(mode.id);
-                }
-              }}
-              disabled={mode.comingSoon}
+              onClick={() => onModeChange(mode.id)}
               className={`
                 flex items-center gap-3 rounded-md py-2.5 cursor-pointer
                 text-[12px] transition-all duration-150
@@ -191,7 +180,6 @@ export function Sidebar({
                   ? 'bg-accent-soft text-accent font-medium'
                   : 'text-text hover:bg-surface-hover'
                 }
-                ${mode.comingSoon ? 'opacity-60 cursor-not-allowed' : ''}
                 ${isCollapsed ? 'justify-center px-2' : 'px-3 justify-start'}
               `}
               title={mode.description}
@@ -199,16 +187,7 @@ export function Sidebar({
               <span className={currentMode === mode.id ? 'text-accent' : 'text-text-muted'}>
                 {mode.icon}
               </span>
-              {!isCollapsed && (
-                <span className="flex items-center gap-2">
-                  {mode.label}
-                  {mode.comingSoon && (
-                    <span className="text-[10px] uppercase tracking-wide text-orange-500 font-medium border border-neutral-800/10 rounded-full px-2 py-0.5">
-                      Soon
-                    </span>
-                  )}
-                </span>
-              )}
+              {!isCollapsed && <span className="flex items-center gap-2">{mode.label}</span>}
             </button>
           ))}
         </div>

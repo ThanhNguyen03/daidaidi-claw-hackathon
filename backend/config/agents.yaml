@@ -80,6 +80,23 @@ agents:
     hooks: [pre_checkpoint_review]
     critical: false
 
+  # CS mode — isolated from the sale-mode pipeline above, routed via cs_agent/agent.py
+  cs_agent:
+    name: "CS Assistant"
+    model: MODEL_CS_AGENT
+    role: "Sale-team support and bug intake for CSHub"
+    enabled: true
+    kind: generator
+    critical: false
+
+  predict_agent:
+    name: "Tarot & Fortune"
+    model: MODEL_PREDICT_AGENT
+    role: "Tarot/fortune reading — fun feature, routed to from cs_agent on divination triggers"
+    enabled: true
+    kind: generator
+    critical: false
+
 # Validation agent (used for pre-pass validation - outside agents block)
 validation:
   name: "Validation"
