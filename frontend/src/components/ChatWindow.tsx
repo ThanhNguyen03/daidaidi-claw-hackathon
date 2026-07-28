@@ -5,8 +5,10 @@
  * Uses Tailwind CSS for styling.
  */
 
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, Mic, MicOff } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { MessageBubble } from './MessageBubble';
 import { QuestionCard } from './QuestionCard';
 import { ThinkingTrace } from './ThinkingTrace';
@@ -101,13 +103,42 @@ function CheckpointCard({
     { key: 'assumed', label: 'Đang phỏng đoán', hint: 'chưa có dữ liệu, mình sẽ giả định', tone: 'text-amber-600' },
   ];
 
-  function cleanArrowSymbols(text: string): string {
-    if (!text) return text;
-    return text
+  function cleanAndTranslateCheckpointText(text: string): string {
+    if (!text) return '';
+    let s = text
       .replace(/\$*\\+rightarrow\$*/gi, ' → ')
       .replace(/\$*\\+Rightarrow\$*/gi, ' ⇒ ')
       .replace(/\$*\\+leftarrow\$*/gi, ' ← ')
       .replace(/\$*\\+Leftarrow\$*/gi, ' ⇐ ');
+
+    // Strip ASCII banners & double horizontal lines
+    s = s.replace(/^[-=]{3,}\s*[A-Z0-9_\s—\-]*\s*[-=]*$/gm, '');
+    s = s.replace(/^([=]{3,}|-{3,})$/gm, '');
+
+    // Translate common English headers & jargon to clean Vietnamese
+    s = s
+      .replace(/OVERALL VERDICT:\s*⚠️?\s*PROCEED WITH CONDITIONS/gi, '📌 Kết luận: ĐƯỢC TRIỂN KHAI CÓ ĐIỀU KIỆN ⚠️')
+      .replace(/OVERALL VERDICT:\s*PROCEED/gi, '📌 Kết luận: ĐƯỢC PHÉP TRIỂN KHAI 🟢')
+      .replace(/OVERALL VERDICT:\s*BLOCK/gi, '📌 Kết luận: CẦN TẠM DỪNG / CHẶN 🔴')
+      .replace(/Risk summary:\s*(\d+)\s*High\s*\|\s*(\d+)\s*Medium\s*\|\s*(\d+)\s*Note/gi, '📊 Mức độ rủi ro: $1 Cao | $2 Vừa | $3 Lưu ý')
+      .replace(/ASSUMPTIONS STATEMENT/gi, 'Giả định triển khai')
+      .replace(/RUNNING WITH ASSUMPTIONS/gi, 'Giả định thực thi')
+      .replace(/A4 COMPLIANCE REPORT/gi, 'Báo cáo tuân thủ & Pháp lý')
+      .replace(/PROPOSAL:\s*/gi, 'Đề xuất: ')
+      .replace(/SOLUTION ARCHITECTURE & PACKAGE MAPPING/gi, 'Kiến trúc giải pháp & Gói dịch vụ')
+      .replace(/SPECIFIC REQUIREMENTS:/gi, 'Yêu cầu cụ thể:')
+      .replace(/CONSTRAINTS:/gi, 'Ràng buộc & Hạn chế:')
+      .replace(/STRATEGIC DIAGNOSIS/gi, 'Chẩn đoán chiến lược')
+      .replace(/Campaign Scale:/gi, 'Quy mô chiến dịch:')
+      .replace(/Database Size:/gi, 'Dung lượng dữ liệu:')
+      .replace(/Primary Objective:/gi, 'Mục tiêu chính:')
+      .replace(/Total Budget:/gi, 'Tổng ngân sách:')
+      .replace(/Timeline:/gi, 'Thời gian triển khai:')
+      .replace(/Client:/gi, 'Khách hàng:')
+      .replace(/Industry:/gi, 'Ngành hàng:')
+      .replace(/Assumption (\d+)/gi, 'Giả định $1');
+
+    return s.trim();
   }
 
   const formatBriefGroups = (groups: Record<string, Array<Record<string, string>>>) => (
@@ -116,17 +147,17 @@ function CheckpointCard({
         const items = groups[key] || [];
         if (items.length === 0) return null;
         return (
-          <div key={key} className="bg-surface rounded overflow-hidden">
-            <div className="px-3 py-1.5 border-b border-border flex items-baseline gap-2">
+          <div key={key} className="bg-surface rounded-xl border border-border overflow-hidden shadow-sm">
+            <div className="px-3 py-2 bg-surface-2 border-b border-border flex items-baseline gap-2">
               <span className={`text-[12px] font-semibold ${tone}`}>{label}</span>
               <span className="text-[11px] text-text-muted">{hint}</span>
             </div>
             <table className="w-full border-collapse text-xs">
               <tbody>
                 {items.map((item) => (
-                  <tr key={item.field} className="border-b border-border last:border-0">
+                  <tr key={item.field} className="border-b border-border/50 last:border-0">
                     <td className="py-2 px-3 font-medium text-text-muted w-2/5">{item.label}</td>
-                    <td className="py-2 px-3 text-text">{cleanArrowSymbols(item.value)}</td>
+                    <td className="py-2 px-3 text-text">{cleanAndTranslateCheckpointText(item.value)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -137,7 +168,14 @@ function CheckpointCard({
     </div>
   );
 
-  // Format preview as a table
+  // Friendly Vietnamese Section Labels
+  const SECTION_LABELS: Record<string, { label: string; icon: string; bg: string; border: string }> = {
+    compliance: { label: '⚖️ Đánh giá Pháp lý & Tuân thủ (Compliance)', icon: '🛡️', bg: 'bg-amber-500/10 dark:bg-amber-900/20', border: 'border-amber-500/30' },
+    strategy: { label: '🎯 Định hình Chiến lược (Market Strategy)', icon: '📈', bg: 'bg-blue-500/10 dark:bg-blue-900/20', border: 'border-blue-500/30' },
+    solution: { label: '💡 Đề xuất Giải pháp & Gói sản phẩm (Product Solution)', icon: '🧩', bg: 'bg-purple-500/10 dark:bg-purple-900/20', border: 'border-purple-500/30' },
+  };
+
+  // Format preview with clear cards and Vietnamese labels
   const formatPreview = (preview: unknown): React.ReactNode => {
     if (!preview) return null;
 
@@ -152,27 +190,53 @@ function CheckpointCard({
       const entries = Object.entries(asRecord);
       if (entries.length === 0) return null;
 
+      // Re-order entries so compliance/verdict is ALWAYS ON TOP!
+      const sortedEntries = [...entries].sort(([a], [b]) => {
+        if (a === 'compliance') return -1;
+        if (b === 'compliance') return 1;
+        if (a === 'strategy') return -1;
+        if (b === 'strategy') return 1;
+        return 0;
+      });
+
       return (
-        <div className="bg-surface rounded overflow-hidden text-xs">
-          <table className="w-full border-collapse">
-            <tbody>
-              {entries.map(([key, value]) => (
-                <tr key={key} className="border-b border-border">
-                  <td className="py-2 px-3 font-medium text-text-muted w-2/5">
-                    {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
-                  </td>
-                  <td className="py-2 px-3 text-text">
-                    {cleanArrowSymbols(typeof value === 'object' ? JSON.stringify(value) : String(value))}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-3 my-2">
+          {sortedEntries.map(([key, value]) => {
+            const secInfo = SECTION_LABELS[key] || {
+              label: key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+              icon: '📌',
+              bg: 'bg-surface-2',
+              border: 'border-border',
+            };
+
+            const rawStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
+            const cleanedText = cleanAndTranslateCheckpointText(rawStr);
+
+            return (
+              <div
+                key={key}
+                className={`rounded-xl border ${secInfo.border} ${secInfo.bg} p-3.5 shadow-sm transition-all`}
+              >
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/40">
+                  <span className="text-[13px] font-bold text-text flex items-center gap-1.5">
+                    {secInfo.label}
+                  </span>
+                </div>
+                <div className="text-xs text-text leading-relaxed prose-sm max-w-none dark:prose-invert">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanedText}</ReactMarkdown>
+                </div>
+              </div>
+            );
+          })}
         </div>
       );
     }
 
-    return <pre className="whitespace-pre-wrap m-0">{String(preview)}</pre>;
+    return (
+      <div className="p-3 bg-surface-2 rounded-xl text-xs text-text leading-relaxed">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanAndTranslateCheckpointText(String(preview))}</ReactMarkdown>
+      </div>
+    );
   };
 
   // Chốt 1 exists so the rep can correct what we misread, which means Edit has to
@@ -289,14 +353,14 @@ function CheckpointCard({
 
           {/* Auto-approve checkbox */}
           {checkpoint.action.type !== 'send_external' && !isEditing && (
-            <label className="flex items-center gap-2 mb-3 text-xs text-text-muted cursor-pointer">
+            <label className="flex items-center gap-2 mb-3 text-xs text-text-muted cursor-pointer hover:text-text transition-colors">
               <input
                 type="checkbox"
                 checked={autoApprove}
                 onChange={(e) => setAutoApprove(e.target.checked)}
-                className="rounded"
+                className="rounded border-border text-accent focus:ring-accent"
               />
-              Don't ask again for {checkpoint.action.type} this session
+              Tự động duyệt bước này trong các lần tiếp theo của phiên
             </label>
           )}
 
@@ -306,15 +370,15 @@ function CheckpointCard({
               <>
                 <button
                   onClick={handleEditSubmit}
-                  className="flex items-center gap-1 px-4 py-2 bg-accent text-white rounded-md text-[12px] font-medium hover:opacity-90"
+                  className="flex items-center gap-1.5 px-4 py-2 bg-accent text-white rounded-xl text-xs font-semibold hover:opacity-90 transition-all shadow-sm active:scale-95"
                 >
-                  <Check size={16} /> Lưu & xem lại
+                  <Check size={16} /> Lưu & Xem lại
                 </button>
                 <button
                   onClick={() => setIsEditing(false)}
-                  className="flex items-center gap-1 px-4 py-2 border border-border text-text-muted rounded-md text-[12px] hover:bg-surface-hover"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-surface-2 text-text-muted rounded-xl text-xs font-medium hover:text-text hover:bg-surface-hover transition-all"
                 >
-                  <X size={16} /> Cancel
+                  Hủy
                 </button>
               </>
             ) : (
@@ -322,9 +386,9 @@ function CheckpointCard({
                 <button
                   onClick={onApprove}
                   disabled={hasBlocking}
-                  className={`flex items-center gap-1 px-4 py-2 rounded-md text-[12px] font-medium ${
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all shadow-sm active:scale-95 ${
                     hasBlocking
-                      ? 'bg-text-muted text-white cursor-not-allowed'
+                      ? 'bg-red-500/20 text-red-400 cursor-not-allowed'
                       : 'bg-accent text-white hover:opacity-90'
                   }`}
                 >
@@ -373,10 +437,52 @@ export function ChatWindow({
 }: ChatWindowProps) {
   const [input, setInput] = useState('');
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef<{ stop: () => void } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  // Track whether user is at the bottom so we only auto-scroll when appropriate
+
+  // Voice input via Web Speech API
+  const toggleVoice = useCallback(() => {
+    interface SpeechRec { lang: string; continuous: boolean; interimResults: boolean; onstart: (() => void) | null; onresult: ((e: {resultIndex: number; results: Array<{isFinal: boolean; 0: {transcript: string}}>}) => void) | null; onend: (() => void) | null; onerror: (() => void) | null; start: () => void; stop: () => void; }
+    const SpeechRecognitionAPI: (new () => SpeechRec) | undefined = (window as unknown as {SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec}).SpeechRecognition ?? (window as unknown as {SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec}).webkitSpeechRecognition;
+    if (!SpeechRecognitionAPI) {
+      alert('Trình duyệt không hỗ trợ nhận giọng nói. Dùng Chrome/Edge nhé!');
+      return;
+    }
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+    const recognition = new SpeechRecognitionAPI();
+    recognition.lang = 'vi-VN';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    let finalTranscript = '';
+    recognition.onstart = () => setIsRecording(true);
+    recognition.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalTranscript += t;
+        else interim = t;
+      }
+      setInput((prev) => (prev.trim() ? prev + ' ' : '') + finalTranscript + interim);
+    };
+    recognition.onend = () => {
+      setIsRecording(false);
+      recognitionRef.current = null;
+      textareaRef.current?.focus();
+    };
+    recognition.onerror = () => { setIsRecording(false); recognitionRef.current = null; };
+    recognitionRef.current = recognition;
+    recognition.start();
+  }, [isRecording]);
+
+  // Stop recording on unmount
+  useEffect(() => () => { recognitionRef.current?.stop(); }, []);
   const isAtBottomRef = useRef(true);
 
   // Streaming rewrites the last message on every token, so this effect fires dozens
@@ -677,6 +783,20 @@ export function ChatWindow({
               style={{ lineHeight: '1.5' }}
             />
           </div>
+          {/* Voice input button */}
+          <button
+            type="button"
+            onClick={toggleVoice}
+            disabled={isLoading}
+            title={isRecording ? 'Dừng ghi âm' : 'Nhập bằng giọng nói (tiếng Việt)'}
+            className={`shrink-0 p-2.5 sm:p-3 rounded-2xl transition-all border ${
+              isRecording
+                ? 'bg-red-500/10 border-red-500/50 text-red-400 animate-pulse'
+                : 'bg-surface-2 border-border text-text-muted hover:text-accent hover:border-accent/50'
+            } ${isLoading ? 'opacity-40 cursor-not-allowed' : ''}`}
+          >
+            {isRecording ? <MicOff size={16} /> : <Mic size={16} />}
+          </button>
           <button
             type="button"
             onClick={handleSubmit}
