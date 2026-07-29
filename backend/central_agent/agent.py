@@ -1238,7 +1238,7 @@ class CentralAgent:
                 # Re-running is what a *rejection* is for (BRD §11.3).
                 if resuming and skill_name not in _ALWAYS_SEQUENTIAL:
                     prior = state.outputs.get(skill_name)
-                    if prior is not None and _safe_field(prior, "status", "") == "COMPLETE":
+                    if prior is not None and _safe_field(prior, "status", "") in ("COMPLETE", "PARTIAL"):
                         print(f"[CentralAgent] {skill_name}: reusing result from before the checkpoint")
                         continue
                 # Merge prior session outputs with current-run group outputs so skills
@@ -1314,7 +1314,7 @@ class CentralAgent:
                         all_outputs[skill_name] = out
                         state.outputs[skill_name] = AgentOutput(
                             agent=skill_name,
-                            status="COMPLETE" if out.status == "COMPLETE" else "FAILED",
+                            status=out.status if out.status in ("COMPLETE", "PARTIAL") else "FAILED",
                             payload=out.payload,
                             summary=out.summary,
                             content=out.content,
@@ -1325,11 +1325,17 @@ class CentralAgent:
                         # a full row of green ticks, and only the final message admitted
                         # anything was wrong. The status event carries the real status.
                         #
+                        # PARTIAL (truncated by max_tokens, see skills/base.py) is grouped
+                        # with COMPLETE here, not with FAILED: it still has real content —
+                        # every skill already appends "[Bị cắt do giới hạn độ dài]" to its
+                        # own summary, which is the signal the rep actually needs, not a
+                        # false "thất bại" for output that only got cut short.
+                        #
                         # The model comes along with it because it is not knowable from
                         # config: a fallback means the skill ran on something other than
                         # its MODEL_<NAME>, and that is worth seeing on the row itself.
                         model_used = get_tracker().last_model_for(skill_name)
-                        if out.status == "COMPLETE":
+                        if out.status in ("COMPLETE", "PARTIAL"):
                             yield {"type": "agent_status", "agent": skill_name,
                                    "status": "completed", "model": model_used}
                             yield {
@@ -1376,7 +1382,7 @@ class CentralAgent:
         # Step 3C: Auto-trigger wireframe_designer after proposal_assembler (only if COMPLETE)
         for trigger_skill, auto_skill in _AUTO_AFTER.items():
             trigger_out = all_outputs.get(trigger_skill)
-            if (trigger_out and trigger_out.status == "COMPLETE"
+            if (trigger_out and trigger_out.status in ("COMPLETE", "PARTIAL")
                     and trigger_out.content and auto_skill not in all_outputs):
                 auto = skill_registry.get(auto_skill)
                 if auto:
@@ -1405,7 +1411,7 @@ class CentralAgent:
                         all_outputs[auto_skill] = auto_out
                         state.outputs[auto_skill] = AgentOutput(
                             agent=auto_skill,
-                            status="COMPLETE" if auto_out.status == "COMPLETE" else "FAILED",
+                            status=auto_out.status if auto_out.status in ("COMPLETE", "PARTIAL") else "FAILED",
                             payload=auto_out.payload,
                             summary=auto_out.summary,
                             content=auto_out.content,
@@ -1434,7 +1440,7 @@ class CentralAgent:
         _is_deck_request = any(kw in _msg_lower for kw in _DECK_REQUEST_KWS)
         if _is_deck_request and not conversational and "wireframe_designer" not in all_outputs:
             prior_pa = state.outputs.get("proposal_assembler")
-            if (prior_pa and _safe_field(prior_pa, "status", "") == "COMPLETE"
+            if (prior_pa and _safe_field(prior_pa, "status", "") in ("COMPLETE", "PARTIAL")
                     and _safe_field(prior_pa, "content", "")):
                 _deck_skill = skill_registry.get("wireframe_designer")
                 if _deck_skill:
@@ -1463,7 +1469,7 @@ class CentralAgent:
                         all_outputs["wireframe_designer"] = deck_out
                         state.outputs["wireframe_designer"] = AgentOutput(
                             agent="wireframe_designer",
-                            status="COMPLETE" if deck_out.status == "COMPLETE" else "FAILED",
+                            status=deck_out.status if deck_out.status in ("COMPLETE", "PARTIAL") else "FAILED",
                             payload=deck_out.payload,
                             summary=deck_out.summary,
                             content=deck_out.content,

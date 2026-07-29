@@ -87,17 +87,13 @@ const MODES: { id: ChatMode; label: string; icon: React.ReactNode; description: 
 ];
 
 const SALE_AGENTS: { name: string; display_name: string }[] = [
-  { name: 'market_strategy', display_name: 'Market Strategy' },
-  { name: 'compliance', display_name: 'Compliance' },
-  { name: 'product_solution', display_name: 'Product Solution' },
-  { name: 'client_simulator', display_name: 'Client Simulator' },
-  { name: 'proposal_assembler', display_name: 'Proposal Assembler' },
-  { name: 'wireframe_designer', display_name: 'Deck Generator' },
-];
-
-const CS_AGENTS: { name: string; display_name: string }[] = [
-  { name: 'cs_agent', display_name: 'CS Assistant' },
-  { name: 'predict_agent', display_name: 'Tarot & Fortune' },
+  { name: 'market_strategy', display_name: 'Orchestrator' },
+  { name: 'compliance', display_name: 'Requirement Elicitor' },
+  { name: 'product_solution', display_name: 'Strategy Analyst' },
+  { name: 'design', display_name: 'Solution Designer' },
+  { name: 'client_simulator', display_name: 'Compliance Checker' },
+  { name: 'proposal_assembler', display_name: 'Client Debater' },
+  { name: 'wireframe_designer', display_name: 'Proposal Builder' },
 ];
 
 // Status color classes
@@ -240,7 +236,7 @@ function SidebarInner({
     }
   };
 
-  const displayAgents = currentMode === 'cs' ? CS_AGENTS : SALE_AGENTS;
+  const displayAgents = SALE_AGENTS;
 
   // Create a map of agent statuses
   const agentStatusMap = new Map<string, AgentStatus['status']>();
@@ -265,7 +261,7 @@ function SidebarInner({
         <div className="mb-3">
           {!isCollapsed && (
             <>
-              <h1 className="text-[18px] font-bold text-gradient-tech">AdtimaBox Sales Agent</h1>
+              <h1 className="text-[18px] font-bold text-gradient-tech">Z-PreSales Agent</h1>
               <p className="text-xs text-text-muted">Multi-Agent Assistant</p>
             </>
           )}
@@ -433,6 +429,7 @@ function SidebarInner({
             </div>
           )}
 
+          {currentMode !== 'cs' && (
           <div className="mb-6 mt-4">
             {!isCollapsed && (
               <div
@@ -513,6 +510,7 @@ function SidebarInner({
             </div>
             )}
           </div>
+          )}
         </div>
 
         <div className='w-full flex flex-col'>

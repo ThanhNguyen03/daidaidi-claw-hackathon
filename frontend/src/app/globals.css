@@ -712,7 +712,8 @@ html {
   .tf-ring,
   .tf-wipe,
   .tf-boot-line,
-  .tf-booting .tf-card {
+  .tf-booting .tf-card,
+  .tf-orb {
     animation: none !important;
   }
   .tf-booting .tf-card { opacity: 0; }
@@ -853,9 +854,49 @@ html {
   border: 1px solid var(--color-border);
   border-radius: 20px;
   padding: 32px;
-  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255,255,255,0.05);
+  /* Base shadow plus the same violet halo .tf-card carries elsewhere — kept
+     explicit here (not inherited from the .tf-card class this element also
+     wears) because .auth-modal-card is declared later in the cascade and
+     would otherwise silently win with its plainer shadow. */
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255,255,255,0.05),
+              0 0 60px -20px rgba(124, 108, 245, 0.55);
   max-height: 80dvh;
   overflow-y: auto;
+}
+
+/* Two slow-drifting glow orbs behind the login card — same idea as the
+   boot screen's lattice/sweep, sized down and dialed back so they read as
+   ambient light rather than competing with the form. */
+.tf-orb {
+  position: absolute;
+  z-index: -1;
+  border-radius: 50%;
+  filter: blur(40px);
+  pointer-events: none;
+}
+.tf-orb--1 {
+  width: 260px;
+  height: 260px;
+  left: 8%;
+  top: 12%;
+  background: radial-gradient(circle, rgba(124, 108, 245, 0.35), transparent 70%);
+  animation: tf-orb-drift-a 14s ease-in-out infinite;
+}
+.tf-orb--2 {
+  width: 220px;
+  height: 220px;
+  right: 10%;
+  bottom: 14%;
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.3), transparent 70%);
+  animation: tf-orb-drift-b 17s ease-in-out infinite;
+}
+@keyframes tf-orb-drift-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(24px, 18px, 0) scale(1.12); }
+}
+@keyframes tf-orb-drift-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(-20px, -22px, 0) scale(1.08); }
 }
 
 .auth-modal-header {

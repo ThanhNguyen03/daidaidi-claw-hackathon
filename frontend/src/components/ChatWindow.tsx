@@ -742,7 +742,7 @@ export function ChatWindow({
               ) : (
                 <>
                   <p className="mb-1.5 text-base text-text sm:text-[16px]">
-                    Chào bạn 👋 Mình là AdtimaBox Sales Agent
+                    Chào bạn 👋 Mình là Z-PreSales Agent
                   </p>
                   <p className="text-xs sm:text-[12px]">
                     Mô tả brief của khách, mình lo phần chiến lược, giải pháp, pháp lý và báo giá.
@@ -898,7 +898,7 @@ export function ChatWindow({
                 t.style.height = 'auto';
                 t.style.height = Math.min(t.scrollHeight, 120) + 'px';
               }}
-              placeholder={mode === 'cs' ? 'Hỏi về CSHub, hoặc mô tả bug...' : 'Message AdtimaBox Sales Agent...'}
+              placeholder={mode === 'cs' ? 'Hỏi về CSHub, hoặc mô tả bug...' : 'Message Z-PreSales Agent...'}
               disabled={isLoading}
               rows={1}
               onKeyDown={(e) => {
