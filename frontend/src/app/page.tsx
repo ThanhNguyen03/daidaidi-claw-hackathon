@@ -143,12 +143,6 @@ export default function Home() {
     document.documentElement.classList.toggle('dark', dark);
   }, []);
 
-  // Open context panel by default on large screens only
-  useEffect(() => {
-    if (window.innerWidth >= 1024) {
-      setContextPanelOpen(true);
-    }
-  }, []);
 
   // Toggle theme function
   const toggleTheme = useCallback(() => {
@@ -297,9 +291,6 @@ export default function Home() {
         isBusy={isLoading}
       />
 
-      {/* Backdrop behind the mobile drawer. Desktop never sets sidebarOpen from
-          a closed state that matters here since the aside is always visible
-          via md:translate-x-0, so this backdrop only ever appears below md. */}
       {sidebarOpen && (
         <div
           className="md:hidden fixed inset-0 z-40 bg-black/50"
@@ -338,6 +329,7 @@ export default function Home() {
           onEditCheckpoint={editCheckpoint}
           onClearError={clearError}
           onToggleContextPanel={toggleContextPanel}
+          isContextPanelOpen={contextPanelOpen}
           onToggleMobileSidebar={toggleSidebar}
           onModeChange={setMode}
           onNewChat={handleNewChat}

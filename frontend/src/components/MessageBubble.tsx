@@ -342,7 +342,7 @@ const MermaidDiagram = React.memo(function MermaidDiagram({ chart, isStreaming =
   }
 
   return (
-    <div className="relative group my-4 rounded-xl border border-border/80 bg-surface-2/60 overflow-hidden shadow-sm hover:border-accent/60 transition-all">
+    <div className="relative group my-4 rounded-xl border border-border/80 bg-surface-2/60 overflow-hidden shadow-xs hover:border-accent/60 transition-all">
       <div className="flex items-center justify-between px-3 py-1.5 bg-surface-2/90 border-b border-border/50 text-xs">
         <span className="font-semibold text-[11px] uppercase tracking-wider text-text-muted flex items-center gap-1.5">
           📊 Sơ đồ quy trình (Diagram)
@@ -359,7 +359,7 @@ const MermaidDiagram = React.memo(function MermaidDiagram({ chart, isStreaming =
       <div
         ref={containerRef}
         className={`mermaid-diagram flex justify-center overflow-auto transition-all ${
-          isZoomed ? 'max-h-[85vh] p-4' : 'max-h-[260px] p-3'
+          isZoomed ? 'max-h-[85vh] p-4' : 'max-h-65 p-3'
         }`}
       />
     </div>
@@ -809,14 +809,14 @@ function PhoneScreenSection({ specs }: { specs: ScreenSpec[] }) {
             {/* Screen */}
             <div style={{ flex: 1, background: '#f8f8f8', borderRadius: '14px', overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
               {/* App bar */}
-              <div style={{ background: '#F65009', padding: '5px 8px', flexShrink: 0, textAlign: 'center' }}>
+              <div style={{ background: '#0068ff', padding: '5px 8px', flexShrink: 0, textAlign: 'center' }}>
                 <span style={{ color: '#fff', fontSize: '9px', fontWeight: 700, letterSpacing: '0.03em' }}>{spec.appName || 'Mini App'}</span>
               </div>
               {/* Content */}
               <div style={{ flex: 1, overflow: 'hidden', padding: '5px 4px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
                 {spec.items.map((item, ii) => {
                   if (item.type === 'button') return (
-                    <div key={ii} style={{ background: '#F65009', borderRadius: '5px', padding: '5px 6px', textAlign: 'center', color: '#fff', fontSize: '7.5px', fontWeight: 700, margin: '2px 3px', flexShrink: 0 }}>
+                    <div key={ii} style={{ background: '#0068ff', borderRadius: '5px', padding: '5px 6px', textAlign: 'center', color: '#fff', fontSize: '7.5px', fontWeight: 700, margin: '2px 3px', flexShrink: 0 }}>
                       {item.text}
                     </div>
                   );
@@ -926,7 +926,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
       const text = React.Children.toArray(children).map(c => typeof c === 'string' ? c : '').join('');
       if (/^[—\s]*SECTION\s*\d*\s*—/i.test(text.trim())) {
         return (
-          <div className="my-5 p-3 rounded-xl border border-accent/40 bg-accent/5 flex items-center justify-between shadow-sm">
+          <div className="my-5 p-3 rounded-xl border border-accent/40 bg-accent/5 flex items-center justify-between shadow-xs">
             <span className="text-xs font-bold text-accent tracking-wider uppercase">{text.replace(/^[—\s]*/, '').replace(/—[—\s]*$/, '')}</span>
           </div>
         );
@@ -947,8 +947,8 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
       const text = React.Children.toArray(children).map(c => typeof c === 'string' ? c : '').join('');
       if (/SECTION\s*\d*/i.test(text)) {
         return (
-          <div className="my-5 p-3 rounded-xl border border-accent/40 bg-accent/10 flex items-center gap-2 shadow-sm">
-            <span className="px-2 py-0.5 rounded bg-accent text-white text-[10px] font-bold uppercase tracking-wider">Section</span>
+          <div className="my-5 p-3 rounded-xl border border-accent/40 bg-accent/10 flex items-center gap-2 shadow-xs">
+            <span className="px-2 py-0.5 rounded-sm bg-accent text-white text-[10px] font-bold uppercase tracking-wider">Section</span>
             <h3 className="text-sm font-bold text-text m-0">{text.replace(/^[—\s]*SECTION\s*\d*\s*—?\s*/i, '')}</h3>
           </div>
         );
@@ -1093,28 +1093,29 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
     },
     hr: () => (
       <div className="my-6 flex items-center gap-3 opacity-80">
-        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+        <div className="flex-1 h-px bg-linear-to-r from-transparent via-border to-transparent" />
         <span className="w-1.5 h-1.5 rounded-full bg-accent/50" />
-        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+        <div className="flex-1 h-px bg-linear-to-r from-transparent via-border to-transparent" />
       </div>
     ),
     blockquote: ({ children }: { children: React.ReactNode }) => (
-      <blockquote className="my-4 p-3.5 rounded-xl border-l-4 border-accent bg-surface-2/60 text-text-muted text-xs sm:text-sm italic shadow-sm">
+      <blockquote className="my-4 p-3.5 rounded-xl border-l-4 border-accent bg-surface-2/60 text-text-muted text-xs sm:text-sm italic shadow-xs">
         {children}
       </blockquote>
     ),
     img: ({ src, alt }: { src?: string; alt?: string }) => (
       <div className="relative group inline-block my-2 overflow-hidden rounded-xl border border-border shadow-md transition-all hover:shadow-lg hover:border-accent">
+        {/* eslint-disable-next-line @next/next/no-img-element -- markdown-supplied src, arbitrary external domain, unknown at build time */}
         <img
           src={src}
           alt={alt || 'Thumbnail preview'}
-          className="max-w-[260px] max-h-[160px] object-cover cursor-pointer transition-transform duration-300 group-hover:scale-[1.03]"
+          className="max-w-65 max-h-40 object-cover cursor-pointer transition-transform duration-300 group-hover:scale-[1.03]"
           onClick={() => src && setSelectedImageSrc(src)}
         />
         <div
           className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer pointer-events-none"
         >
-          <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface/90 text-[11px] font-medium text-text shadow">
+          <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface/90 text-[11px] font-medium text-text shadow-sm">
             <ZoomIn size={14} /> Zoom
           </span>
         </div>
@@ -1156,7 +1157,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
               background: 'linear-gradient(135deg, var(--color-accent) 0%, rgba(56, 189, 248, 0.8) 100%)',
               color: '#ffffff',
               borderRadius: '1rem 1rem 0.25rem 1rem',
-              boxShadow: 'var(--shadow-sm), 0 4px 14px 0 rgba(124, 108, 245, 0.39)',
+              boxShadow: 'var(--shadow-sm), 0 4px 14px 0 rgba(0, 104, 255, 0.39)',
               fontSize: '15px',
               lineHeight: 1.6,
             }}
@@ -1180,7 +1181,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
     <div className={`flex gap-2 sm:gap-3 animate-fade-in-up ${isGrouped ? 'mt-1' : 'mt-3 sm:mt-4'}`}>
       {/* Avatar */}
       {!isGrouped && (
-        <div className="shrink-0 aspect-square p-2 size-fit rounded-full flex items-center justify-center text-white bg-blue-500 glow-border" style={{boxShadow: '0 0 12px rgba(59, 130, 246, 0.5)'}}>
+        <div className="shrink-0 aspect-square p-2 size-fit rounded-full flex items-center justify-center text-white bg-accent glow-border" style={{boxShadow: '0 0 12px rgba(0, 104, 255, 0.5)'}}>
           <Bot size={16} className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
         </div>
       )}
@@ -1192,7 +1193,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
       <div className="flex flex-col items-start flex-1 glass-panel glow-border p-4 sm:p-5 rounded-2xl" style={{ maxWidth: '100%' }}>
         {/* Agent name */}
         {showHeader && (
-          <span className="text-[12px] sm:text-sm font-medium mb-1.5 sm:mb-2 ml-1 text-blue-500" >
+          <span className="text-[12px] sm:text-sm font-medium mb-1.5 sm:mb-2 ml-1 text-accent" >
             AdtimaBox Agent
           </span>
         )}
@@ -1225,7 +1226,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
               marginTop: '16px',
               padding: '14px 18px',
               borderRadius: '10px',
-              border: '1.5px solid rgba(246,80,9,0.5)',
+              border: '1.5px solid rgba(0,104,255,0.35)',
               background: 'var(--color-surface)',
               display: 'flex',
               alignItems: 'center',
@@ -1247,7 +1248,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
                   gap: '6px',
                   padding: '7px 16px',
                   borderRadius: '6px',
-                  background: '#0F9B8E',
+                  background: '#0068ff',
                   color: '#fff',
                   fontSize: '13px',
                   fontWeight: 600,
@@ -1268,8 +1269,9 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
                   gap: '6px',
                   padding: '7px 16px',
                   borderRadius: '6px',
-                  background: '#F65009',
-                  color: '#fff',
+                  background: 'transparent',
+                  border: '1.5px solid #0068ff',
+                  color: 'var(--color-accent)',
                   fontSize: '13px',
                   fontWeight: 600,
                   textDecoration: 'none',

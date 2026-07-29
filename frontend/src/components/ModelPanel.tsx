@@ -124,16 +124,14 @@ export function ModelPanel({ isOpen, onClose }: ModelPanelProps) {
 
   const models: ModelInfo[] = data?.models ?? [];
   const skills: SkillModel[] = data?.skills ?? [];
-  // Only offer models that can actually serve a request. A zero allowance in the
-  // limits file means "known not to work on this tier" — offering it as a choice
-  // would be offering a way to break the demo.
+  
   const selectable = models.filter((m) => (m.limit_rpd ?? 0) > 0).map((m) => m.model);
   const globalOverride = data?.overrides?.['*'] ?? '';
 
   return (
     <div className="modal-scrim items-start p-4">
       <div className="w-full max-w-2xl rounded-xl my-8 modal-card">
-        <header className="flex items-center justify-between px-5 py-4 border-b border-border">
+        <header className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-border">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
             <Cpu size={16} />
             Model &amp; Quota
@@ -157,9 +155,10 @@ export function ModelPanel({ isOpen, onClose }: ModelPanelProps) {
           </div>
         </header>
 
+        <div className="modal-card-body">
         {error && (
           <div className="mx-5 mt-4 flex items-start gap-2 text-xs text-status-failed">
-            <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <span>{error}</span>
           </div>
         )}
@@ -174,13 +173,13 @@ export function ModelPanel({ isOpen, onClose }: ModelPanelProps) {
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <span
-                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      className="w-2 h-2 rounded-full shrink-0"
                       style={{ backgroundColor: STATE_COLOR[m.state] ?? STATE_COLOR.unused }}
                     />
                     <span className="text-xs font-medium text-text truncate">{m.model}</span>
                   </div>
                   <span
-                    className="text-[11px] flex-shrink-0"
+                    className="text-[11px] shrink-0"
                     style={{ color: STATE_COLOR[m.state] ?? STATE_COLOR.unused }}
                   >
                     {STATE_LABEL[m.state] ?? m.state}
@@ -275,10 +274,11 @@ export function ModelPanel({ isOpen, onClose }: ModelPanelProps) {
             </p>
           ) : null}
         </section>
+        </div>
 
         {data?.caveat && (
-          <footer className="flex items-start gap-2 px-5 py-3 border-t border-border text-[11px] text-text-muted">
-            <Info size={13} className="mt-0.5 flex-shrink-0" />
+          <footer className="shrink-0 flex items-start gap-2 px-5 py-3 border-t border-border text-[11px] text-text-muted">
+            <Info size={13} className="mt-0.5 shrink-0" />
             <span>{data.caveat}</span>
           </footer>
         )}

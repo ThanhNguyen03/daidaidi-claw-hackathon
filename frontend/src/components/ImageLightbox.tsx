@@ -70,6 +70,7 @@ export function ImageLightbox({ src, alt, isOpen, onClose }: ImageLightboxProps)
         </div>
 
         {/* Full-size image */}
+        {/* eslint-disable-next-line @next/next/no-img-element -- arbitrary runtime src (data URI or external artifact URL), no fixed dimensions for next/image */}
         <img
           src={src}
           alt={alt || 'Full size preview'}
