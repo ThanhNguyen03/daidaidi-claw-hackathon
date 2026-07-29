@@ -290,7 +290,7 @@ function SidebarInner({
         </button>
       </div>
 
-      <div className='p-4 flex flex-col justify-between overflow-y-auto overflow-x-hidden flex-1 min-h-0 relative' style={{scrollbarGutter: "stable"}}>
+      <div className='p-2 md:p-4 flex flex-col justify-between items-center overflow-y-auto overflow-x-hidden flex-1 min-h-0 relative' >
         <div className='w-full flex flex-col'>
           {/* Mode Switcher */}
           {!isCollapsed && (

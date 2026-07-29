@@ -669,7 +669,7 @@ export function ChatWindow({
               directly on the Sidebar component, off-canvas. */}
           <button
             onClick={onToggleMobileSidebar}
-            className="md:hidden p-1.5 sm:p-2 border border-border rounded-lg hover:bg-surface-hover transition-all"
+            className="md:hidden p-1.5 sm:p-2 border border-border rounded-lg hover:bg-surface-hover transition-all flex items-center justify-center"
             aria-label="Mở menu"
           >
             <Menu size={18} className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
@@ -729,7 +729,7 @@ export function ChatWindow({
           {onToggleContextPanel && (
             <button
               onClick={onToggleContextPanel}
-              className="flex p-1.5 sm:p-2 border border-border rounded-lg hover:bg-surface-hover transition-all"
+              className="flex p-1.5 sm:p-2 border border-border rounded-lg hover:bg-surface-hover transition-all items-center justify-center"
               title={isContextPanelOpen ? 'Close Context Panel' : 'Open Context Panel'}
             >
               {isContextPanelOpen ? (
@@ -918,7 +918,7 @@ export function ChatWindow({
                   handleSubmit(e);
                 }
               }}
-              className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-border rounded-2xl text-sm sm:text-[13px] resize-none min-h-11 sm:min-h-12 bg-surface-2 text-text placeholder:text-text-muted/60 focus:border-accent focus:ring-2 focus:ring-accent/20 outline-hidden transition-all"
+              className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-border rounded-2xl text-sm sm:text-[13px] resize-none min-h-11 sm:min-h-12 bg-surface-2 text-text placeholder:text-text-muted/60 placeholder:truncate focus:border-accent focus:ring-2 focus:ring-accent/20 outline-hidden transition-all"
               style={{ lineHeight: '1.5' }}
             />
           </div>

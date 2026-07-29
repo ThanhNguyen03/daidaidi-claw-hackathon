@@ -396,6 +396,17 @@ a:hover {
     min-height: 44px;
   }
 
+  /* min-width too, scoped to actual buttons only (not `a`/`input`/`select` —
+     an inline text link or a narrow form input picking up a forced 44px
+     width is a different, unwanted kind of layout break). Without it, every
+     icon-only button (hamburger, new-chat, panel-toggle) narrower than 44px
+     only grew taller from the min-height rule above, not wider — a 32px-wide
+     button stretched into a 32x44 rectangle instead of a 44x44 square. */
+  button,
+  [role="button"] {
+    min-width: 44px;
+  }
+
   /* Larger touch targets for primary actions */
   button:active {
     transform: scale(0.97);
