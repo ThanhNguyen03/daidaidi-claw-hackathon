@@ -42,13 +42,25 @@ interface Artifact {
 // the older checkpoint-approval flow, currently empty because that flow doesn't
 // run any more) double as a running index of every deck/PPTX this conversation
 // has produced, not just the latest one.
-function proposalAssetsToArtifacts(assets: { deck_url?: string; pptx_url?: string }): Artifact[] {
+function proposalAssetsToArtifacts(
+  assets: { deck_url?: string; pptx_url?: string },
+  createdAtIso?: string
+): Artifact[] {
+  // Every deck this session produces is titled identically ("Đề xuất (HTML)"),
+  // so two real, distinct proposals (e.g. rebuilt after a follow-up edit) were
+  // indistinguishable in the list — a rep had no way to tell which entry was
+  // which before clicking. A time suffix is enough to tell them apart without
+  // needing a real per-artifact label from the backend.
+  const stamp = new Date(createdAtIso ?? Date.now()).toLocaleTimeString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
   const out: Artifact[] = [];
   if (assets.deck_url) {
     out.push({
       id: assets.deck_url,
       type: 'wireframe',
-      title: 'Đề xuất (HTML)',
+      title: `Đề xuất (HTML) — ${stamp}`,
       download_url: assets.deck_url,
     });
   }
@@ -56,7 +68,7 @@ function proposalAssetsToArtifacts(assets: { deck_url?: string; pptx_url?: strin
     out.push({
       id: assets.pptx_url,
       type: 'pptx',
-      title: 'Đề xuất (PPTX)',
+      title: `Đề xuất (PPTX) — ${stamp}`,
       download_url: assets.pptx_url,
     });
   }
@@ -1147,9 +1159,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       // stream would have put it, so MessageBubble's existing download buttons
       // just work without new UI.
       let msgs: Message[] = data.messages || [];
+      let lastAssistantTimestamp: string | undefined;
       if (data.proposal_assets && msgs.length > 0) {
         const lastAssistantIdx = msgs.map((m) => m.role).lastIndexOf('assistant');
         if (lastAssistantIdx !== -1) {
+          lastAssistantTimestamp = msgs[lastAssistantIdx].timestamp;
           msgs = msgs.map((m, i) =>
             i === lastAssistantIdx ? { ...m, proposalAssets: data.proposal_assets } : m
           );
@@ -1159,7 +1173,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       // Reset rather than merge: this is a different conversation, and the
       // previous session's artifact list (or the stale sessionStorage copy the
       // legacy checkpoint flow writes) must not bleed into it.
-      setArtifacts(data.proposal_assets ? proposalAssetsToArtifacts(data.proposal_assets) : []);
+      setArtifacts(
+        data.proposal_assets
+          ? proposalAssetsToArtifacts(data.proposal_assets, lastAssistantTimestamp)
+          : []
+      );
       if (data.brief) setBrief(data.brief);
       setPendingQuestions([]);
       setActiveCheckpoint(null);
