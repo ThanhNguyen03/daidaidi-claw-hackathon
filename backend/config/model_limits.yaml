@@ -1,9 +1,9 @@
-# Free-tier rate limits per model, used only to render "how much is left".
+# Rate limits per model, used only to render "how much is left".
 #
 # These are declared, not discovered: Google exposes no API that reports remaining
 # quota for a key. The AI Studio "Rate Limit" page shows it, and these numbers were
-# read off that page for this project's key on 2026-07-26. If the plan changes, or a
-# model's free-tier allowance changes, edit this file — no deploy needed.
+# read off that page for this project's key. If the plan changes, or a model's
+# allowance changes, edit this file — no deploy needed.
 #
 # rpm — requests per minute
 # rpd — requests per day (the one that actually stops a demo: it does not clear
@@ -11,24 +11,33 @@
 #
 # A model absent from this table still works and is still counted; it just shows a
 # usage count with no ceiling to compare against.
+#
+# Updated 2026-07-29: project moved to Tier 1 (billing linked, $250 cap) on
+# 2026-07-28. The numbers below are Tier 1's, read off the same Rate Limit page —
+# the original 2026-07-26 numbers were free tier and are now wrong by 50-500x
+# (e.g. gemini-3.6-flash's real RPD ceiling is 10,000, not 20). `out_of_quota_today`
+# 429s seen right after the upgrade were almost certainly still against the old
+# free-tier ceiling — Google's own 28-day peak-usage chart for this project never
+# exceeded 25 RPD on gemini-3.6-flash, nowhere near either the old or new ceiling,
+# so there was never a real Tier-1 quota problem to chase.
 models:
   gemini-3.6-flash:
-    rpm: 5
-    rpd: 20
-    note: The workhorse. Tightest daily allowance of the three we use.
+    rpm: 1000
+    rpd: 10000
+    note: The workhorse. Tier 1.
   gemini-3.5-flash-lite:
-    rpm: 15
-    rpd: 500
-    note: Widest allowance by far — first fallback, and the planner/deck extractor.
+    rpm: 4000
+    rpd: 150000
+    note: Widest allowance by far — first fallback, and the planner/deck extractor. Tier 1.
   gemini-3.5-flash:
-    rpm: 5
-    rpd: 20
-    note: Second fallback.
+    rpm: 1000
+    rpd: 10000
+    note: Second fallback. Tier 1.
   gemini-2.5-flash:
-    rpm: 5
-    rpd: 20
+    rpm: 1000
+    rpd: 10000
     note: Listed by the models endpoint but 404s on this key. Not in the chain.
   gemini-3.1-pro-preview:
     rpm: 0
     rpd: 0
-    note: 429s immediately on free tier. Not in the chain.
+    note: 429s immediately on free tier — not re-measured since the Tier 1 upgrade. Not in the chain.
