@@ -89,9 +89,9 @@ function mergeArtifacts(prev: Artifact[], fresh: Artifact[]): Artifact[] {
 // of erasing the card and showing a bare "continue".
 function checkpointTitle(checkpoint: Checkpoint): string {
   return checkpoint.action.type === 'confirm_brief'
-    ? 'Chốt 1 — Xác nhận cách hiểu brief'
+    ? 'Chốt — Xác nhận cách hiểu brief'
     : checkpoint.action.type === 'confirm_solution'
-      ? 'Chốt 2 — Duyệt hướng giải pháp'
+      ? 'Chốt — Duyệt hướng giải pháp'
       : 'Đã duyệt bước này';
 }
 
@@ -1092,16 +1092,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
       setActiveCheckpoint(null);
 
-      // The confirmation stops (Chốt 1 / Chốt 2) pause the pipeline mid-run.
-      // Approving has to restart it — otherwise the card just disappears and the
-      // rep is left staring at a conversation that stopped for no visible reason.
-      //
-      // The resume message used to be the literal string "Tiếp tục", which wiped
-      // out the entire checkpoint card the moment it was approved — the rep's own
-      // history no longer showed what they'd actually signed off on. Sending a
-      // summary of the approved action instead keeps that readable on scrollback,
-      // and the backend never reads this string for resume detection anyway (see
-      // the `resume` boolean above) — only the display benefits.
       if (data.resume) {
         await sendMessage(describeCheckpointApproval(activeCheckpoint), undefined, true, true);
       }

@@ -108,9 +108,6 @@ function CheckpointCard({
 
   const hasBlocking = checkpoint.compliance_findings?.some(f => f.severity === 'block');
 
-  // Chốt 1 sends the brief split by where each item came from. Showing that split is
-  // the whole value of the stop: a rep skims "inferred" and "assumed" for the one line
-  // that is wrong, which is much faster than re-reading a brief they already wrote.
   const SOURCE_GROUPS: { key: string; label: string; hint: string; tone: string }[] = [
     { key: 'said', label: 'Bạn đã nói', hint: 'lấy nguyên từ tin nhắn của bạn', tone: 'text-text' },
     { key: 'inferred', label: 'Mình tự suy ra', hint: 'suy từ ngữ cảnh — kiểm giúp', tone: 'text-accent-text' },
@@ -329,9 +326,6 @@ function CheckpointCard({
     );
   };
 
-  // Chốt 1 exists so the rep can correct what we misread, which means Edit has to
-  // actually edit. It used to open a panel reading "Edit functionality available"
-  // and submit an empty object.
   const briefGroups = (checkpoint.action.preview as { groups?: Record<string, Array<Record<string, string>>> } | undefined)
     ?.groups;
   const editableFields = briefGroups
