@@ -51,7 +51,7 @@ const SALES_STARTERS = [
     icon: '💰',
     label: 'Giá gói bao nhiêu?',
     description: 'So sánh tính năng và giá các gói CShub theo nhu cầu cụ thể.',
-    prompt: 'Gói CShub Base 3 và Pro 1 khác nhau gì, giá 12 tháng bao nhiêu?',
+    prompt: 'Cho mình xem tổng quan các gói CShub (tính năng, giá theo từng gói) để so sánh và chọn gói phù hợp nhu cầu khách.',
   },
   {
     icon: '📖',

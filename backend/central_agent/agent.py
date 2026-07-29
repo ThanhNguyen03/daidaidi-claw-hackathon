@@ -481,7 +481,19 @@ def _build_solution_checkpoint(state, outputs):
 
     import json as _json
 
-    def _clean_text(name: str, limit: int = 600) -> str:
+    def _truncate_at_word(text: str, limit: int) -> str:
+        """Cut a preview without severing mid-word — a raw `[:limit]` slice used to
+        land inside a word or sentence, which read as the agent's output having
+        broken off rather than as an intentional preview."""
+        if len(text) <= limit:
+            return text
+        cut = text[:limit]
+        last_space = cut.rfind(" ")
+        if last_space > 0:
+            cut = cut[:last_space]
+        return cut.rstrip() + "…"
+
+    def _clean_text(name: str, limit: int = 1000) -> str:
         out = outputs.get(name)
         text = getattr(out, "content", "") if out else ""
         if not text:
@@ -583,14 +595,14 @@ def _build_solution_checkpoint(state, outputs):
             if risk_match and risk_match.group(1) not in prefix:
                 prefix += f"{risk_match.group(1).strip()}\n\n"
             if prefix:
-                return (prefix + cleaned)[:limit]
+                return _truncate_at_word(prefix + cleaned, limit)
 
-        return cleaned.strip()[:limit]
+        return _truncate_at_word(cleaned.strip(), limit)
 
     preview_data = {
-        "compliance": _clean_text("compliance", 500),
-        "strategy": _clean_text("market_strategy", 500),
-        "solution": _clean_text("product_solution", 500),
+        "compliance": _clean_text("compliance", 1000),
+        "strategy": _clean_text("market_strategy", 1000),
+        "solution": _clean_text("product_solution", 1000),
     }
 
     return Checkpoint(

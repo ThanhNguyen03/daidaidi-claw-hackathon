@@ -46,7 +46,11 @@ export default function Home() {
     setCurrentUser(user);
     setSalespersonName(user.full_name || user.username);
     setIsBooting(true);
+<<<<<<< Updated upstream
     setTimeout(() => setIsBooting(false), 4000);
+=======
+    setTimeout(() => setIsBooting(false), 1850);
+>>>>>>> Stashed changes
   };
 
   const handleLogout = useCallback(() => {
@@ -261,8 +265,8 @@ export default function Home() {
         <span className="tf-ring" />
         <span className="tf-wipe" />
         <div className="tf-card p-8 rounded-2xl text-center">
-          <p className="tf-boot-line text-xs text-accent-text font-mono tracking-wide">
-            ▸ 7 agents online · knowledge base linked
+          <p className="tf-boot-line text-sm text-accent-text font-mono tracking-wide">
+            ▸ 7 Agents đã sẵn sàng · kho tri thức đã kết nối
           </p>
         </div>
       </div>

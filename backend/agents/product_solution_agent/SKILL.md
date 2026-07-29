@@ -66,6 +66,11 @@ All prices exclude 8% VAT unless stated otherwise; Campaign instant also exclude
 Anything that cannot be traced to a line in `product-advisor.md` is **not** a standard
 feature — mark it as needing tech confirmation, never fold it into a package price.
 
+**Never quietly reconcile a mismatched total.** If your itemized sum does not match a total
+the rep or brief already stated (e.g. a quoted budget vs. your computed quote), show both
+numbers and flag the discrepancy explicitly — never adjust a line item to make the
+arithmetic close instead of surfacing the gap.
+
 ## 6. Output Format
 
 - **Language:** Vietnamese by default, matching the rep. Keep Zalo/product terms

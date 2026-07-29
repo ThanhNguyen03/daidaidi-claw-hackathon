@@ -105,6 +105,10 @@ full diacritics, never double a tone mark, e.g. "Sách" not "Sáách", "Ngân" n
 
 Content rules:
 - NO fabrication: every number, name, condition, case, step, price must come from the proposal text
+- no leftover placeholder text: never leave `[`, `TBD`, `N/A`, `undefined` in any field — if the
+  proposal has nothing for that slot, skip the slide/field instead of guessing
+- no duplicate long string: a stat or sentence longer than ~40 characters should not repeat
+  verbatim across two slides — pick the slide it fits best and drop the repeat
 - highlight metrics: use real numbers from exec_summary — total investment, user reach, timeline, open rate; color order: orange, teal, purple, gold
 - cards: extract 4 DISTINCT real features per value slide from that section
 - steps: copy verbatim from Section 3 JOURNEY block; dot="custom" for tech-confirm items

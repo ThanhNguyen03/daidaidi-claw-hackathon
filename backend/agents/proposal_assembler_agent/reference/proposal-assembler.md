@@ -217,6 +217,11 @@ Do not render investment or next steps for a blocked proposal.
 If pricing advisor did not return a specific line item, write `[to be confirmed with product advisor]`
 rather than estimating. Wrong numbers in a proposal are worse than missing numbers.
 
+If the itemized sum does not match a total stated elsewhere (e.g. the rep's stated budget vs.
+the computed quote), show both numbers and flag the mismatch visibly rather than quietly
+adjusting a line item or the total to make the arithmetic close — a silent fix hides exactly
+the discrepancy the rep needs to see before it reaches the client.
+
 **Rule 3 — Case proof must be honest about source.**
 Cases from `adtimabox-case-studies` (CS-01 to CS-11) are Adtima's own cases — cite them directly.
 Any market evidence referenced elsewhere (MerapLion, FPT Long Châu, etc.) must be labeled
