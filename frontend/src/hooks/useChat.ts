@@ -35,6 +35,43 @@ interface Artifact {
   artifact_id?: string;    // artifact registry key
 }
 
+// deck_url/pptx_url only ever got attached to a single message bubble — there was
+// no single place listing every file generated across a whole session. Each one
+// also carries a unique artifact id in its URL, so turning them into Artifact
+// entries lets the existing "Generated Artifacts" list in ContextPanel (built for
+// the older checkpoint-approval flow, currently empty because that flow doesn't
+// run any more) double as a running index of every deck/PPTX this conversation
+// has produced, not just the latest one.
+function proposalAssetsToArtifacts(assets: { deck_url?: string; pptx_url?: string }): Artifact[] {
+  const out: Artifact[] = [];
+  if (assets.deck_url) {
+    out.push({
+      id: assets.deck_url,
+      type: 'wireframe',
+      title: 'Đề xuất (HTML)',
+      download_url: assets.deck_url,
+    });
+  }
+  if (assets.pptx_url) {
+    out.push({
+      id: assets.pptx_url,
+      type: 'pptx',
+      title: 'Đề xuất (PPTX)',
+      download_url: assets.pptx_url,
+    });
+  }
+  return out;
+}
+
+// download_url embeds the artifact id, so it is the natural de-dupe key — the
+// same deck re-emitted on a later turn (see main.py's "re-emit artifacts produced
+// on an earlier turn") must not show up twice in the list.
+function mergeArtifacts(prev: Artifact[], fresh: Artifact[]): Artifact[] {
+  const seen = new Set(prev.map((a) => a.download_url ?? a.id));
+  const additions = fresh.filter((a) => !seen.has(a.download_url ?? a.id));
+  return additions.length > 0 ? [...prev, ...additions] : prev;
+}
+
 interface UseChatReturn {
   // State
   sessionId: string | null;
@@ -653,6 +690,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
                 }
                 return prev;
               });
+              // Also index it in the session-wide artifacts list (ContextPanel's
+              // "Generated Artifacts"), so every deck/PPTX this conversation has
+              // produced is visible in one place, not just the latest message.
+              setArtifacts((prev) => mergeArtifacts(prev, proposalAssetsToArtifacts(assets)));
             }
           }
           break;
@@ -1115,6 +1156,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         }
       }
       setMessages(msgs);
+      // Reset rather than merge: this is a different conversation, and the
+      // previous session's artifact list (or the stale sessionStorage copy the
+      // legacy checkpoint flow writes) must not bleed into it.
+      setArtifacts(data.proposal_assets ? proposalAssetsToArtifacts(data.proposal_assets) : []);
       if (data.brief) setBrief(data.brief);
       setPendingQuestions([]);
       setActiveCheckpoint(null);
