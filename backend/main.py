@@ -268,6 +268,29 @@ async def get_session_detail(session_id: str, authorization: Optional[str] = Hea
         raise HTTPException(status_code=404, detail="Không tìm thấy session")
     if session["user_id"] and payload and session["user_id"] != payload["user_id"]:
         raise HTTPException(status_code=403, detail="Không có quyền truy cập")
+
+    # The deck/PPTX links only ever came down as a one-off SSE event on the turn
+    # that built them (main.py's chat_stream, "proposal_assets") — nothing wrote
+    # them into the transcript this endpoint reads (app.db). So opening a past
+    # conversation from the sidebar, without sending a new message, showed no way
+    # to re-download a deck that was very much still sitting in ARTIFACTS_DIR. The
+    # artifact ids live in the wireframe_designer payload, which is only in the
+    # *other* database (sales_assistant.db, via memory_repo) — so fetch that too.
+    try:
+        state = await get_memory_repo().load_session(session_id)
+        wf = (state.outputs or {}).get("wireframe_designer") if state else None
+        wp = wf.payload if wf is not None and isinstance(wf.payload, dict) else None
+        if wp:
+            assets: dict = {}
+            if _artifact_available(wp.get("deck_artifact_id")):
+                assets["deck_url"] = f"/artifact/{wp['deck_artifact_id']}"
+            if _artifact_available(wp.get("pptx_artifact_id")):
+                assets["pptx_url"] = f"/artifact/{wp['pptx_artifact_id']}"
+            if assets:
+                session["proposal_assets"] = assets
+    except Exception as e:
+        print(f"[main] proposal_assets lookup failed for {session_id} (non-fatal): {e}")
+
     return session
 
 

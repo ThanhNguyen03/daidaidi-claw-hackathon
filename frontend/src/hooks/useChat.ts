@@ -1098,7 +1098,23 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       }
       const data = await res.json();
       setSessionId(data.session_id);
-      setMessages(data.messages || []);
+      // The deck/PPTX links only ever arrived as a one-off SSE event on the turn
+      // that built them, never saved onto the message itself — so reopening a past
+      // conversation from the sidebar showed no way to re-download a deck that was
+      // still sitting on disk the whole time. The backend now reconstructs it as
+      // `proposal_assets`; attach it to the last assistant turn, same place a live
+      // stream would have put it, so MessageBubble's existing download buttons
+      // just work without new UI.
+      let msgs: Message[] = data.messages || [];
+      if (data.proposal_assets && msgs.length > 0) {
+        const lastAssistantIdx = msgs.map((m) => m.role).lastIndexOf('assistant');
+        if (lastAssistantIdx !== -1) {
+          msgs = msgs.map((m, i) =>
+            i === lastAssistantIdx ? { ...m, proposalAssets: data.proposal_assets } : m
+          );
+        }
+      }
+      setMessages(msgs);
       if (data.brief) setBrief(data.brief);
       setPendingQuestions([]);
       setActiveCheckpoint(null);
