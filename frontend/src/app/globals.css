@@ -6,6 +6,11 @@
 
 @import "tailwindcss";
 
+/* Tailwind v4 keys `dark:` off prefers-color-scheme by default, but this
+   app's theme is a class set before first paint (see layout.tsx) — without
+   this, every `dark:` utility silently keys off the OS instead of the app. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ===== THEME SYSTEM (CSS Variables for Tailwind) ===== */
 @theme {
   /* Light theme (default) — Zalo's own chrome is a cool blue-grey behind
@@ -44,6 +49,24 @@
   /* Shadows */
   --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+
+  /* Body text scale, bumped ~2px from Tailwind's defaults (see the
+     `.text-xs { font-size: ... !important }` block below — this replaces it
+     for the four sizes that need one). Sizes are px, not rem, so
+     html{font-size:18px} at >=1024px does not compound them.
+     Line-heights are explicit: the old !important-only overrides changed
+     font-size but Tailwind still emitted the ORIGINAL paired line-height, so
+     e.g. text-xs rendered 14px glyphs in a 16px line box — two-level
+     Vietnamese diacritics (ế, ộ, ữ) collide across wrapped lines at that
+     ratio. */
+  --text-xs: 14px;
+  --text-xs--line-height: calc(20 / 14);
+  --text-sm: 16px;
+  --text-sm--line-height: 1.5;
+  --text-base: 18px;
+  --text-base--line-height: 1.55;
+  --text-lg: 20px;
+  --text-lg--line-height: 1.35;
 
   /* Fonts */
   --font-sans: sans-serif;
@@ -163,9 +186,17 @@ body {
   }
 }
 
-/* Global headline scale */
-h1,
-h2,
+/* Global headline scale — CLASS-BASED ONLY. This used to also bare-match
+   `h1`/`h2` elements, which was safe only by accident: every h1/h2 in the app
+   already carries its own explicit text-size class (text-xs, text-sm, text-[18px]...)
+   whose `!important` used to override the element rule regardless. Once
+   text-xs/sm/base/lg moved into @theme (below) they lost that `!important` — and
+   @theme utilities live in a Tailwind cascade layer, which loses to ANY unlayered
+   rule no matter its specificity. So this bare `h1, h2` rule started winning
+   outright, and every small-text heading (Sidebar's "Active Agents", ChatWindow's
+   mode header, modal titles) rendered at 22-26px instead of its intended size.
+   Every h1/h2 in the codebase already has its own sizing class — nothing relies
+   on the element selector, so it is gone, not just narrowed. */
 .text-xl,
 .text-2xl,
 .text-\[18px\],
@@ -177,8 +208,6 @@ h2,
 }
 
 @media (min-width: 1024px) {
-  h1,
-  h2,
   .text-xl,
   .text-2xl,
   .text-\[18px\],
@@ -189,17 +218,14 @@ h2,
   }
 }
 
-h3,
-h4,
 .text-lg {
   line-height: 1.3;
 }
 
-/* Tailwind text utilities bumped by +2px */
-.text-xs { font-size: 14px !important; }
-.text-sm { font-size: 16px !important; }
-.text-base { font-size: 18px !important; }
-.text-lg { font-size: 20px !important; }
+/* text-xs/sm/base/lg now come from the @theme scale above, with matching
+   line-heights. text-xl/text-2xl stay !important here — they are also part
+   of the responsive headline block above, which is what makes them scale at
+   >=1024px; moving them into @theme would lose that responsiveness. */
 .text-xl { font-size: 22px !important; }
 .text-2xl { font-size: 24px !important; }
 
@@ -341,22 +367,6 @@ a:hover {
   padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0));
 }
 
-/* Mobile/Tablet responsive fixes */
-@media (max-width: 767px) {
-  /* Ensure main content doesn't overflow on small screens */
-  .h-screen {
-    height: 100dvh;
-    height: -webkit-fill-available;
-  }
-}
-
-/* Tablet specific (768px - 1023px) */
-@media (min-width: 768px) and (max-width: 1023px) {
-  html, body {
-    font-size: 14px;
-  }
-}
-
 /* Smooth animations for mobile */
 @media (prefers-reduced-motion: no-preference) {
   * {
@@ -392,10 +402,15 @@ html {
    rather than a document. All scoped to .dark so light is untouched.
    ============================================================ */
 
-/* Frosted chrome. The aurora behind the page shows through the header and the
-   composer, which is what stops large flat panels looking like dead rectangles. */
-.dark header,
-.dark form {
+/* Frosted chrome. The aurora behind the page shows through the header, which
+   is what stops it looking like a dead rectangle.
+ *
+ * Scoped to .app-chrome, not to bare `header`/`form` — those matched every
+ * modal's <header> and <form> too, landing them at 0.6*0.72=0.43 alpha: more
+ * transparent than the modal body they sit on, and the only part blurred, so
+ * header and body visibly disagreed. A modal card is opaque (.modal-card)
+ * precisely so nothing behind it interferes with its own content. */
+.dark .app-chrome {
   background-color: color-mix(in srgb, var(--color-surface) 72%, transparent);
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
@@ -428,37 +443,33 @@ html {
 }
 
 /* Tables carry the pricing, which is the part people actually scrutinise.
-   Zebra striping and a held header make a long ratecard scannable. */
+   Zebra striping makes a long ratecard scannable. A held header (position:
+   sticky) was tried here too, but the table's only scrolling ancestor is
+   horizontal (.agent-output-table's wrapper) — the nearest one with a height
+   limit is the message list itself, so the header detached and floated over
+   unrelated content underneath the app header instead of sticking to its
+   own table. */
 .dark table tbody tr:nth-child(even) {
   background-color: color-mix(in srgb, var(--color-surface-2) 45%, transparent);
 }
 .dark table thead th {
   background-color: var(--color-surface-2);
-  position: sticky;
-  top: 0;
 }
 
-/* Wide content — ratecards especially — scrolls inside its own box. Without this
-   a long pricing table either clips its right-hand columns or forces the whole
-   page sideways, which is exactly how figures went missing. */
-.markdown-body table,
-.prose table {
-  display: block;
-  max-width: 100%;
-  overflow-x: auto;
-  white-space: nowrap;
+/* Ratecards grow to their natural width and the wrapper scrolls horizontally
+   — tableLayout:fixed used to force every column into the container width,
+   squeezing a 5-column ratecard's figures into single-digit pixel widths
+   inside a phone-width bubble, which is how numbers went missing. Padding
+   lives here (not inline) so it can shrink on narrow screens. */
+.agent-output-table th,
+.agent-output-table td {
+  padding: 0.75rem 1rem;
 }
-.markdown-body table td,
-.markdown-body table th,
-.prose table td,
-.prose table th {
-  white-space: normal;
-  min-width: 6rem;
-}
-/* Figures should never wrap mid-number. */
-.markdown-body table td:has(+ td),
-.prose table td {
-  font-variant-numeric: tabular-nums;
+@media (min-width: 640px) {
+  .agent-output-table th,
+  .agent-output-table td {
+    padding: 1rem 1.25rem;
+  }
 }
 
 /* Dark scrollbars: the light-theme thumb is a bright bar on a near-black page. */
@@ -684,7 +695,15 @@ html {
    Thinking Trace — collapsible agent reasoning display
    ============================================================ */
 .thinking-trace-container {
-  margin-left: 2.75rem; /* Align with message bubble (w-8 + gap-3) */
+  /* The AI avatar is w-8 + gap-2 on mobile and w-10 + gap-3 from sm: up — an
+     unconditional 2.75rem indent was sized for the latter only, and on a
+     375px screen that is 12% of the viewport spent on whitespace. */
+  margin-left: 0;
+}
+@media (min-width: 640px) {
+  .thinking-trace-container {
+    margin-left: 2.75rem;
+  }
 }
 
 .thinking-trace-header {
@@ -806,7 +825,7 @@ html {
 .auth-modal-card {
   width: 100%;
   max-width: 400px;
-  background: var(--color-surface);
+  background: var(--color-surface-solid);
   border: 1px solid var(--color-border);
   border-radius: 20px;
   padding: 32px;
@@ -816,6 +835,29 @@ html {
 .auth-modal-header {
   text-align: center;
   margin-bottom: 24px;
+}
+
+/* ===== SHARED MODAL CHROME =====
+ * Depth lives on the scrim (blurred, near-opaque), never on the card. A modal
+ * is a focus trap — nothing behind it should still be legible through it.
+ * This is the same recipe as .auth-modal-overlay/.auth-modal-card above,
+ * generalised for ModelPanel, AdminPanel and the image lightbox. */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: center;
+  overflow-y: auto;
+  background: rgba(10, 10, 18, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.modal-card {
+  background: var(--color-surface-solid);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
 }
 
 .auth-modal-logo {
@@ -1130,3 +1172,80 @@ html {
 }
 
 .sidebar-session-item:hover { background: var(--color-bg); color: var(--color-text); }
+
+/* ========================================================= */
+/* TECH UI CUSTOM UTILITIES & ANIMATIONS                     */
+/* ========================================================= */
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes pulseGlow {
+  0% { box-shadow: 0 0 0 0 rgba(124, 108, 245, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(124, 108, 245, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(124, 108, 245, 0); }
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2s infinite cubic-bezier(0.66, 0, 0, 1);
+}
+
+@keyframes scanLine {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+.tech-scan-line {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 8px;
+  background: linear-gradient(to bottom, transparent, rgba(124, 108, 245, 0.3), transparent);
+  animation: scanLine 8s linear infinite;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0.5;
+}
+
+/* Glassmorphism Utilities */
+.glass-panel {
+  background: var(--color-surface);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.dark .glass-panel {
+  border: 1px solid rgba(124, 108, 245, 0.15);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1), inset 0 0 0 1px rgba(124, 108, 245, 0.05);
+}
+
+/* Glow Utilities */
+.glow-border {
+  border: 1px solid rgba(124, 108, 245, 0.3);
+  box-shadow: 0 0 10px rgba(124, 108, 245, 0.15), inset 0 0 5px rgba(124, 108, 245, 0.05);
+}
+.glow-border-active {
+  border-color: rgba(124, 108, 245, 0.6);
+  box-shadow: 0 0 15px rgba(124, 108, 245, 0.3), inset 0 0 10px rgba(124, 108, 245, 0.1);
+}
+
+/* Gradient Text Utilities */
+.text-gradient-tech {
+  background: linear-gradient(135deg, #a78bfa 0%, #38bdf8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}

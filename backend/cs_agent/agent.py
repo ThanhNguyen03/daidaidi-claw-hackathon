@@ -13,7 +13,7 @@ Routing logic:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import AsyncGenerator
 
 from schemas.state import SalesCaseState
@@ -125,7 +125,7 @@ class CsAgent:
         state.messages.append({
             "role": "user",
             "content": message,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
         history = state.messages[:-1]  # all messages except the one just appended
@@ -198,6 +198,6 @@ class CsAgent:
             "role": "assistant",
             "content": content,
             "agent": skill_name,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         state.summary = f"CS: {message[:40]}... -> {skill_name}"

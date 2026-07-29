@@ -1,7 +1,10 @@
 """
 DesignSkill
 -----------
-UI/UX design specialist: wireframes, Mermaid user flow diagrams, screen specifications.
+Solution Designer: user journey design, screen specifications, Mermaid flow
+diagrams, and integration feasibility assessment. Only dispatched when the rep
+explicitly asks for design artifacts (see central_agent/SKILL.md's dispatch
+table) — product_solution covers the baseline journey/Mermaid on every turn.
 Uses existing knowledge from agents/design/ via RAG.
 """
 
@@ -22,7 +25,7 @@ class DesignSkill(BaseSkill):
     def __init__(self):
         super().__init__(
             name="design",
-            description="Solution Designer: full user journey design, screen specifications, Mermaid flow diagrams, integration assessment",
+            description="Solution Designer: user journey design, screen specifications, Mermaid flow diagrams, and integration feasibility assessment",
             model_key="MODEL_DESIGN",
             skill_md_path=_SKILL_MD,
         )
@@ -39,7 +42,7 @@ class DesignSkill(BaseSkill):
         user_msg = f"{context.task}\n\n{context_block}" if context_block else context.task
 
         try:
-            content = await self._call_llm(
+            content, truncated = await self._call_llm(
                 system=system,
                 user_msg=user_msg,
                 history=context.messages,
@@ -56,8 +59,8 @@ class DesignSkill(BaseSkill):
 
         return SkillOutput(
             skill=self.name,
-            status="COMPLETE",
+            status="PARTIAL" if truncated else "COMPLETE",
             payload={"deliverables": [{"type": "Design", "description": content[:200]}], "content": content},
-            summary=content[:200],
+            summary=(content[:200] + " [Bị cắt do giới hạn độ dài]") if truncated else content[:200],
             content=content,
         )

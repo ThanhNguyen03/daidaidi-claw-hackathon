@@ -41,7 +41,7 @@ class ProposalAssemblerSkill(BaseSkill):
         user_msg = f"{context.task}\n\n{context_block}" if context_block else context.task
 
         try:
-            content = await self._call_llm(
+            content, truncated = await self._call_llm(
                 system=system,
                 user_msg=user_msg,
                 history=[],  # All context already in user_msg via _build_assembly_context
@@ -58,9 +58,9 @@ class ProposalAssemblerSkill(BaseSkill):
 
         return SkillOutput(
             skill=self.name,
-            status="COMPLETE",
+            status="PARTIAL" if truncated else "COMPLETE",
             payload={"proposal": content, "deliverables": [{"type": "Proposal", "description": content[:200]}]},
-            summary=content[:200],
+            summary=(content[:200] + " [Bị cắt do giới hạn độ dài — proposal có thể thiếu section cuối]") if truncated else content[:200],
             content=content,
         )
 

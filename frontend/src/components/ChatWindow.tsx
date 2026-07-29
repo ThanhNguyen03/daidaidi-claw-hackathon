@@ -6,13 +6,16 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, PanelRightClose, PanelRightOpen, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, Mic, MicOff } from 'lucide-react';
+import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, Mic, MicOff, MessageCircle, Headphones, Plus, PanelRightOpen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MessageBubble } from './MessageBubble';
 import { QuestionCard } from './QuestionCard';
 import { ThinkingTrace } from './ThinkingTrace';
 import type { Message, Question, Checkpoint, Brief, ChatMode, ThinkingStep } from '../lib/types';
+
+// Render-invariant — see the same constant in MessageBubble.tsx.
+const REMARK_PLUGINS = [remarkGfm];
 
 interface ChatWindowProps {
   messages: Message[];
@@ -33,35 +36,48 @@ interface ChatWindowProps {
   onToggleContextPanel?: () => void;
   isContextPanelOpen?: boolean;
   onToggleMobileSidebar?: () => void;
+  onModeChange?: (mode: ChatMode) => void;
+  onNewChat?: () => void;
   thinkingSteps?: ThinkingStep[];
 }
 
-// Openers for an empty chat. Written as briefs a rep would actually paste, not as
-// feature names — "làm proposal" teaches nothing about what to put in one, whereas
-// a filled-in example shows the shape of a brief that gets a good answer first try.
+const HEADER_MODES: { id: ChatMode; label: string; icon: React.ReactNode }[] = [
+  { id: 'chat', label: 'Chat', icon: <MessageCircle size={16} /> },
+  { id: 'cs', label: 'CS', icon: <Headphones size={16} /> },
+];
+
+// Openers for an empty chat, each scoped to ONE specialist rather than a full
+// brief — "làm proposal" as the only entry point taught every rep to open with
+// a proposal request, which is why every first message used to build a full
+// pptx whether that's what they needed or not. `prompt` is what actually gets
+// sent; `description` is the friendlier one-line gloss shown next to it.
 const SALES_STARTERS = [
   {
-    icon: '🥤',
-    label: 'Brief FMCG đầy đủ',
-    prompt:
-      'Brand nước giải khát FMCG, muốn tăng mua lại qua loyalty trên Zalo. Ngân sách 300 triệu, chạy Q4. Làm proposal giúp mình.',
-  },
-  {
-    icon: '💊',
-    label: 'Ngành dược, cần soát pháp lý',
-    prompt:
-      'Khách dược phẩm muốn làm chương trình tích điểm cho nhà thuốc. Kiểm giúp mình phần pháp lý và đề xuất giải pháp.',
-  },
-  {
     icon: '💰',
-    label: 'Hỏi nhanh giá gói',
+    label: 'Giá gói bao nhiêu?',
+    description: 'So sánh tính năng và giá các gói CShub theo nhu cầu cụ thể.',
     prompt: 'Gói CShub Base 3 và Pro 1 khác nhau gì, giá 12 tháng bao nhiêu?',
   },
   {
-    icon: '🛡️',
-    label: 'Tập phản biện trước khi pitch',
+    icon: '📖',
+    label: 'Vẽ user flow',
+    description: 'Thiết kế hành trình người dùng trên Zalo MiniApp theo brief của khách.',
     prompt:
-      'Mai mình pitch cho khách FMCG đang so sánh với CNV Loyalty. Đóng vai khách và phản biện giúp mình.',
+      'Vẽ giúp mình user flow cho chương trình tích điểm trên Zalo Mini App — khách FMCG, cơ chế quét mã trên bao bì để tích điểm.',
+  },
+  {
+    icon: '📊',
+    label: 'Phân tích chiến lược',
+    description: 'Tại sao khách cần loyalty? Insight ngành + đề xuất giải pháp tổng thể.',
+    prompt:
+      'Khách FMCG muốn triển khai loyalty trên Zalo nhưng chưa rõ vì sao cần. Phân tích giúp mình insight ngành và định hướng giải pháp.',
+  },
+  {
+    icon: '🛡️',
+    label: 'Đối thủ hỏi khó',
+    description: 'Khách đang so sánh với CNV / Pango / Mmenu — giúp mình trả lời.',
+    prompt:
+      'Khách đang so sánh AdtimaBox với CNV Loyalty. Đóng vai khách và đưa ra phản biện giúp mình luyện tập trả lời.',
   },
 ];
 
@@ -69,11 +85,13 @@ const CS_STARTERS = [
   {
     icon: '📖',
     label: 'Tra hướng dẫn',
+    description: 'Tìm câu trả lời trong tài liệu hướng dẫn sử dụng CSHub.',
     prompt: 'Khách hỏi tại sao không export được data thành viên, giải thích giúp mình.',
   },
   {
     icon: '🐞',
     label: 'Báo lỗi để tạo ticket',
+    description: 'Ghi nhận lỗi khách báo và tạo Jira ticket.',
     prompt: 'Khách báo voucher đã phát nhưng không thấy trong ví, mình cần tạo ticket.',
   },
 ];
@@ -292,15 +310,15 @@ function CheckpointCard({
             return (
               <div
                 key={key}
-                className={`rounded-xl border ${secInfo.border} ${secInfo.bg} p-3.5 shadow-sm transition-all max-w-full overflow-hidden`}
+                className={`rounded-xl border ${secInfo.border} ${secInfo.bg} p-3.5 shadow-sm transition-all max-w-full`}
               >
                 <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/40">
                   <span className="text-[13px] font-bold text-text flex items-center gap-1.5 truncate">
                     {secInfo.label}
                   </span>
                 </div>
-                <div className="text-xs text-text leading-relaxed prose-sm max-w-full break-words overflow-x-auto dark:prose-invert">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanedText}</ReactMarkdown>
+                <div className="text-sm text-text leading-relaxed max-w-full break-words">
+                  <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{cleanedText}</ReactMarkdown>
                 </div>
               </div>
             );
@@ -311,7 +329,7 @@ function CheckpointCard({
 
     return (
       <div className="p-3 bg-surface-2 rounded-xl text-xs text-text leading-relaxed break-words overflow-hidden">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{formatValueHumanReadable(preview)}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{formatValueHumanReadable(preview)}</ReactMarkdown>
       </div>
     );
   };
@@ -359,9 +377,9 @@ function CheckpointCard({
               key={idx}
               className={`
                 p-3 rounded-xl mb-2 max-w-full overflow-hidden
-                ${finding.severity === 'block' ? 'bg-red-50 border border-red-200 text-red-900' : ''}
-                ${finding.severity === 'warn' ? 'bg-yellow-50 border border-yellow-200 text-yellow-900' : ''}
-                ${finding.severity === 'info' ? 'bg-blue-50 border border-blue-200 text-blue-900' : ''}
+                ${finding.severity === 'block' ? 'bg-red-500/10 border border-red-500/25 text-red-400' : ''}
+                ${finding.severity === 'warn' ? 'bg-amber-500/10 border border-amber-500/25 text-amber-300' : ''}
+                ${finding.severity === 'info' ? 'bg-blue-500/10 border border-blue-500/25 text-blue-300' : ''}
               `}
             >
               <div className="flex items-start gap-2">
@@ -511,6 +529,8 @@ export function ChatWindow({
   onToggleContextPanel,
   isContextPanelOpen = false,
   onToggleMobileSidebar,
+  onModeChange,
+  onNewChat,
   thinkingSteps = [],
 }: ChatWindowProps) {
   const [input, setInput] = useState('');
@@ -643,25 +663,46 @@ export function ChatWindow({
   return (
     <div className="flex-1 flex flex-col h-full bg-bg overflow-hidden">
       {/* Header - compact */}
-      <header className="shrink-0 sticky top-0 z-30 h-14 px-3 sm:px-4 md:px-6 bg-surface border-b border-border flex items-center justify-between">
-        <div className="flex items-center gap-2 sm:gap-3">
-          {/* Mobile sidebar toggle */}
+      <header className="app-chrome shrink-0 sticky top-0 z-20 safe-area-inset-top px-3 sm:px-4 md:px-6 py-1.5 sm:py-3 bg-surface border-b border-border flex items-center justify-between">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          {/* Mobile sidebar toggle — the only hamburger now that the drawer lives
+              directly on the Sidebar component, off-canvas. */}
           <button
             onClick={onToggleMobileSidebar}
             className="md:hidden p-1.5 sm:p-2 border border-border rounded-lg hover:bg-surface-hover transition-all"
+            aria-label="Mở menu"
           >
             <Menu size={18} className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
           </button>
 
-          {/* Mode indicator with per-mode accent underline */}
-          <div className="relative">
+          {/* Mobile: a compact 2-segment mode switcher — the bottom nav that used
+              to hold this is gone, and this is the only mode control left once
+              the drawer is closed. */}
+          {onModeChange && (
+            <div className="md:hidden flex items-center gap-0.5 p-0.5 rounded-lg bg-surface-2 border border-border">
+              {HEADER_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => onModeChange(m.id)}
+                  aria-pressed={mode === m.id}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                    mode === m.id ? 'bg-accent text-white' : 'text-text-muted'
+                  }`}
+                >
+                  {m.icon}
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Desktop: the mode indicator with per-mode accent underline. Reads
+              `mode` now — it used to hardcode "Chat Mode" even while in CS mode. */}
+          <div className="relative hidden md:block">
             <h2 className="text-sm sm:text-base font-semibold text-text flex items-center gap-1.5 sm:gap-2">
-              <span className="text-accent text-base sm:text-lg">💬</span>
-              <span className="hidden sm:inline">PreSales</span>
-              <span className="sm:hidden">PreSales</span>
-              <span className="hidden sm:inline">Mode</span>
+              <span className="text-accent text-base sm:text-lg">{mode === 'cs' ? '🎧' : '💬'}</span>
+              <span>{mode === 'cs' ? 'CS Mode' : 'PreSales Mode'}</span>
             </h2>
-            {/* Per-mode accent underline */}
             <span className="absolute -bottom-1 left-0 right-0 h-0.5 bg-accent rounded" />
           </div>
         </div>
@@ -687,13 +728,28 @@ export function ChatWindow({
               )}
             </button>
           )}
+
+          {/* Mobile: new chat — the drawer's own New Chat button is gone now that
+              the drawer is the full Sidebar, whose New Chat button sits above the
+              history list rather than in the header. Keeping one reachable
+              without opening the drawer first. */}
+          {onNewChat && (
+            <button
+              onClick={onNewChat}
+              className="md:hidden p-1.5 sm:p-2 text-accent hover:bg-accent/10 rounded-lg transition-all"
+              title="Cuộc trò chuyện mới"
+              aria-label="Cuộc trò chuyện mới"
+            >
+              <Plus size={20} />
+            </button>
+          )}
         </div>
       </header>
 
       {/* Error display */}
       {error && (
-        <div className="shrink-0 px-3 md:px-6 py-3 bg-red-500/10 border-b border-red-500/30 flex items-center justify-between">
-          <span className="text-red-600 dark:text-red-400 text-[12px]">{error}</span>
+        <div className="shrink-0 px-3 md:px-6 py-3 bg-red-500/10 border-b border-red-500/25 flex items-center justify-between">
+          <span className="text-red-400 text-[12px]">{error}</span>
           <button onClick={onClearError} className="text-text-muted hover:text-text">
             <X size={16} />
           </button>
@@ -734,24 +790,26 @@ export function ChatWindow({
             </div>
 
             {/* An empty box with a blinking cursor tells a rep nothing about what this
-                thing can do. These are real openers: one click sends, and the shape of
-                the list doubles as the answer to "what am I supposed to type here". */}
-            <div className="mx-auto grid max-w-3xl gap-2 sm:grid-cols-2">
+                thing can do. These are real openers, laid out as a two-column table
+                (name | suggested description) rather than cards — one click sends the
+                underlying `prompt`, and each row is scoped to one specialist so the
+                list itself demonstrates that this isn't "type a brief, get a pptx". */}
+            <div className="mx-auto max-w-2xl overflow-hidden rounded-xl border border-border divide-y divide-border">
               {(mode === 'cs' ? CS_STARTERS : SALES_STARTERS).map((s) => (
                 <button
                   key={s.prompt}
                   type="button"
                   disabled={isLoading}
                   onClick={() => onSendMessage(s.prompt)}
-                  className="group rounded-xl border border-border bg-surface/60 p-3.5 text-left transition-all hover:border-accent hover:bg-accent-soft/40 active:scale-[0.99] disabled:opacity-50"
+                  className="group flex w-full flex-col gap-1 bg-surface/60 p-3.5 text-left transition-colors hover:bg-accent-soft/40 disabled:opacity-50 sm:flex-row sm:items-center sm:gap-4"
                 >
-                  <div className="mb-1 flex items-center gap-2">
+                  <span className="flex shrink-0 items-center gap-2 sm:w-[190px]">
                     <span className="text-base">{s.icon}</span>
                     <span className="text-[13px] font-semibold text-text group-hover:text-accent-text">
                       {s.label}
                     </span>
-                  </div>
-                  <p className="text-[12px] leading-snug text-text-muted">{s.prompt}</p>
+                  </span>
+                  <span className="text-[12px] leading-snug text-text-muted">{s.description}</span>
                 </button>
               ))}
             </div>
@@ -789,13 +847,15 @@ export function ChatWindow({
           isThinking ||
           (messages.length > 0 && messages[messages.length - 1].role === 'user')
         ) && (
-          <div className="flex gap-3 mt-4">
-            <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-accent">
+          <div className="flex gap-3 mt-4 animate-fade-in-up">
+            <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-accent animate-pulse-glow glow-border">
               <Bot size={16} className="text-white" />
             </div>
-            <div className="flex items-center gap-2 text-text-muted bg-surface border border-border rounded-xl px-3 py-2">
-              <Loader2 size={14} className="animate-spin" />
-              <span className="text-[12px]">{isThinking ? 'Reasoning...' : 'Thinking...'}</span>
+            <div className="flex items-center gap-2 text-text-muted glass-panel border border-border rounded-xl px-4 py-2" style={{boxShadow: '0 4px 10px rgba(0,0,0,0.1)'}}>
+              <Loader2 size={14} className="animate-spin text-accent" />
+              <span className="text-[12px] font-medium bg-clip-text text-transparent bg-gradient-to-r from-accent to-[#38bdf8] animate-pulse">
+                {isThinking ? 'Analyzing data...' : 'Processing...'}
+              </span>
             </div>
           </div>
         )}
@@ -831,7 +891,7 @@ export function ChatWindow({
         {showScrollButton && (
           <button
             onClick={scrollToBottom}
-            className="absolute bottom-36 sm:bottom-32 md:bottom-4 right-3 sm:right-4 md:right-8 p-2.5 sm:p-2 bg-accent text-white rounded-full shadow-lg hover:opacity-90 transition-opacity z-10"
+            className="absolute bottom-4 right-3 sm:right-4 md:right-8 p-2.5 sm:p-2 bg-accent text-white rounded-full shadow-lg hover:opacity-90 transition-opacity z-10"
             title="Scroll to bottom"
           >
             <ArrowDown size={16} className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />

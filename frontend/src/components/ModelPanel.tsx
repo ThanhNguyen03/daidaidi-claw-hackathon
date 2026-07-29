@@ -131,8 +131,8 @@ export function ModelPanel({ isOpen, onClose }: ModelPanelProps) {
   const globalOverride = data?.overrides?.['*'] ?? '';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
-      <div className="w-full max-w-2xl bg-surface border border-border rounded-xl shadow-xl my-8">
+    <div className="modal-scrim items-start p-4">
+      <div className="w-full max-w-2xl rounded-xl my-8 modal-card">
         <header className="flex items-center justify-between px-5 py-4 border-b border-border">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
             <Cpu size={16} />
@@ -141,7 +141,7 @@ export function ModelPanel({ isOpen, onClose }: ModelPanelProps) {
           <div className="flex items-center gap-2">
             <button
               onClick={load}
-              className="p-1.5 rounded-lg hover:bg-bg text-text-muted"
+              className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted"
               title="Cập nhật"
               aria-label="Cập nhật"
             >
@@ -149,7 +149,7 @@ export function ModelPanel({ isOpen, onClose }: ModelPanelProps) {
             </button>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-bg text-text-muted"
+              className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted"
               aria-label="Đóng"
             >
               <X size={16} />

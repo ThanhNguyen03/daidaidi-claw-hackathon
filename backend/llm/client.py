@@ -471,9 +471,10 @@ class GreenNodeClient:
         """Non-blocking wrapper: runs the synchronous create_completion in a thread-pool executor."""
         import asyncio
         from functools import partial
+        from llm.pool import LLM_POOL
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None,
+            LLM_POOL,
             partial(self.create_completion, messages=messages, **kwargs),
         )
 

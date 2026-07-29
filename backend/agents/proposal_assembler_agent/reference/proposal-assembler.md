@@ -123,7 +123,12 @@ Recommend presenting as a first-mover opportunity."]
 SECTION 5 — COMPLIANCE STATUS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Overall verdict: [✅ CLEAR TO PROCEED | ⚠️ PROCEED WITH CONDITIONS | ❌ BLOCKED]
+Overall verdict: copy the exact word from the compliance skill's VERDICT line
+— CLEAR, CONDITIONS, or BLOCKED — followed by its Vietnamese label, e.g.
+"✅ CLEAR — Đủ điều kiện triển khai" / "⚠️ CONDITIONS — Cần bổ sung điều kiện"
+/ "❌ BLOCKED — Tạm dừng". wireframe_designer_agent reads this exact word to
+decide whether to render Sections 6–7 as slides; a paraphrase ("PROCEED WITH
+CONDITIONS" instead of "CONDITIONS") is what breaks that gate.
 
 [If CLEAR: "No compliance blockers identified. Standard Zalo policy and data privacy
 requirements apply — see onboarding consent flow in Section 3."]

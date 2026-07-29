@@ -8,6 +8,7 @@ Repository interface for agent memory with dual implementations:
 The interface ensures both can be used interchangeably.
 """
 
+import asyncio
 import os
 import json
 from typing import Optional, Any
@@ -78,6 +79,20 @@ class MemoryRepo(ABC):
     ) -> list[dict[str, Any]]:
         """List recent sessions."""
         pass
+
+    @abstractmethod
+    async def delete_session(self, session_id: str) -> None:
+        """Delete a session and its persisted state."""
+        pass
+
+    async def vacuum(self) -> None:
+        """Reclaim space freed by deletes. No-op unless the backend needs it.
+
+        Separate from delete_session because clearing a whole history calls that
+        once per conversation, and compacting the file after each one would do the
+        same work thirty times over.
+        """
+        return None
 
 
 # =============================================================================
@@ -192,13 +207,34 @@ class SQLiteMemoryRepo(MemoryRepo):
 
     async def save_session(self, state: SalesCaseState) -> None:
         """Save session state to SQLite."""
-        import sqlite3
-
         # Update timestamps
         state.updated_at = datetime.now()
 
         # Convert to JSON
         state_json = state.model_dump_json()
+
+        # In a thread: this is the largest write of the turn — the whole state,
+        # every skill output included — and it runs at the end of a streaming
+        # response, where blocking the event loop delays the `done` event for
+        # every session on the box, not just this one.
+        await asyncio.to_thread(
+            self._write_session_row,
+            state.session_id,
+            state.salesperson_id,
+            state_json,
+            state.created_at.isoformat(),
+            state.updated_at.isoformat(),
+        )
+
+    def _write_session_row(
+        self,
+        session_id: str,
+        salesperson_id: str,
+        state_json: str,
+        created_at: str,
+        updated_at: str,
+    ) -> None:
+        import sqlite3
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -209,13 +245,7 @@ class SQLiteMemoryRepo(MemoryRepo):
             (session_id, salesperson_id, state_json, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?)
         """,
-            (
-                state.session_id,
-                state.salesperson_id,
-                state_json,
-                state.created_at.isoformat(),
-                state.updated_at.isoformat(),
-            ),
+            (session_id, salesperson_id, state_json, created_at, updated_at),
         )
 
         conn.commit()
@@ -225,21 +255,22 @@ class SQLiteMemoryRepo(MemoryRepo):
         """Load session from SQLite."""
         import sqlite3
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        def _work() -> Optional[tuple]:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT session_id, salesperson_id, state_json, created_at, updated_at
+                FROM sessions
+                WHERE session_id = ?
+            """,
+                (session_id,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return row
 
-        cursor.execute(
-            """
-            SELECT session_id, salesperson_id, state_json, created_at, updated_at
-            FROM sessions
-            WHERE session_id = ?
-        """,
-            (session_id,),
-        )
-
-        row = cursor.fetchone()
-        conn.close()
-
+        row = await asyncio.to_thread(_work)
         return self._row_to_state(row)
 
     async def save_profile(self, profile: SalespersonProfile) -> None:
@@ -249,45 +280,46 @@ class SQLiteMemoryRepo(MemoryRepo):
         profile.updated_at = datetime.now()
         profile_json = profile.model_dump_json()
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        def _work() -> None:
+            conn = sqlite3.connect(self.db_path)
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO profiles
+                (salesperson_id, profile_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+            """,
+                (
+                    profile.salesperson_id,
+                    profile_json,
+                    profile.created_at.isoformat(),
+                    profile.updated_at.isoformat(),
+                ),
+            )
+            conn.commit()
+            conn.close()
 
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO profiles
-            (salesperson_id, profile_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-        """,
-            (
-                profile.salesperson_id,
-                profile_json,
-                profile.created_at.isoformat(),
-                profile.updated_at.isoformat(),
-            ),
-        )
-
-        conn.commit()
-        conn.close()
+        await asyncio.to_thread(_work)
 
     async def load_profile(self, salesperson_id: str) -> Optional[SalespersonProfile]:
         """Load profile from SQLite."""
         import sqlite3
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        def _work() -> Optional[tuple]:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT salesperson_id, profile_json, created_at, updated_at
+                FROM profiles
+                WHERE salesperson_id = ?
+            """,
+                (salesperson_id,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return row
 
-        cursor.execute(
-            """
-            SELECT salesperson_id, profile_json, created_at, updated_at
-            FROM profiles
-            WHERE salesperson_id = ?
-        """,
-            (salesperson_id,),
-        )
-
-        row = cursor.fetchone()
-        conn.close()
-
+        row = await asyncio.to_thread(_work)
         return self._row_to_profile(row)
 
     async def save_feedback_rule(self, rule: FeedbackRule) -> None:
@@ -296,67 +328,98 @@ class SQLiteMemoryRepo(MemoryRepo):
 
         rule_json = rule.model_dump_json()
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        def _work() -> None:
+            conn = sqlite3.connect(self.db_path)
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO feedback_rules
+                (rule_id, salesperson_id, rule_json, created_at, active)
+                VALUES (?, ?, ?, ?, ?)
+            """,
+                (
+                    rule.rule_id,
+                    rule.salesperson_id,
+                    rule_json,
+                    rule.created_at.isoformat(),
+                    1 if rule.active else 0,
+                ),
+            )
+            conn.commit()
+            conn.close()
 
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO feedback_rules
-            (rule_id, salesperson_id, rule_json, created_at, active)
-            VALUES (?, ?, ?, ?, ?)
-        """,
-            (
-                rule.rule_id,
-                rule.salesperson_id,
-                rule_json,
-                rule.created_at.isoformat(),
-                1 if rule.active else 0,
-            ),
-        )
-
-        conn.commit()
-        conn.close()
+        await asyncio.to_thread(_work)
 
     async def load_feedback_rules(
         self, salesperson_id: str, active_only: bool = True
     ) -> list[FeedbackRule]:
-        """Load feedback rules from SQLite."""
+        """Load feedback rules from SQLite. Called on every turn (main.py's
+        feedback-constraint check), so this is the highest-traffic method in
+        the class — off the loop, and each row parsed only once."""
         import sqlite3
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        def _work() -> list[tuple]:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            query = """
+                SELECT rule_id, salesperson_id, rule_json, created_at, active
+                FROM feedback_rules
+                WHERE salesperson_id = ?
+            """
+            if active_only:
+                query += " AND active = 1"
+            cursor.execute(query, (salesperson_id,))
+            rows = cursor.fetchall()
+            conn.close()
+            return rows
 
-        query = """
-            SELECT rule_id, salesperson_id, rule_json, created_at, active
-            FROM feedback_rules
-            WHERE salesperson_id = ?
-        """
-
-        if active_only:
-            query += " AND active = 1"
-
-        cursor.execute(query, (salesperson_id,))
-        rows = cursor.fetchall()
-        conn.close()
-
-        return [self._row_to_rule(row) for row in rows if self._row_to_rule(row)]
+        rows = await asyncio.to_thread(_work)
+        # Each row was parsed (json.loads + pydantic construct) twice here —
+        # once to filter, once to build the list.
+        return [r for row in rows if (r := self._row_to_rule(row))]
 
     async def delete_feedback_rule(self, rule_id: str) -> None:
         """Delete feedback rule from SQLite."""
         import sqlite3
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        def _work() -> None:
+            conn = sqlite3.connect(self.db_path)
+            conn.execute("DELETE FROM feedback_rules WHERE rule_id = ?", (rule_id,))
+            conn.commit()
+            conn.close()
 
-        cursor.execute(
-            """
-            DELETE FROM feedback_rules WHERE rule_id = ?
-        """,
-            (rule_id,),
-        )
+        await asyncio.to_thread(_work)
 
-        conn.commit()
-        conn.close()
+    async def delete_session(self, session_id: str) -> None:
+        """Delete a session's state row from SQLite.
+
+        This is the row that carries the whole serialised SalesCaseState — skill
+        outputs included — so it is much larger than the transcript row in
+        app.db and is the one worth reclaiming.
+        """
+        import sqlite3
+
+        def _delete() -> None:
+            conn = sqlite3.connect(self.db_path)
+            conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            conn.commit()
+            conn.close()
+
+        await asyncio.to_thread(_delete)
+
+    async def vacuum(self) -> None:
+        """Compact sales_assistant.db. A DELETE alone does not shrink the file."""
+        import sqlite3
+
+        def _vacuum() -> None:
+            conn = sqlite3.connect(self.db_path, isolation_level=None)
+            try:
+                conn.execute("VACUUM")
+            except Exception as e:
+                print(f"[memory_repo] VACUUM skipped: {e}")
+            finally:
+                conn.close()
+
+        await asyncio.to_thread(_vacuum)
 
     async def list_sessions(
         self, salesperson_id: Optional[str] = None, limit: int = 10
@@ -364,33 +427,35 @@ class SQLiteMemoryRepo(MemoryRepo):
         """List recent sessions from SQLite."""
         import sqlite3
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        def _work() -> list[tuple]:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            if salesperson_id:
+                cursor.execute(
+                    """
+                    SELECT session_id, salesperson_id, state_json, created_at, updated_at
+                    FROM sessions
+                    WHERE salesperson_id = ?
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                """,
+                    (salesperson_id, limit),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT session_id, salesperson_id, state_json, created_at, updated_at
+                    FROM sessions
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                """,
+                    (limit,),
+                )
+            rows = cursor.fetchall()
+            conn.close()
+            return rows
 
-        if salesperson_id:
-            cursor.execute(
-                """
-                SELECT session_id, salesperson_id, state_json, created_at, updated_at
-                FROM sessions
-                WHERE salesperson_id = ?
-                ORDER BY updated_at DESC
-                LIMIT ?
-            """,
-                (salesperson_id, limit),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT session_id, salesperson_id, state_json, created_at, updated_at
-                FROM sessions
-                ORDER BY updated_at DESC
-                LIMIT ?
-            """,
-                (limit,),
-            )
-
-        rows = cursor.fetchall()
-        conn.close()
+        rows = await asyncio.to_thread(_work)
 
         result = []
         for row in rows:
@@ -700,6 +765,10 @@ class AgentBaseMemoryRepo(MemoryRepo):
     async def delete_feedback_rule(self, rule_id: str) -> None:
         """Delete feedback rule from AgentBase Memory."""
         await self._delete_entity(self._namespace("feedback_rules"), rule_id)
+
+    async def delete_session(self, session_id: str) -> None:
+        """Delete a session record from AgentBase Memory."""
+        await self._delete_entity(self._namespace("sessions"), session_id)
 
     async def list_sessions(
         self, salesperson_id: Optional[str] = None, limit: int = 10

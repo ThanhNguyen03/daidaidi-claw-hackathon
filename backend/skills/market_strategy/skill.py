@@ -39,7 +39,7 @@ class MarketStrategySkill(BaseSkill):
         user_msg = f"{context.task}\n\n{context_block}" if context_block else context.task
 
         try:
-            content = await self._call_llm(
+            content, truncated = await self._call_llm(
                 system=system,
                 user_msg=user_msg,
                 history=context.messages,
@@ -54,10 +54,12 @@ class MarketStrategySkill(BaseSkill):
                 content="",
             )
 
+        # A reply cut off by max_tokens used to come back as COMPLETE — same as
+        # a whole one — and got assembled into the proposal as if it were.
         return SkillOutput(
             skill=self.name,
-            status="COMPLETE",
+            status="PARTIAL" if truncated else "COMPLETE",
             payload={"strategy": content, "recommendations": content},
-            summary=content[:200],
+            summary=(content[:200] + " [Bị cắt do giới hạn độ dài]") if truncated else content[:200],
             content=content,
         )

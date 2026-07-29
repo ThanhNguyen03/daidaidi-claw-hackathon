@@ -208,7 +208,10 @@ Zalo Products in scope: [List]
 Date: [YYYY-MM-DD]
 ═══════════════════════════════════════════
 
-OVERALL VERDICT: ✅ CLEAR TO PROCEED / ⚠️ PROCEED WITH CONDITIONS / ❌ BLOCKED
+OVERALL VERDICT: [pick one emoji+label] ✅ CLEAR TO PROCEED / ⚠️ PROCEED WITH CONDITIONS / ❌ BLOCKED
+VERDICT: [CLEAR / CONDITIONS / BLOCKED — the single word matching the label above,
+  read by the proposal assembler and the deck generator; must be exactly one of
+  these three words, nothing else on that line]
 
 Risk summary: [X] High | [X] Medium | [X] Notes
 

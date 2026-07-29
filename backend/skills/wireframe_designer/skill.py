@@ -14,9 +14,11 @@ Payload keys:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 import uuid
+from typing import Optional
 
 from skills.base import BaseSkill, SkillContext, SkillOutput
 
@@ -168,34 +170,45 @@ class WireframeDesignerSkill(BaseSkill):
                 ),
             )
 
-        # 1. HTML deck — render only (no extra LLM call)
-        html_content = ""
-        try:
-            html_content = extractor._render_html(slides_data)
-        except Exception as e:
-            print(f"[WireframeDesigner] HTML render error: {e}")
-
-        # 2. PPTX — build only (no extra LLM call)
-        pptx_bytes: bytes | None = None
-        tmp_path = None
-        try:
-            pptx_gen = AdtimaBoxPPTXGenerator()
-            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pptx")
-            os.close(tmp_fd)
-            prs = pptx_gen._build_pptx(slides_data)
-            prs.save(tmp_path)
-            with open(tmp_path, "rb") as f:
-                pptx_bytes = f.read()
-        except Exception as e:
-            import traceback
-            print(f"[WireframeDesigner] PPTX build error: {e}")
-            traceback.print_exc()
-        finally:
+        # HTML render + PPTX build are pure CPU/disk work — 0.5-3s that used to run
+        # directly on the event loop, freezing every other rep's SSE stream (and the
+        # heartbeat that exists specifically to keep those streams alive) for the
+        # duration. One thread for the whole span; both try/except blocks move in
+        # verbatim so a partial failure still degrades (html_content="" /
+        # pptx_bytes=None) instead of losing the fallback behaviour.
+        def _build_artifacts() -> tuple[str, Optional[bytes]]:
+            # 1. HTML deck — render only (no extra LLM call)
+            html_content = ""
             try:
-                if tmp_path and os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-            except Exception:
-                pass
+                html_content = extractor._render_html(slides_data)
+            except Exception as e:
+                print(f"[WireframeDesigner] HTML render error: {e}")
+
+            # 2. PPTX — build only (no extra LLM call)
+            pptx_bytes: bytes | None = None
+            tmp_path = None
+            try:
+                pptx_gen = AdtimaBoxPPTXGenerator()
+                tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pptx")
+                os.close(tmp_fd)
+                prs = pptx_gen._build_pptx(slides_data)
+                prs.save(tmp_path)
+                with open(tmp_path, "rb") as f:
+                    pptx_bytes = f.read()
+            except Exception as e:
+                import traceback
+                print(f"[WireframeDesigner] PPTX build error: {e}")
+                traceback.print_exc()
+            finally:
+                try:
+                    if tmp_path and os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+            return html_content, pptx_bytes
+
+        html_content, pptx_bytes = await asyncio.to_thread(_build_artifacts)
 
         # A factual manifest of what the deck actually contains. Without it the answer
         # writer has no idea what was built — it was inventing slide lists ("Slide 3:

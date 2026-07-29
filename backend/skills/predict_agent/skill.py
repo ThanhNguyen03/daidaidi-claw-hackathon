@@ -32,7 +32,7 @@ class PredictAgentSkill(BaseSkill):
         system = self._skill_content
 
         try:
-            content = await self._call_llm(
+            content, truncated = await self._call_llm(
                 system=system,
                 user_msg=context.task,
                 history=context.messages,
@@ -50,8 +50,8 @@ class PredictAgentSkill(BaseSkill):
 
         return SkillOutput(
             skill=self.name,
-            status="COMPLETE",
+            status="PARTIAL" if truncated else "COMPLETE",
             payload={"reading": content},
-            summary=content[:200],
+            summary=(content[:200] + " [Bị cắt do giới hạn độ dài]") if truncated else content[:200],
             content=content,
         )

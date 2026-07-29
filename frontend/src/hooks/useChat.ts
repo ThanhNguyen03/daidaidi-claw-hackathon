@@ -276,9 +276,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         : JSON.stringify({ message, session_id: sessionId, salesperson_id: salespersonId, mode, brief, resume });
 
       try {
+        const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+        const fetchHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) fetchHeaders['Authorization'] = `Bearer ${token}`;
+
         response = await fetch(`${BACKEND_URL}${isCs ? '/cs/chat/stream' : '/chat/stream'}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: fetchHeaders,
           body: requestBody,
           signal: controller.signal,
         });
@@ -348,7 +352,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
               // Normal path: process event for the currently active mode
               try {
                 const data = JSON.parse(line.slice(6));
-                await handleSSEEvent(data);
+                handleSSEEvent(data);
               } catch {
                 console.error('Failed to parse SSE data');
               }
@@ -393,9 +397,14 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     [sessionId, salespersonId, resetAgentStatuses, mode]
   );
 
-  // Handle SSE events
+  // Handle SSE events. Synchronous — every branch is a state setter or a ref
+  // write, nothing here ever awaits. It used to be declared `async` and
+  // called with `await` anyway, which cost one microtask tick per SSE event
+  // for no reason — and that tick is exactly what defeated React 18's
+  // automatic batching, turning one render-worthy network read into one
+  // render per event.
   const handleSSEEvent = useCallback(
-    async (data: { type: string; [key: string]: unknown }) => {
+    (data: { type: string; [key: string]: unknown }) => {
       switch (data.type) {
         case 'session':
           // Session confirmed — persist id and sync brief from BE
@@ -404,6 +413,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
             setSessionId(sid);
             if (typeof window !== 'undefined') {
               sessionStorage.setItem(`chat_session_${salespersonIdRef.current}`, sid);
+              // The backend has already written the row by the time it sends this,
+              // so tell the history list now. This is what makes a new conversation
+              // appear the moment it starts without the sidebar polling for it —
+              // and a turn can run for minutes before `session_updated` arrives.
+              window.dispatchEvent(new Event('session_updated'));
             }
           }
           // Sync brief from BE (provides latest accumulated brief on session resume)
@@ -455,8 +469,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           setIsThinking(false);
           {
             const content = data.content as string;
-            // Determine agent name for this streaming turn
-            const streamAgent = mode === 'cs' ? 'cs_agent' : 'sales_orchestrator';
+            // Determine agent name for this streaming turn. Reads the ref, not
+            // the `mode` prop directly — `mode` is whatever it was on the
+            // render that last recreated this closure, and a mode switch
+            // mid-stream used to tag a token with the previous mode's agent
+            // name. currentModeRef is updated synchronously at the top of the
+            // mode-switch effect, so it always reflects the live mode.
+            const streamAgent = currentModeRef.current === 'cs' ? 'cs_agent' : 'sales_orchestrator';
             // Attach accumulated thinking steps to the first assistant message of this turn
             const steps = thinkingStepsRef.current.length > 0 ? [...thinkingStepsRef.current] : undefined;
             if (steps) {
@@ -493,7 +512,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           // Stream complete
           break;
 
-        case 'session':
         case 'session_updated':
           // Session state updated — sync brief and persist session id
           if (data.session_id) {
@@ -527,6 +545,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           {
             const questionCardData = data.questions as Question[];
             if (questionCardData) {
+              setIsLoading(false); // pause loading UI while waiting for user answers
               setIsThinking(false);
               setPendingQuestions(questionCardData);
             }
@@ -539,6 +558,8 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           {
             const checkpoint = data.checkpoint as Checkpoint;
             if (checkpoint) {
+              setIsLoading(false); // pause loading UI while waiting for user approval
+              setIsThinking(false);
               setActiveCheckpoint(checkpoint);
             }
           }
@@ -640,8 +661,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           console.log('Unknown SSE event:', data);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sessionId]
+    // Every value read above is a ref or a setState function — both stable
+    // identities — so this callback never needs to change.
+    []
   );
 
   // Answer a pending question
@@ -1067,7 +1089,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch(`${BACKEND_URL}/api/user/sessions/${targetSessionId}`, { headers });
+      // BACKEND_URL already contains /api (e.g. https://domain/api)
+      // Strip it before appending /api/user/sessions to avoid double /api
+      const sessionBaseUrl = BACKEND_URL.endsWith('/api') ? BACKEND_URL.slice(0, -4) : BACKEND_URL;
+      const res = await fetch(`${sessionBaseUrl}/api/user/sessions/${targetSessionId}`, { headers });
       if (!res.ok) {
         throw new Error('Không thể nạp lịch sử cuộc nói chuyện');
       }

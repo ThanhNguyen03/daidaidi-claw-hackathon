@@ -139,15 +139,15 @@ export function AdminPanel({ isOpen, onClose, currentUser }: AdminPanelProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 overflow-y-auto">
-      <div className="w-full max-w-3xl bg-surface border border-border rounded-2xl shadow-2xl my-8">
+    <div className="modal-scrim items-start p-4">
+      <div className="w-full max-w-3xl rounded-2xl my-8 modal-card">
         {/* Header */}
         <header className="flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
             <ShieldCheck size={18} className="text-accent" />
             Admin Panel
           </h2>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-bg text-text-muted">
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted">
             <X size={16} />
           </button>
         </header>
@@ -277,7 +277,7 @@ export function AdminPanel({ isOpen, onClose, currentUser }: AdminPanelProps) {
                         <div className="flex items-center gap-1 flex-shrink-0">
                           <button
                             onClick={() => { setEditId(rule.id); setEditTitle(rule.title); setEditContent(rule.content); setEditScope(rule.scope); }}
-                            className="p-1.5 rounded hover:bg-bg text-text-muted hover:text-text transition-colors"
+                            className="p-1.5 rounded hover:bg-surface-2 text-text-muted hover:text-text transition-colors"
                             title="Chỉnh sửa"
                           >
                             <Edit3 size={13} />

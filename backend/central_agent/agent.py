@@ -20,13 +20,14 @@ import asyncio
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 import random
 from typing import Any, AsyncGenerator, Optional
 
 import gate
 from knowledge.loader import RequestLedger
+from llm.pool import LLM_POOL
 from llm.usage import get_tracker
 from schemas.state import (
     AgentOutput,
@@ -38,6 +39,7 @@ from schemas.state import (
 from skills.base import (
     SkillContext,
     SkillOutput,
+    ThinkFilter,
     extract_json_block,
     loads_lenient,
     strip_think_blocks,
@@ -62,6 +64,72 @@ _CENTRAL_SKILL = _load_central_skill()
 _SKILL_TIMEOUT_S = 270  # per-skill wall-clock timeout; increased to give slow GreenNode MAAS room
 _RECENT_HISTORY_WINDOW = 20
 _SYNTHESIS_HISTORY_WINDOW = 12
+
+# How many skills may be *in flight* at once. Mirrors the cap in llm/client.py, and
+# exists so the two agree about what "running" means.
+#
+# Without a gate here, a group of five skills all started their _SKILL_TIMEOUT_S clock
+# the moment their task was created, while llm/client.py's semaphore let exactly one of
+# them talk to the provider. The skills at the back of that queue spent their entire
+# 270s budget waiting for a slot and then timed out having issued no request at all —
+# so a turn cost 270s per queued skill and reported the ones it never ran as failures.
+# Rate-limit retries make it certain rather than likely: one skill waiting out a 429 is
+# enough to push the rest past their deadline.
+#
+# Holding the slot for the whole skill, not per call, is deliberate: a skill makes two
+# calls (its knowledge selector, then its own completion) and re-queueing between them
+# is what produced the unfair interleaving in the first place.
+_ADMISSION_LIMIT = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "3")))
+_admission: Optional[asyncio.Semaphore] = None
+
+# Ceiling on the whole skill phase of one turn.
+#
+# Serialising admission fixes the spurious timeouts but removes the accidental bound
+# that came with them: seven skills at up to 270s each, queued one at a time, is a
+# turn the rep watches for half an hour. Past this point the remaining skills are
+# skipped and the answer is synthesised from what did finish — which is worth far
+# more than a complete set of results nobody stayed to read. The skip is announced,
+# per the rule that a degraded artifact says so.
+_TURN_BUDGET_S = float(os.getenv("TURN_BUDGET_S", "600"))
+# Below this there is no point admitting a skill: it cannot finish, and starting it
+# only delays the synthesis it would be cut off for.
+_MIN_SKILL_S = 20.0
+
+
+class _TurnBudgetExhausted(Exception):
+    """Raised instead of running a skill the turn no longer has time for."""
+
+
+def _admission_gate() -> asyncio.Semaphore:
+    """The process-wide skill admission gate, created on first use.
+
+    Lazily, because a module-level asyncio.Semaphore is constructed before there is
+    a running loop.
+    """
+    global _admission
+    if _admission is None:
+        _admission = asyncio.Semaphore(_ADMISSION_LIMIT)
+    return _admission
+
+
+async def _run_skill(
+    skill, ctx: SkillContext, deadline: Optional[float] = None
+) -> SkillOutput:
+    """Run one skill, starting its timeout only once it has a slot.
+
+    `deadline` is a loop clock reading, not a duration — the point is that time spent
+    queueing counts against the turn, and does not count against this skill.
+    """
+    async with _admission_gate():
+        timeout = float(_SKILL_TIMEOUT_S)
+        if deadline is not None:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining < _MIN_SKILL_S:
+                raise _TurnBudgetExhausted()
+            timeout = min(timeout, remaining)
+        return await asyncio.wait_for(skill.execute(ctx), timeout=timeout)
+
+
 # Skills that must run after all analysis skills complete, each in its own group and
 # in this order: the deck is built from the assembler's finished proposal.
 #
@@ -295,6 +363,13 @@ def _build_contextual_skill_plan(
         return [[{"skill": "client_simulator", "task": task_short}]]
     if intent == "lookup":
         return [[{"skill": "product_solution", "task": task_short}]]
+    if intent == "casual":
+        # No specialist owns small talk / an ambiguous "what now" — running the
+        # default-branch "all core skills" below for "tôi muốn làm việc khác" is
+        # exactly the sticky-desired_outputs bug this intent was added to stop.
+        # An empty plan means no skill runs; _synthesize answers from
+        # conversation history alone (its "no new analysis" fallback path).
+        return []
     # Sequential skills are excluded from the analysis group and injected
     # as their own final parallel group (assembler + wireframe run together).
     _SEQUENTIAL = {"proposal_assembler", "wireframe_designer"}
@@ -809,11 +884,11 @@ class CentralAgent:
 
         # Step 1: Quick check — is this just a greeting/casual chat?
         if not resuming and self._is_casual(message):
-            response = await self._casual_reply(message)
+            response = await self._casual_reply(message, state)
             yield {"type": "content", "content": response}
             state.messages.append({
                 "role": "assistant", "content": response,
-                "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+                "agent": "central_agent", "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             yield {"type": "done"}
             return
@@ -892,7 +967,7 @@ class CentralAgent:
             yield {"type": "content", "content": msg}
             state.messages.append({
                 "role": "assistant", "content": msg, "agent": "central_agent",
-                "kind": "service_error", "timestamp": datetime.now().isoformat(),
+                "kind": "service_error", "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             yield {"type": "done"}
             return
@@ -905,7 +980,14 @@ class CentralAgent:
         # The planner sometimes still returns needs_clarification for these; the
         # classification wins, because asking a rep for their industry before telling
         # them what a package costs is the single most annoying thing this can do.
-        conversational = intent in ("lookup", "coaching")
+        #
+        # "casual" belongs here too — it was missing, so a message the planner itself
+        # correctly recognised as small talk / an ambiguous "what now" ("tôi muốn làm
+        # việc khác") still fell through to the brief-dispatch path below: Chốt 1 fired
+        # again, and the sticky `desired_outputs` safety net (see below) rebuilt the
+        # whole proposal — market_strategy through wireframe_designer — for a message
+        # that was not asking for one.
+        conversational = intent in ("lookup", "coaching", "casual")
 
         # The planner may ask for more, but only when it has actually formulated a
         # question. Without this, a complete brief could be answered with the canned
@@ -962,7 +1044,7 @@ class CentralAgent:
             state.messages.append({
                 "role": "assistant", "content": clarification_msg,
                 "agent": "central_agent", "kind": "clarification",
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             yield {"type": "done"}
             return
@@ -1042,6 +1124,11 @@ class CentralAgent:
         # One ledger for the whole turn: a reference read for the strategy agent is not
         # read again for the product agent, and the §14 log can account for the total.
         ledger = RequestLedger(request_id=f"{state.session_id}:{len(state.messages)}")
+
+        # The clock the whole skill phase runs against. Set once here, so every group
+        # shares it: a first group that ran long leaves less for the ones after it,
+        # which is the point — the rep is waiting on the turn, not on a group.
+        turn_deadline = asyncio.get_running_loop().time() + _TURN_BUDGET_S
 
         # Thinking trace: skill plan
         _plan_skills = [
@@ -1167,16 +1254,39 @@ class CentralAgent:
                     session_id=state.session_id,
                     ledger=ledger,
                 )
+                # The analysis skills are additive — four of five still makes a usable
+                # answer — so they run against the turn budget. The assembler and the
+                # deck are the deliverable itself: skipping one of those means the rep
+                # waited out the whole budget and got no proposal, which is strictly
+                # worse than waiting longer. Those stay bounded by _SKILL_TIMEOUT_S only.
                 t = asyncio.create_task(
-                    asyncio.wait_for(skill.execute(ctx), timeout=_SKILL_TIMEOUT_S)
+                    _run_skill(
+                        skill,
+                        ctx,
+                        None if skill_name in _ALWAYS_SEQUENTIAL else turn_deadline,
+                    )
                 )
                 tasks[t] = skill_name
-                yield {"type": "agent_status", "agent": skill_name, "status": "thinking", "task": task_desc[:200]}
+                # Only the first _ADMISSION_LIMIT of a group get a slot straight away;
+                # the rest are queued. Saying "thinking" for all of them showed the rep
+                # five agents working when one was, and the sidebar already has a
+                # distinct 'waiting' state for exactly this.
+                queued = len(tasks) > _ADMISSION_LIMIT
+                yield {
+                    "type": "agent_status",
+                    "agent": skill_name,
+                    "status": "waiting" if queued else "thinking",
+                    "task": task_desc[:200],
+                }
                 yield {
                     "type": "thinking_trace",
                     "step": "skill_start",
                     "agent": skill_name,
-                    "content": f"Khởi chạy agent {skill_name}: {task_desc[:120]}",
+                    "content": (
+                        f"Chờ lượt chạy agent {skill_name}"
+                        if queued
+                        else f"Khởi chạy agent {skill_name}: {task_desc[:120]}"
+                    ),
                 }
 
             if not tasks:
@@ -1228,6 +1338,20 @@ class CentralAgent:
                                 "agent": skill_name,
                                 "content": f"Agent {skill_name} thất bại: {(out.summary or 'Lỗi không xác định')[:120]}",
                             }
+                    except _TurnBudgetExhausted:
+                        # Not a failure of the skill — it was never given a chance. Say
+                        # that, so the rep can read the thin section as "ran out of time"
+                        # rather than "the analysis found nothing".
+                        print(f"[CentralAgent] {skill_name} skipped — turn budget "
+                              f"({_TURN_BUDGET_S:.0f}s) spent before it was admitted")
+                        yield {"type": "agent_status", "agent": skill_name, "status": "failed",
+                               "message": "Hết thời gian lượt chạy — agent chưa kịp chạy"}
+                        yield {
+                            "type": "thinking_trace",
+                            "step": "skill_skipped",
+                            "agent": skill_name,
+                            "content": f"Bỏ qua agent {skill_name}: lượt chạy đã hết thời gian",
+                        }
                     except asyncio.TimeoutError:
                         print(f"[CentralAgent] Skill {skill_name} timed out after {_SKILL_TIMEOUT_S}s")
                         yield {"type": "agent_status", "agent": skill_name, "status": "failed",
@@ -1265,9 +1389,7 @@ class CentralAgent:
                     )
                     yield {"type": "agent_status", "agent": auto_skill, "status": "thinking"}
                     try:
-                        auto_out = await asyncio.wait_for(
-                            auto.execute(auto_ctx), timeout=_SKILL_TIMEOUT_S
-                        )
+                        auto_out = await _run_skill(auto, auto_ctx)
                         all_outputs[auto_skill] = auto_out
                         state.outputs[auto_skill] = AgentOutput(
                             agent=auto_skill,
@@ -1325,9 +1447,7 @@ class CentralAgent:
                     )
                     yield {"type": "agent_status", "agent": "wireframe_designer", "status": "thinking"}
                     try:
-                        deck_out = await asyncio.wait_for(
-                            _deck_skill.execute(deck_ctx), timeout=_SKILL_TIMEOUT_S
-                        )
+                        deck_out = await _run_skill(_deck_skill, deck_ctx)
                         all_outputs["wireframe_designer"] = deck_out
                         state.outputs["wireframe_designer"] = AgentOutput(
                             agent="wireframe_designer",
@@ -1436,7 +1556,7 @@ class CentralAgent:
         # Inject Admin-configured Org Rules (learning from Admin Panel)
         try:
             from database import get_active_rules
-            rules = get_active_rules(scope="all")
+            rules = await asyncio.to_thread(get_active_rules, scope="all")
             if rules:
                 rules_block = "\n".join(f"- {r}" for r in rules)
                 system_prompt = (
@@ -1461,7 +1581,7 @@ class CentralAgent:
 
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
-            None,
+            LLM_POOL,
             partial(
                 client.create_completion,
                 messages=[
@@ -1741,7 +1861,6 @@ class CentralAgent:
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream a synthesized final response from all skill outputs."""
         from llm.client import get_llm_client
-        from main import _ThinkFilter
 
         proposal_out = skill_outputs.get("proposal_assembler")
         if proposal_out and proposal_out.content:
@@ -1750,7 +1869,7 @@ class CentralAgent:
             yield {"type": "content", "content": content}
             state.messages.append({
                 "role": "assistant", "content": content,
-                "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+                "agent": "central_agent", "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             # ── AI Deal Score ────────────────────────────────────────────────
             try:
@@ -1842,7 +1961,7 @@ class CentralAgent:
                 yield {"type": "content", "content": msg}
                 state.messages.append({
                     "role": "assistant", "content": msg,
-                    "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+                    "agent": "central_agent", "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
                 return
             # Follow-up with no new skill output — synthesizer can still answer from history
@@ -1854,13 +1973,17 @@ Given specialist analysis from multiple skill modules, assemble ONE cohesive pro
 
 Language rule: DEFAULT TO 100% VIETNAMESE (TIẾNG VIỆT). Write ALL headings, body text, analysis, assumptions, and recommendations fully in Vietnamese. Only use English if the user explicitly writes in English or for technical brand terms (e.g. Zalo OA, Mini App, ZNS, CSHub, Scan Bill). Never output raw JSON code blocks to the user.
 
-Output structure (use ALL sections that have relevant content):
+Output structure (use ALL sections that have relevant content). This mirrors
+the 7-section proposal template (see proposal_assembler_agent/SKILL.md) so a
+rep sees the same shape here as in the formal proposal document — merge or
+drop sections with no content rather than renumbering:
 1. **Tóm tắt đề xuất** — 3–4 sentence executive summary: what we recommend and why
-2. **Phân tích chiến lược** — key strategic insights, market context, consumer insight
-3. **Giải pháp Zalo** — recommended solution with user journey (include Mermaid diagrams AS-IS)
-4. **Báo giá ước tính** — pricing table if available
+2. **Bài toán kinh doanh** — key strategic insights, market context, consumer insight, current pain vs desired outcome
+3. **Giải pháp & Lộ trình triển khai** — recommended solution with user journey (include Mermaid diagrams AS-IS)
+4. **Minh chứng thực tế** — analogous case(s) with results, if available
 5. **Compliance & lưu ý pháp lý** — policy notes (only if compliance skill flagged something)
-6. **Bước tiếp theo** — 3–5 concrete next steps
+6. **Báo giá ước tính** — pricing table if available
+7. **Bước tiếp theo** — 3–5 concrete next steps
 
 Format rules:
 - Use ## for section headers, ### for sub-sections
@@ -1886,7 +2009,7 @@ BAR CHARTS (budget breakdown, allocation, percentages):
   ╠═════════════════════════════════════════╣
   │  35%  MiniApp Development               │
   │  25%  Voucher System                    │
-  │  15%  ZNS/Ads                           │
+  │  15%  ZNS Campaign                      │
   └─────────────────────────────────────────┘
   ```
   Rules: percentage FIRST then label on same line. NEVER use █ block chars. NEVER put a box inside another box.
@@ -1905,6 +2028,7 @@ INFO BOXES (game concepts, form wireframes, feature lists, structured text):
   └─────────────────────────────────────────┘
   ```
   Rules: ONE level of box only — NEVER nest a box inside another box. Use ├──┤ separator (not ╠═╣) for info boxes.
+  Each box = its OWN separate ``` code block. NEVER put 2+ boxes inside one fence.
 
 DIAGRAMS (user flows, architecture):
   Use Mermaid in a ```mermaid block. Copy AS-IS from specialist outputs when available.
@@ -2010,7 +2134,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
         # Inject Admin-configured Org Rules into synthesis too
         try:
             from database import get_active_rules
-            syn_rules = get_active_rules(scope="all")
+            syn_rules = await asyncio.to_thread(get_active_rules, scope="all")
             if syn_rules:
                 rules_block = "\n".join(f"- {r}" for r in syn_rules)
                 system = f"{system}\n\n## Quy tắc tổ chức bắt buộc tuân thủ\n{rules_block}"
@@ -2046,9 +2170,9 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
             finally:
                 loop.call_soon_threadsafe(_safe_put, _DONE)
 
-        producer = loop.run_in_executor(None, _stream_worker)
+        producer = loop.run_in_executor(LLM_POOL, _stream_worker)
 
-        tf = _ThinkFilter()
+        tf = ThinkFilter()
         accumulated = ""
         _TOKEN_TIMEOUT = 180.0
 
@@ -2093,7 +2217,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                 "role": "assistant",
                 "content": accumulated,
                 "agent": "central_agent",
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
     # ------------------------------------------------------------------
@@ -2217,8 +2341,12 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
         stripped = message.strip()
         return bool(self._CASUAL_PATTERNS.match(stripped)) and len(stripped) < 60
 
-    async def _casual_reply(self, message: str) -> str:
-        lang = "vi" if (self._VI_CHARS.search(message) or self._VI_TOKENS.search(message)) else "en"
+    async def _casual_reply(self, message: str, state: Optional[SalesCaseState] = None) -> str:
+        # A one-word "alo" or "hi" carries no Vietnamese diacritics itself — judging
+        # on it alone answered a rep back in English mid-conversation the moment they
+        # sent a casual, script-neutral opener. Same fix as _is_vietnamese: fall back
+        # through their own earlier messages before deciding.
+        lang = "vi" if self._is_vietnamese(message, state) else "en"
         pool = self._REPLIES_VI if lang == "vi" else self._REPLIES_EN
         return random.choice(pool)
 
@@ -2270,7 +2398,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
             client = get_llm_client("central_agent")
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
-                None,
+                LLM_POOL,
                 partial(
                     client.create_completion,
                     messages=[
@@ -2359,7 +2487,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
         loop = asyncio.get_running_loop()
         try:
             response = await loop.run_in_executor(
-                None,
+                LLM_POOL,
                 partial(
                     client.create_completion,
                     messages=[
