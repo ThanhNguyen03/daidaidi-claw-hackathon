@@ -133,7 +133,7 @@ function ThinkingTraceInner({ steps, isActive }: ThinkingTraceProps) {
     : `Đã suy nghĩ qua ${steps.length} bước chi tiết`;
 
   return (
-    <div className="thinking-trace-container mb-3">
+    <div className="thinking-trace-container mt-3 sm:mt-4 mb-3">
       {/* Header */}
       <button
         onClick={handleToggle}
