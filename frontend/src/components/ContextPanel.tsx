@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from 'react';
-import { ChevronRight, X, RefreshCw, Info, AlertCircle, Download, FileText, GitBranch, Image, PanelRightOpen, PanelRightClose } from 'lucide-react';
+import { ChevronRight, X, RefreshCw, Info, AlertCircle, Download, FileText, GitBranch, Image as ImageIcon, PanelRightOpen, PanelRightClose } from 'lucide-react';
 import type { Brief, FeedbackRule as FeedbackRuleType } from '../lib/types';
 
 // Artifact types
@@ -172,14 +172,14 @@ function ContextPanelInner({
                     {constraints.map((constraint) => (
                       <div
                         key={constraint.rule_id}
-                        className="flex items-start gap-2 p-2 bg-surface-2 rounded border border-border"
+                        className="flex items-start gap-2 p-2 bg-surface-2 rounded-sm border border-border"
                       >
                         <AlertCircle
                           size={16}
                           className={constraint.type === 'NEGATIVE_CONSTRAINT' ? 'text-red-600 dark:text-red-400 shrink-0' : 'text-green-600 dark:text-green-400 shrink-0'}
                         />
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs text-text break-words">{constraint.rule}</p>
+                          <p className="text-xs text-text wrap-break-word">{constraint.rule}</p>
                           <span className="text-[10px] text-text-muted block mt-1">
                             {constraint.type === 'NEGATIVE_CONSTRAINT' ? '🔴 Never do this' : '🟢 Always do this'}
                           </span>
@@ -250,13 +250,13 @@ function ContextPanelInner({
                       <div className="flex items-center gap-2 mb-2">
                         {artifact.type === 'pptx' && <FileText size={16} className="text-sky-400" />}
                         {artifact.type === 'userflow' && <GitBranch size={16} className="text-violet-400" />}
-                        {artifact.type === 'wireframe' && <Image size={16} className="text-emerald-400" />}
+                        {artifact.type === 'wireframe' && <ImageIcon size={16} className="text-emerald-400" />}
                         {artifact.type === 'quote' && <FileText size={16} className="text-red-400" />}
                         <span className="text-xs font-medium text-text">{artifact.title}</span>
                       </div>
 
                       {artifact.type === 'userflow' && artifact.data && (
-                        <div className="bg-surface-2 p-2 rounded text-[10px] font-mono text-text-muted overflow-hidden text-ellipsis max-h-12 mb-2">
+                        <div className="bg-surface-2 p-2 rounded-sm text-[10px] font-mono text-text-muted overflow-hidden text-ellipsis max-h-12 mb-2">
                           {artifact.data.substring(0, 200)}...
                         </div>
                       )}
@@ -268,7 +268,7 @@ function ContextPanelInner({
                       {onDownloadArtifact && (
                         <button
                           onClick={() => onDownloadArtifact(artifact)}
-                          className="flex items-center gap-1 bg-accent text-white border-none rounded py-1.5 px-3 text-xs cursor-pointer hover:opacity-90"
+                          className="flex items-center gap-1 bg-accent text-white border-none rounded-sm py-1.5 px-3 text-xs cursor-pointer hover:opacity-90"
                         >
                           <Download size={12} />
                           Download

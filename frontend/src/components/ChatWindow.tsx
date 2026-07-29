@@ -246,7 +246,7 @@ function CheckpointCard({
         const items = groups[key] || [];
         if (items.length === 0) return null;
         return (
-          <div key={key} className="bg-surface rounded-xl border border-border overflow-hidden shadow-sm">
+          <div key={key} className="bg-surface rounded-xl border border-border overflow-hidden shadow-xs">
             <div className="px-3 py-2 bg-surface-2 border-b border-border flex items-baseline gap-2">
               <span className={`text-[12px] font-semibold ${tone}`}>{label}</span>
               <span className="text-[11px] text-text-muted">{hint}</span>
@@ -255,7 +255,7 @@ function CheckpointCard({
               {items.map((item) => (
                 <div key={item.field} className="p-3 flex flex-col sm:flex-row gap-1 sm:gap-4">
                   <span className="font-medium text-text-muted shrink-0 sm:w-1/3">{item.label}</span>
-                  <span className="text-text break-words flex-1 min-w-0">{formatValueHumanReadable(item.value)}</span>
+                  <span className="text-text wrap-break-word flex-1 min-w-0">{formatValueHumanReadable(item.value)}</span>
                 </div>
               ))}
             </div>
@@ -310,14 +310,14 @@ function CheckpointCard({
             return (
               <div
                 key={key}
-                className={`rounded-xl border ${secInfo.border} ${secInfo.bg} p-3.5 shadow-sm transition-all max-w-full`}
+                className={`rounded-xl border ${secInfo.border} ${secInfo.bg} p-3.5 shadow-xs transition-all max-w-full`}
               >
                 <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/40">
                   <span className="text-[13px] font-bold text-text flex items-center gap-1.5 truncate">
                     {secInfo.label}
                   </span>
                 </div>
-                <div className="text-sm text-text leading-relaxed max-w-full break-words">
+                <div className="text-sm text-text leading-relaxed max-w-full wrap-break-word">
                   <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{cleanedText}</ReactMarkdown>
                 </div>
               </div>
@@ -328,7 +328,7 @@ function CheckpointCard({
     }
 
     return (
-      <div className="p-3 bg-surface-2 rounded-xl text-xs text-text leading-relaxed break-words overflow-hidden">
+      <div className="p-3 bg-surface-2 rounded-xl text-xs text-text leading-relaxed wrap-break-word overflow-hidden">
         <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{formatValueHumanReadable(preview)}</ReactMarkdown>
       </div>
     );
@@ -385,9 +385,9 @@ function CheckpointCard({
               <div className="flex items-start gap-2">
                 <span>{finding.severity === 'block' ? '🔴' : finding.severity === 'warn' ? '⚠️' : 'ℹ️'}</span>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[12px] font-medium break-words">{finding.message}</p>
+                  <p className="text-[12px] font-medium wrap-break-word">{finding.message}</p>
                   {finding.suggestion && (
-                    <p className="text-xs opacity-80 mt-1 break-words">Gợi ý: {finding.suggestion}</p>
+                    <p className="text-xs opacity-80 mt-1 wrap-break-word">Gợi ý: {finding.suggestion}</p>
                   )}
                 </div>
               </div>
@@ -434,7 +434,7 @@ function CheckpointCard({
                               ? 'vd: 300 triệu, 200 - 500 triệu, 1.5 tỷ'
                               : 'Để trống nếu chưa có'
                           }
-                          className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[13px] text-text outline-none transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
+                          className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[13px] text-text outline-hidden transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
                         />
                       </label>
                     ))}
@@ -453,7 +453,7 @@ function CheckpointCard({
                 type="checkbox"
                 checked={autoApprove}
                 onChange={(e) => setAutoApprove(e.target.checked)}
-                className="rounded border-border text-accent focus:ring-accent"
+                className="rounded-sm border-border text-accent focus:ring-accent"
               />
               Tự động duyệt bước này trong các lần tiếp theo của phiên
             </label>
@@ -465,7 +465,7 @@ function CheckpointCard({
               <>
                 <button
                   onClick={handleEditSubmit}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-accent text-white rounded-xl text-xs font-semibold hover:opacity-90 transition-all shadow-sm active:scale-95"
+                  className="flex items-center gap-1.5 px-4 py-2 bg-accent text-white rounded-xl text-xs font-semibold hover:opacity-90 transition-all shadow-xs active:scale-95"
                 >
                   <Check size={16} /> Lưu & Xem lại
                 </button>
@@ -481,7 +481,7 @@ function CheckpointCard({
                 <button
                   onClick={onApprove}
                   disabled={hasBlocking}
-                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all shadow-sm active:scale-95 ${
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all shadow-xs active:scale-95 ${
                     hasBlocking
                       ? 'bg-red-500/20 text-red-600 dark:text-red-400 cursor-not-allowed'
                       : 'bg-accent text-white hover:opacity-90'
@@ -703,7 +703,7 @@ export function ChatWindow({
               <span className="text-accent text-base sm:text-lg">{mode === 'cs' ? '🎧' : '💬'}</span>
               <span>{mode === 'cs' ? 'CS Mode' : 'PreSales Mode'}</span>
             </h2>
-            <span className="absolute -bottom-1 left-0 right-0 h-0.5 bg-accent rounded" />
+            <span className="absolute -bottom-1 left-0 right-0 h-0.5 bg-accent rounded-sm" />
           </div>
         </div>
 
@@ -803,7 +803,7 @@ export function ChatWindow({
                   onClick={() => onSendMessage(s.prompt)}
                   className="group flex w-full flex-col gap-1 bg-surface/60 p-3.5 text-left transition-colors hover:bg-accent-soft/40 disabled:opacity-50 sm:flex-row sm:items-center sm:gap-4"
                 >
-                  <span className="flex shrink-0 items-center gap-2 sm:w-[190px]">
+                  <span className="flex shrink-0 items-center gap-2 sm:w-47.5">
                     <span className="text-base">{s.icon}</span>
                     <span className="text-[13px] font-semibold text-text group-hover:text-accent-text">
                       {s.label}
@@ -853,7 +853,7 @@ export function ChatWindow({
             </div>
             <div className="flex items-center gap-2 text-text-muted glass-panel border border-border rounded-xl px-4 py-2" style={{boxShadow: '0 4px 10px rgba(0,0,0,0.1)'}}>
               <Loader2 size={14} className="animate-spin text-accent" />
-              <span className="text-[12px] font-medium bg-clip-text text-transparent bg-gradient-to-r from-accent to-[#38bdf8] animate-pulse">
+              <span className="text-[12px] font-medium bg-clip-text text-transparent bg-linear-to-r from-accent to-[#38bdf8] animate-pulse">
                 {isThinking ? 'Analyzing data...' : 'Processing...'}
               </span>
             </div>
@@ -894,7 +894,7 @@ export function ChatWindow({
             className="absolute bottom-4 right-3 sm:right-4 md:right-8 p-2.5 sm:p-2 bg-accent text-white rounded-full shadow-lg hover:opacity-90 transition-opacity z-10"
             title="Scroll to bottom"
           >
-            <ArrowDown size={16} className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
+            <ArrowDown size={16} className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
           </button>
         )}
       </div>
@@ -922,7 +922,7 @@ export function ChatWindow({
                   handleSubmit(e);
                 }
               }}
-              className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-border rounded-2xl text-sm sm:text-[13px] resize-none min-h-[44px] sm:min-h-[48px] bg-surface-2 text-text placeholder:text-text-muted/60 focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all"
+              className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-border rounded-2xl text-sm sm:text-[13px] resize-none min-h-11 sm:min-h-12 bg-surface-2 text-text placeholder:text-text-muted/60 focus:border-accent focus:ring-2 focus:ring-accent/20 outline-hidden transition-all"
               style={{ lineHeight: '1.5' }}
             />
           </div>

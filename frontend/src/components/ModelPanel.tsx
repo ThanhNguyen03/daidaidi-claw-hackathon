@@ -159,7 +159,7 @@ export function ModelPanel({ isOpen, onClose }: ModelPanelProps) {
 
         {error && (
           <div className="mx-5 mt-4 flex items-start gap-2 text-xs text-status-failed">
-            <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <span>{error}</span>
           </div>
         )}
@@ -174,13 +174,13 @@ export function ModelPanel({ isOpen, onClose }: ModelPanelProps) {
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <span
-                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      className="w-2 h-2 rounded-full shrink-0"
                       style={{ backgroundColor: STATE_COLOR[m.state] ?? STATE_COLOR.unused }}
                     />
                     <span className="text-xs font-medium text-text truncate">{m.model}</span>
                   </div>
                   <span
-                    className="text-[11px] flex-shrink-0"
+                    className="text-[11px] shrink-0"
                     style={{ color: STATE_COLOR[m.state] ?? STATE_COLOR.unused }}
                   >
                     {STATE_LABEL[m.state] ?? m.state}
@@ -278,7 +278,7 @@ export function ModelPanel({ isOpen, onClose }: ModelPanelProps) {
 
         {data?.caveat && (
           <footer className="flex items-start gap-2 px-5 py-3 border-t border-border text-[11px] text-text-muted">
-            <Info size={13} className="mt-0.5 flex-shrink-0" />
+            <Info size={13} className="mt-0.5 shrink-0" />
             <span>{data.caveat}</span>
           </footer>
         )}

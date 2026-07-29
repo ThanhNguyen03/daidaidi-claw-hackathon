@@ -342,7 +342,7 @@ const MermaidDiagram = React.memo(function MermaidDiagram({ chart, isStreaming =
   }
 
   return (
-    <div className="relative group my-4 rounded-xl border border-border/80 bg-surface-2/60 overflow-hidden shadow-sm hover:border-accent/60 transition-all">
+    <div className="relative group my-4 rounded-xl border border-border/80 bg-surface-2/60 overflow-hidden shadow-xs hover:border-accent/60 transition-all">
       <div className="flex items-center justify-between px-3 py-1.5 bg-surface-2/90 border-b border-border/50 text-xs">
         <span className="font-semibold text-[11px] uppercase tracking-wider text-text-muted flex items-center gap-1.5">
           📊 Sơ đồ quy trình (Diagram)
@@ -359,7 +359,7 @@ const MermaidDiagram = React.memo(function MermaidDiagram({ chart, isStreaming =
       <div
         ref={containerRef}
         className={`mermaid-diagram flex justify-center overflow-auto transition-all ${
-          isZoomed ? 'max-h-[85vh] p-4' : 'max-h-[260px] p-3'
+          isZoomed ? 'max-h-[85vh] p-4' : 'max-h-65 p-3'
         }`}
       />
     </div>
@@ -926,7 +926,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
       const text = React.Children.toArray(children).map(c => typeof c === 'string' ? c : '').join('');
       if (/^[—\s]*SECTION\s*\d*\s*—/i.test(text.trim())) {
         return (
-          <div className="my-5 p-3 rounded-xl border border-accent/40 bg-accent/5 flex items-center justify-between shadow-sm">
+          <div className="my-5 p-3 rounded-xl border border-accent/40 bg-accent/5 flex items-center justify-between shadow-xs">
             <span className="text-xs font-bold text-accent tracking-wider uppercase">{text.replace(/^[—\s]*/, '').replace(/—[—\s]*$/, '')}</span>
           </div>
         );
@@ -947,8 +947,8 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
       const text = React.Children.toArray(children).map(c => typeof c === 'string' ? c : '').join('');
       if (/SECTION\s*\d*/i.test(text)) {
         return (
-          <div className="my-5 p-3 rounded-xl border border-accent/40 bg-accent/10 flex items-center gap-2 shadow-sm">
-            <span className="px-2 py-0.5 rounded bg-accent text-white text-[10px] font-bold uppercase tracking-wider">Section</span>
+          <div className="my-5 p-3 rounded-xl border border-accent/40 bg-accent/10 flex items-center gap-2 shadow-xs">
+            <span className="px-2 py-0.5 rounded-sm bg-accent text-white text-[10px] font-bold uppercase tracking-wider">Section</span>
             <h3 className="text-sm font-bold text-text m-0">{text.replace(/^[—\s]*SECTION\s*\d*\s*—?\s*/i, '')}</h3>
           </div>
         );
@@ -1093,28 +1093,29 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
     },
     hr: () => (
       <div className="my-6 flex items-center gap-3 opacity-80">
-        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+        <div className="flex-1 h-px bg-linear-to-r from-transparent via-border to-transparent" />
         <span className="w-1.5 h-1.5 rounded-full bg-accent/50" />
-        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+        <div className="flex-1 h-px bg-linear-to-r from-transparent via-border to-transparent" />
       </div>
     ),
     blockquote: ({ children }: { children: React.ReactNode }) => (
-      <blockquote className="my-4 p-3.5 rounded-xl border-l-4 border-accent bg-surface-2/60 text-text-muted text-xs sm:text-sm italic shadow-sm">
+      <blockquote className="my-4 p-3.5 rounded-xl border-l-4 border-accent bg-surface-2/60 text-text-muted text-xs sm:text-sm italic shadow-xs">
         {children}
       </blockquote>
     ),
     img: ({ src, alt }: { src?: string; alt?: string }) => (
       <div className="relative group inline-block my-2 overflow-hidden rounded-xl border border-border shadow-md transition-all hover:shadow-lg hover:border-accent">
+        {/* eslint-disable-next-line @next/next/no-img-element -- markdown-supplied src, arbitrary external domain, unknown at build time */}
         <img
           src={src}
           alt={alt || 'Thumbnail preview'}
-          className="max-w-[260px] max-h-[160px] object-cover cursor-pointer transition-transform duration-300 group-hover:scale-[1.03]"
+          className="max-w-65 max-h-40 object-cover cursor-pointer transition-transform duration-300 group-hover:scale-[1.03]"
           onClick={() => src && setSelectedImageSrc(src)}
         />
         <div
           className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer pointer-events-none"
         >
-          <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface/90 text-[11px] font-medium text-text shadow">
+          <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface/90 text-[11px] font-medium text-text shadow-sm">
             <ZoomIn size={14} /> Zoom
           </span>
         </div>

@@ -196,16 +196,16 @@ function ThinkingTraceInner({ steps, isActive }: ThinkingTraceProps) {
                 <div className="thinking-trace-step-content flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
                     {config.icon}
-                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-semibold ${config.badgeColor}`}>
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-sm border text-[10px] font-semibold ${config.badgeColor}`}>
                       {config.label}
                     </span>
                     {agentDisplayName && (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded border border-border bg-surface text-[10px] text-text-muted">
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-sm border border-border bg-surface text-[10px] text-text-muted">
                         {agentDisplayName}
                       </span>
                     )}
                   </div>
-                  <p className="thinking-trace-step-text text-text-muted text-[11px] break-words">
+                  <p className="thinking-trace-step-text text-text-muted text-[11px] wrap-break-word">
                     {step.content}
                   </p>
                 </div>

@@ -260,7 +260,7 @@ export function AdminPanel({ isOpen, onClose, currentUser }: AdminPanelProps) {
                       <div className="flex items-start gap-3">
                         <button
                           onClick={() => toggleRule(rule.id)}
-                          className={`mt-0.5 flex-shrink-0 transition-colors ${rule.is_active ? 'text-green-600 dark:text-green-400' : 'text-text-muted'}`}
+                          className={`mt-0.5 shrink-0 transition-colors ${rule.is_active ? 'text-green-600 dark:text-green-400' : 'text-text-muted'}`}
                           title={rule.is_active ? 'Đang bật — bấm để tắt' : 'Đang tắt — bấm để bật'}
                         >
                           {rule.is_active ? <ToggleRight size={22} /> : <ToggleLeft size={22} />}
@@ -268,23 +268,23 @@ export function AdminPanel({ isOpen, onClose, currentUser }: AdminPanelProps) {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-0.5">
                             <span className="text-sm font-medium text-text">{rule.title}</span>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg text-text-muted border border-border">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-bg text-text-muted border border-border">
                               {SCOPE_OPTIONS.find(o => o.value === rule.scope)?.label ?? rule.scope}
                             </span>
                           </div>
                           <p className="text-xs text-text-muted line-clamp-2">{rule.content}</p>
                         </div>
-                        <div className="flex items-center gap-1 flex-shrink-0">
+                        <div className="flex items-center gap-1 shrink-0">
                           <button
                             onClick={() => { setEditId(rule.id); setEditTitle(rule.title); setEditContent(rule.content); setEditScope(rule.scope); }}
-                            className="p-1.5 rounded hover:bg-surface-2 text-text-muted hover:text-text transition-colors"
+                            className="p-1.5 rounded-sm hover:bg-surface-2 text-text-muted hover:text-text transition-colors"
                             title="Chỉnh sửa"
                           >
                             <Edit3 size={13} />
                           </button>
                           <button
                             onClick={() => deleteRule(rule.id)}
-                            className="p-1.5 rounded hover:bg-red-500/10 text-text-muted hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                            className="p-1.5 rounded-sm hover:bg-red-500/10 text-text-muted hover:text-red-600 dark:hover:text-red-400 transition-colors"
                             title="Xóa"
                           >
                             <Trash2 size={13} />
@@ -306,7 +306,7 @@ export function AdminPanel({ isOpen, onClose, currentUser }: AdminPanelProps) {
               </p>
               {users.map(u => (
                 <div key={u.id} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-bg border border-border">
-                  <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent text-sm font-bold flex-shrink-0">
+                  <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent text-sm font-bold shrink-0">
                     {u.full_name?.[0]?.toUpperCase() ?? '?'}
                   </div>
                   <div className="flex-1 min-w-0">

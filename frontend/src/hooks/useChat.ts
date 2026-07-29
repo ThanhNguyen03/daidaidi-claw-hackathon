@@ -230,7 +230,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     setPendingQuestions([]);
     setActiveCheckpoint(null);
     setArtifacts([]);
-  }, [salespersonId, mode]);
+  }, [mode]);
 
   // Per-mode abort controllers so cancelling one mode's stream never kills another.
   const modeAbortControllers = useRef<Record<string, AbortController | null>>({});
@@ -1073,10 +1073,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     setError(null);
   }, []);
 
-  // Cleanup on unmount — abort all in-flight streams across all modes
+  // Cleanup on unmount — abort all in-flight streams across all modes.
+  // Same object reference for the lifetime of the hook (mutated in place,
+  // never reassigned), so capturing it here still sees controllers added later.
   useEffect(() => {
+    const controllers = modeAbortControllers.current;
     return () => {
-      Object.values(modeAbortControllers.current).forEach((c) => c?.abort());
+      Object.values(controllers).forEach((c) => c?.abort());
     };
   }, []);
 

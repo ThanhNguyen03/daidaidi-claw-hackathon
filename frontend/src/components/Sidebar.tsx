@@ -68,7 +68,7 @@ function authHeaders(): Record<string, string> {
 // Revealed on hover on desktop, always visible below md — the sidebar is reachable
 // on mobile once opened, and a hover-only control cannot be tapped there at all.
 const DELETE_BTN_CLASS =
-  'p-1 mr-1.5 rounded text-text-muted opacity-60 md:opacity-0 md:group-hover:opacity-100 ' +
+  'p-1 mr-1.5 rounded-sm text-text-muted opacity-60 md:opacity-0 md:group-hover:opacity-100 ' +
   'focus:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0';
 
 interface AgentStatus {
@@ -334,7 +334,7 @@ function SidebarInner({
               {sessions.length > 0 && !confirmingClearAll && (
                 <button
                   onClick={() => { setConfirmingClearAll(true); setConfirmingId(null); }}
-                  className="p-1 rounded text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                  className="p-1 rounded-sm text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors"
                   title="Xoá toàn bộ lịch sử"
                   aria-label="Xoá toàn bộ lịch sử"
                 >
@@ -353,7 +353,7 @@ function SidebarInner({
                 <button
                   onClick={handleClearAll}
                   disabled={deletingId === '__all__'}
-                  className="flex-1 flex items-center justify-center gap-1 py-1 rounded text-[11px] font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-50"
+                  className="flex-1 flex items-center justify-center gap-1 py-1 rounded-sm text-[11px] font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-50"
                 >
                   {deletingId === '__all__'
                     ? <Loader2 size={11} className="animate-spin" />
@@ -362,7 +362,7 @@ function SidebarInner({
                 </button>
                 <button
                   onClick={() => setConfirmingClearAll(false)}
-                  className="flex-1 py-1 rounded text-[11px] text-text-muted border border-border hover:bg-surface-hover transition-colors"
+                  className="flex-1 py-1 rounded-sm text-[11px] text-text-muted border border-border hover:bg-surface-hover transition-colors"
                 >
                   Huỷ
                 </button>
@@ -393,7 +393,7 @@ function SidebarInner({
                       <button
                         onClick={() => handleDelete(s.session_id)}
                         disabled={deletingId === s.session_id}
-                        className="p-1 rounded text-red-400 hover:bg-red-500/15 transition-colors disabled:opacity-50"
+                        className="p-1 rounded-sm text-red-400 hover:bg-red-500/15 transition-colors disabled:opacity-50"
                         title="Xác nhận xoá"
                         aria-label="Xác nhận xoá"
                       >
@@ -403,7 +403,7 @@ function SidebarInner({
                       </button>
                       <button
                         onClick={() => setConfirmingId(null)}
-                        className="p-1 rounded text-text-muted hover:bg-surface-hover transition-colors"
+                        className="p-1 rounded-sm text-text-muted hover:bg-surface-hover transition-colors"
                         title="Huỷ"
                         aria-label="Huỷ xoá"
                       >
@@ -442,7 +442,7 @@ function SidebarInner({
             {onOpenModelPanel && (
               <button
                 onClick={onOpenModelPanel}
-                className="p-1 rounded hover:bg-bg text-text-muted normal-case tracking-normal"
+                className="p-1 rounded-sm hover:bg-bg text-text-muted normal-case tracking-normal"
                 title="Model & quota"
                 aria-label="Model & quota"
               >
@@ -466,7 +466,7 @@ function SidebarInner({
                 title={agent.display_name}
               >
                 <span
-                  className={`w-2 h-2 rounded-full flex-shrink-0 ${getStatusColorClass(status)}`}
+                  className={`w-2 h-2 rounded-full shrink-0 ${getStatusColorClass(status)}`}
                   style={{ backgroundColor: getStatusColorStyle(status) }}
                   title={status}
                 />
