@@ -45,32 +45,38 @@ const HEADER_MODES: { id: ChatMode; label: string; icon: React.ReactNode }[] = [
   { id: 'cs', label: 'CS', icon: <Headphones size={16} /> },
 ];
 
-// Openers for an empty chat. Written as briefs a rep would actually paste, not as
-// feature names — "làm proposal" teaches nothing about what to put in one, whereas
-// a filled-in example shows the shape of a brief that gets a good answer first try.
+// Openers for an empty chat, each scoped to ONE specialist rather than a full
+// brief — "làm proposal" as the only entry point taught every rep to open with
+// a proposal request, which is why every first message used to build a full
+// pptx whether that's what they needed or not. `prompt` is what actually gets
+// sent; `description` is the friendlier one-line gloss shown next to it.
 const SALES_STARTERS = [
   {
-    icon: '🥤',
-    label: 'Brief FMCG đầy đủ',
-    prompt:
-      'Brand nước giải khát FMCG, muốn tăng mua lại qua loyalty trên Zalo. Ngân sách 300 triệu, chạy Q4. Làm proposal giúp mình.',
-  },
-  {
-    icon: '💊',
-    label: 'Ngành dược, cần soát pháp lý',
-    prompt:
-      'Khách dược phẩm muốn làm chương trình tích điểm cho nhà thuốc. Kiểm giúp mình phần pháp lý và đề xuất giải pháp.',
-  },
-  {
     icon: '💰',
-    label: 'Hỏi nhanh giá gói',
+    label: 'Giá gói bao nhiêu?',
+    description: 'So sánh tính năng và giá các gói CShub theo nhu cầu cụ thể.',
     prompt: 'Gói CShub Base 3 và Pro 1 khác nhau gì, giá 12 tháng bao nhiêu?',
   },
   {
-    icon: '🛡️',
-    label: 'Tập phản biện trước khi pitch',
+    icon: '📖',
+    label: 'Vẽ user flow',
+    description: 'Thiết kế hành trình người dùng trên Zalo MiniApp theo brief của khách.',
     prompt:
-      'Mai mình pitch cho khách FMCG đang so sánh với CNV Loyalty. Đóng vai khách và phản biện giúp mình.',
+      'Vẽ giúp mình user flow cho chương trình tích điểm trên Zalo Mini App — khách FMCG, cơ chế quét mã trên bao bì để tích điểm.',
+  },
+  {
+    icon: '📊',
+    label: 'Phân tích chiến lược',
+    description: 'Tại sao khách cần loyalty? Insight ngành + đề xuất giải pháp tổng thể.',
+    prompt:
+      'Khách FMCG muốn triển khai loyalty trên Zalo nhưng chưa rõ vì sao cần. Phân tích giúp mình insight ngành và định hướng giải pháp.',
+  },
+  {
+    icon: '🛡️',
+    label: 'Đối thủ hỏi khó',
+    description: 'Khách đang so sánh với CNV / Pango / Mmenu — giúp mình trả lời.',
+    prompt:
+      'Khách đang so sánh AdtimaBox với CNV Loyalty. Đóng vai khách và đưa ra phản biện giúp mình luyện tập trả lời.',
   },
 ];
 
@@ -78,11 +84,13 @@ const CS_STARTERS = [
   {
     icon: '📖',
     label: 'Tra hướng dẫn',
+    description: 'Tìm câu trả lời trong tài liệu hướng dẫn sử dụng CSHub.',
     prompt: 'Khách hỏi tại sao không export được data thành viên, giải thích giúp mình.',
   },
   {
     icon: '🐞',
     label: 'Báo lỗi để tạo ticket',
+    description: 'Ghi nhận lỗi khách báo và tạo Jira ticket.',
     prompt: 'Khách báo voucher đã phát nhưng không thấy trong ví, mình cần tạo ticket.',
   },
 ];
@@ -776,24 +784,26 @@ export function ChatWindow({
             </div>
 
             {/* An empty box with a blinking cursor tells a rep nothing about what this
-                thing can do. These are real openers: one click sends, and the shape of
-                the list doubles as the answer to "what am I supposed to type here". */}
-            <div className="mx-auto grid max-w-3xl gap-2 sm:grid-cols-2">
+                thing can do. These are real openers, laid out as a two-column table
+                (name | suggested description) rather than cards — one click sends the
+                underlying `prompt`, and each row is scoped to one specialist so the
+                list itself demonstrates that this isn't "type a brief, get a pptx". */}
+            <div className="mx-auto max-w-2xl overflow-hidden rounded-xl border border-border divide-y divide-border">
               {(mode === 'cs' ? CS_STARTERS : SALES_STARTERS).map((s) => (
                 <button
                   key={s.prompt}
                   type="button"
                   disabled={isLoading}
                   onClick={() => onSendMessage(s.prompt)}
-                  className="group rounded-xl border border-border bg-surface/60 p-3.5 text-left transition-all hover:border-accent hover:bg-accent-soft/40 active:scale-[0.99] disabled:opacity-50"
+                  className="group flex w-full flex-col gap-1 bg-surface/60 p-3.5 text-left transition-colors hover:bg-accent-soft/40 disabled:opacity-50 sm:flex-row sm:items-center sm:gap-4"
                 >
-                  <div className="mb-1 flex items-center gap-2">
+                  <span className="flex shrink-0 items-center gap-2 sm:w-[190px]">
                     <span className="text-base">{s.icon}</span>
                     <span className="text-[13px] font-semibold text-text group-hover:text-accent-text">
                       {s.label}
                     </span>
-                  </div>
-                  <p className="text-[12px] leading-snug text-text-muted">{s.prompt}</p>
+                  </span>
+                  <span className="text-[12px] leading-snug text-text-muted">{s.description}</span>
                 </button>
               ))}
             </div>

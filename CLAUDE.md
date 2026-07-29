@@ -410,6 +410,48 @@ supporting constants/prompt — all provably zero-caller before deletion.)
   Model & Quota included, had no mobile path at all. The sidebar is one off-canvas
   component now (`fixed` + `translate-x`), shared by desktop and the mobile drawer, so
   there is only ever one place to fix.
+- **An unlayered CSS rule beats a layered one regardless of specificity.** Moving
+  `text-xs`/`sm`/`base`/`lg` into Tailwind v4's `@theme` block (to fix a line-height
+  bug) dropped the `!important` a hand-written `.text-xs{font-size:...!important}`
+  used to carry — and `@theme` utilities live in a Tailwind cascade layer, which loses
+  to *any* unlayered rule no matter how low its specificity. `globals.css` had a
+  pre-existing unlayered `h1, h2, .text-xl, ... {font-size: 22px}` headline rule that
+  bare-matched every `<h2>` element, so it started winning outright — Sidebar's
+  "Active Agents", ChatWindow's mode header, every small-text heading rendered at
+  22-26px instead of its intended size. Every `<h1>`/`<h2>` in the codebase already
+  carries its own explicit sizing class, so the fix removed the bare element selectors
+  entirely rather than narrowing them — nothing relied on them.
+- **A planner intent with no matching branch falls through to "run everything."**
+  `_resolve_intent()` can legitimately return `"casual"` (an ambiguous "tôi muốn làm
+  việc khác"), but `_build_contextual_skill_plan()` had no case for it, so it fell to
+  the default branch — every core skill, then the sticky `desired_outputs` safety net
+  chained on `proposal_assembler` + the deck. Same gap in the `conversational` tuple
+  gating Chốt 1: it listed `("lookup", "coaching")` and forgot `"casual"`, so a message
+  the planner itself correctly classified as small talk still re-ran the full brief
+  pipeline. Result: once a proposal existed, almost any follow-up message rebuilt the
+  whole thing. `casual` now short-circuits both checks; an empty skill plan lets
+  `_synthesize` answer from conversation history alone instead of dispatching nothing
+  useful into a five-skill re-run.
+- **A message timestamp with no UTC offset is read as local time by the browser.**
+  Every `state.messages[...]["timestamp"]` was stamped with naive `datetime.now()` —
+  the server's system clock (UTC, since nothing sets `TZ`), serialised via
+  `.isoformat()` with no trailing `Z`/`+00:00`. `new Date(message.timestamp)` on the
+  frontend has no offset to go on, so it parses the string as if it were *already* in
+  the viewer's local zone (Asia/Ho_Chi_Minh, UTC+7) — a message the server stamped at
+  20:00 UTC (03:00 the next day in Vietnam) rendered as 20:00 that same day, a whole
+  calendar date off whenever the 7-hour gap crossed midnight. Fixed at the source:
+  every one of the 12 call sites across `central_agent/agent.py`, `main.py`,
+  `cs_agent/agent.py`, and `memory/profile.py` now stamps `datetime.now(timezone.utc)`,
+  which serialises with an explicit offset the browser can actually convert from.
+- **A casual-reply picker judged language from one message, not the conversation.**
+  `_is_vietnamese()` was written specifically to fall back through a rep's own earlier
+  messages, because a single system-generated nudge or a short reply carries no
+  language signal on its own — but `_casual_reply()` (the greeting/small-talk path)
+  never used it, and instead re-implemented the single-message check it was meant to
+  replace. A one-word opener like "alo" mid-conversation has no Vietnamese diacritics,
+  so it answered a Vietnamese rep in English partway through their own session.
+  `_casual_reply` now takes `state` and calls `_is_vietnamese(message, state)` like
+  every other language decision in this file.
 
 ---
 

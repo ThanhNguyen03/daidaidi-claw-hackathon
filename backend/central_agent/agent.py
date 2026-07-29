@@ -20,7 +20,7 @@ import asyncio
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 import random
 from typing import Any, AsyncGenerator, Optional
@@ -363,6 +363,13 @@ def _build_contextual_skill_plan(
         return [[{"skill": "client_simulator", "task": task_short}]]
     if intent == "lookup":
         return [[{"skill": "product_solution", "task": task_short}]]
+    if intent == "casual":
+        # No specialist owns small talk / an ambiguous "what now" — running the
+        # default-branch "all core skills" below for "tôi muốn làm việc khác" is
+        # exactly the sticky-desired_outputs bug this intent was added to stop.
+        # An empty plan means no skill runs; _synthesize answers from
+        # conversation history alone (its "no new analysis" fallback path).
+        return []
     # Sequential skills are excluded from the analysis group and injected
     # as their own final parallel group (assembler + wireframe run together).
     _SEQUENTIAL = {"proposal_assembler", "wireframe_designer"}
@@ -877,11 +884,11 @@ class CentralAgent:
 
         # Step 1: Quick check — is this just a greeting/casual chat?
         if not resuming and self._is_casual(message):
-            response = await self._casual_reply(message)
+            response = await self._casual_reply(message, state)
             yield {"type": "content", "content": response}
             state.messages.append({
                 "role": "assistant", "content": response,
-                "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+                "agent": "central_agent", "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             yield {"type": "done"}
             return
@@ -960,7 +967,7 @@ class CentralAgent:
             yield {"type": "content", "content": msg}
             state.messages.append({
                 "role": "assistant", "content": msg, "agent": "central_agent",
-                "kind": "service_error", "timestamp": datetime.now().isoformat(),
+                "kind": "service_error", "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             yield {"type": "done"}
             return
@@ -973,7 +980,14 @@ class CentralAgent:
         # The planner sometimes still returns needs_clarification for these; the
         # classification wins, because asking a rep for their industry before telling
         # them what a package costs is the single most annoying thing this can do.
-        conversational = intent in ("lookup", "coaching")
+        #
+        # "casual" belongs here too — it was missing, so a message the planner itself
+        # correctly recognised as small talk / an ambiguous "what now" ("tôi muốn làm
+        # việc khác") still fell through to the brief-dispatch path below: Chốt 1 fired
+        # again, and the sticky `desired_outputs` safety net (see below) rebuilt the
+        # whole proposal — market_strategy through wireframe_designer — for a message
+        # that was not asking for one.
+        conversational = intent in ("lookup", "coaching", "casual")
 
         # The planner may ask for more, but only when it has actually formulated a
         # question. Without this, a complete brief could be answered with the canned
@@ -1030,7 +1044,7 @@ class CentralAgent:
             state.messages.append({
                 "role": "assistant", "content": clarification_msg,
                 "agent": "central_agent", "kind": "clarification",
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             yield {"type": "done"}
             return
@@ -1855,7 +1869,7 @@ class CentralAgent:
             yield {"type": "content", "content": content}
             state.messages.append({
                 "role": "assistant", "content": content,
-                "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+                "agent": "central_agent", "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             # ── AI Deal Score ────────────────────────────────────────────────
             try:
@@ -1947,7 +1961,7 @@ class CentralAgent:
                 yield {"type": "content", "content": msg}
                 state.messages.append({
                     "role": "assistant", "content": msg,
-                    "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+                    "agent": "central_agent", "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
                 return
             # Follow-up with no new skill output — synthesizer can still answer from history
@@ -2203,7 +2217,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                 "role": "assistant",
                 "content": accumulated,
                 "agent": "central_agent",
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
     # ------------------------------------------------------------------
@@ -2327,8 +2341,12 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
         stripped = message.strip()
         return bool(self._CASUAL_PATTERNS.match(stripped)) and len(stripped) < 60
 
-    async def _casual_reply(self, message: str) -> str:
-        lang = "vi" if (self._VI_CHARS.search(message) or self._VI_TOKENS.search(message)) else "en"
+    async def _casual_reply(self, message: str, state: Optional[SalesCaseState] = None) -> str:
+        # A one-word "alo" or "hi" carries no Vietnamese diacritics itself — judging
+        # on it alone answered a rep back in English mid-conversation the moment they
+        # sent a casual, script-neutral opener. Same fix as _is_vietnamese: fall back
+        # through their own earlier messages before deciding.
+        lang = "vi" if self._is_vietnamese(message, state) else "en"
         pool = self._REPLIES_VI if lang == "vi" else self._REPLIES_EN
         return random.choice(pool)
 

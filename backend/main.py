@@ -10,7 +10,7 @@ import os
 import json
 import uuid
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, AsyncGenerator, Any, List, Literal
 
 from fastapi import FastAPI, HTTPException, Header, Request
@@ -811,7 +811,7 @@ async def process_with_central_agent(
     state.messages.append({
         "role": "user",
         "content": message,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     })
 
     # Load active feedback constraints
@@ -856,7 +856,7 @@ async def process_with_central_agent(
             "role": "assistant",
             "content": fallback_msg,
             "agent": "central_agent",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         yield _sse_data({
             "type": "assistant_message",
@@ -992,7 +992,7 @@ async def chat(request: ChatRequest):
         {
             "role": "user",
             "content": request.message,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )
 

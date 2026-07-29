@@ -182,9 +182,17 @@ body {
   }
 }
 
-/* Global headline scale */
-h1,
-h2,
+/* Global headline scale — CLASS-BASED ONLY. This used to also bare-match
+   `h1`/`h2` elements, which was safe only by accident: every h1/h2 in the app
+   already carries its own explicit text-size class (text-xs, text-sm, text-[18px]...)
+   whose `!important` used to override the element rule regardless. Once
+   text-xs/sm/base/lg moved into @theme (below) they lost that `!important` — and
+   @theme utilities live in a Tailwind cascade layer, which loses to ANY unlayered
+   rule no matter its specificity. So this bare `h1, h2` rule started winning
+   outright, and every small-text heading (Sidebar's "Active Agents", ChatWindow's
+   mode header, modal titles) rendered at 22-26px instead of its intended size.
+   Every h1/h2 in the codebase already has its own sizing class — nothing relies
+   on the element selector, so it is gone, not just narrowed. */
 .text-xl,
 .text-2xl,
 .text-\[18px\],
@@ -196,8 +204,6 @@ h2,
 }
 
 @media (min-width: 1024px) {
-  h1,
-  h2,
   .text-xl,
   .text-2xl,
   .text-\[18px\],
@@ -208,8 +214,6 @@ h2,
   }
 }
 
-h3,
-h4,
 .text-lg {
   line-height: 1.3;
 }

@@ -8,7 +8,7 @@ frustration detection, history-based suggested answers.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from schemas.state import SalespersonProfile, ProfileHistoryItem
@@ -124,7 +124,7 @@ class ProfileManager:
             question=question_text,
             answer=answer,
             helpful=was_helpful,
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
         )
         profile.history.append(history_item)
 
