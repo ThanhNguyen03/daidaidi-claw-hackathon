@@ -35,6 +35,55 @@ interface Artifact {
   artifact_id?: string;    // artifact registry key
 }
 
+// deck_url/pptx_url only ever got attached to a single message bubble — there was
+// no single place listing every file generated across a whole session. Each one
+// also carries a unique artifact id in its URL, so turning them into Artifact
+// entries lets the existing "Generated Artifacts" list in ContextPanel (built for
+// the older checkpoint-approval flow, currently empty because that flow doesn't
+// run any more) double as a running index of every deck/PPTX this conversation
+// has produced, not just the latest one.
+function proposalAssetsToArtifacts(
+  assets: { deck_url?: string; pptx_url?: string },
+  createdAtIso?: string
+): Artifact[] {
+  // Every deck this session produces is titled identically ("Đề xuất (HTML)"),
+  // so two real, distinct proposals (e.g. rebuilt after a follow-up edit) were
+  // indistinguishable in the list — a rep had no way to tell which entry was
+  // which before clicking. A time suffix is enough to tell them apart without
+  // needing a real per-artifact label from the backend.
+  const stamp = new Date(createdAtIso ?? Date.now()).toLocaleTimeString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const out: Artifact[] = [];
+  if (assets.deck_url) {
+    out.push({
+      id: assets.deck_url,
+      type: 'wireframe',
+      title: `Đề xuất (HTML) — ${stamp}`,
+      download_url: assets.deck_url,
+    });
+  }
+  if (assets.pptx_url) {
+    out.push({
+      id: assets.pptx_url,
+      type: 'pptx',
+      title: `Đề xuất (PPTX) — ${stamp}`,
+      download_url: assets.pptx_url,
+    });
+  }
+  return out;
+}
+
+// download_url embeds the artifact id, so it is the natural de-dupe key — the
+// same deck re-emitted on a later turn (see main.py's "re-emit artifacts produced
+// on an earlier turn") must not show up twice in the list.
+function mergeArtifacts(prev: Artifact[], fresh: Artifact[]): Artifact[] {
+  const seen = new Set(prev.map((a) => a.download_url ?? a.id));
+  const additions = fresh.filter((a) => !seen.has(a.download_url ?? a.id));
+  return additions.length > 0 ? [...prev, ...additions] : prev;
+}
+
 interface UseChatReturn {
   // State
   sessionId: string | null;
@@ -653,6 +702,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
                 }
                 return prev;
               });
+              // Also index it in the session-wide artifacts list (ContextPanel's
+              // "Generated Artifacts"), so every deck/PPTX this conversation has
+              // produced is visible in one place, not just the latest message.
+              setArtifacts((prev) => mergeArtifacts(prev, proposalAssetsToArtifacts(assets)));
             }
           }
           break;
@@ -1101,7 +1154,33 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       }
       const data = await res.json();
       setSessionId(data.session_id);
-      setMessages(data.messages || []);
+      // The deck/PPTX links only ever arrived as a one-off SSE event on the turn
+      // that built them, never saved onto the message itself — so reopening a past
+      // conversation from the sidebar showed no way to re-download a deck that was
+      // still sitting on disk the whole time. The backend now reconstructs it as
+      // `proposal_assets`; attach it to the last assistant turn, same place a live
+      // stream would have put it, so MessageBubble's existing download buttons
+      // just work without new UI.
+      let msgs: Message[] = data.messages || [];
+      let lastAssistantTimestamp: string | undefined;
+      if (data.proposal_assets && msgs.length > 0) {
+        const lastAssistantIdx = msgs.map((m) => m.role).lastIndexOf('assistant');
+        if (lastAssistantIdx !== -1) {
+          lastAssistantTimestamp = msgs[lastAssistantIdx].timestamp;
+          msgs = msgs.map((m, i) =>
+            i === lastAssistantIdx ? { ...m, proposalAssets: data.proposal_assets } : m
+          );
+        }
+      }
+      setMessages(msgs);
+      // Reset rather than merge: this is a different conversation, and the
+      // previous session's artifact list (or the stale sessionStorage copy the
+      // legacy checkpoint flow writes) must not bleed into it.
+      setArtifacts(
+        data.proposal_assets
+          ? proposalAssetsToArtifacts(data.proposal_assets, lastAssistantTimestamp)
+          : []
+      );
       if (data.brief) setBrief(data.brief);
       setPendingQuestions([]);
       setActiveCheckpoint(null);

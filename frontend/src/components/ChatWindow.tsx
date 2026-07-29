@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, Mic, MicOff, MessageCircle, Headphones, Plus, PanelRightOpen } from 'lucide-react';
+import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, MessageCircle, Headphones, Plus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MessageBubble } from './MessageBubble';
@@ -535,52 +535,9 @@ export function ChatWindow({
 }: ChatWindowProps) {
   const [input, setInput] = useState('');
   const [showScrollButton, setShowScrollButton] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const recognitionRef = useRef<{ stop: () => void } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Voice input via Web Speech API
-  const toggleVoice = useCallback(() => {
-    interface SpeechRec { lang: string; continuous: boolean; interimResults: boolean; onstart: (() => void) | null; onresult: ((e: {resultIndex: number; results: Array<{isFinal: boolean; 0: {transcript: string}}>}) => void) | null; onend: (() => void) | null; onerror: (() => void) | null; start: () => void; stop: () => void; }
-    const SpeechRecognitionAPI: (new () => SpeechRec) | undefined = (window as unknown as {SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec}).SpeechRecognition ?? (window as unknown as {SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec}).webkitSpeechRecognition;
-    if (!SpeechRecognitionAPI) {
-      alert('Trình duyệt không hỗ trợ nhận giọng nói. Dùng Chrome/Edge nhé!');
-      return;
-    }
-    if (isRecording) {
-      recognitionRef.current?.stop();
-      setIsRecording(false);
-      return;
-    }
-    const recognition = new SpeechRecognitionAPI();
-    recognition.lang = 'vi-VN';
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    let finalTranscript = '';
-    recognition.onstart = () => setIsRecording(true);
-    recognition.onresult = (e) => {
-      let interim = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalTranscript += t;
-        else interim = t;
-      }
-      setInput((prev) => (prev.trim() ? prev + ' ' : '') + finalTranscript + interim);
-    };
-    recognition.onend = () => {
-      setIsRecording(false);
-      recognitionRef.current = null;
-      textareaRef.current?.focus();
-    };
-    recognition.onerror = () => { setIsRecording(false); recognitionRef.current = null; };
-    recognitionRef.current = recognition;
-    recognition.start();
-  }, [isRecording]);
-
-  // Stop recording on unmount
-  useEffect(() => () => { recognitionRef.current?.stop(); }, []);
   const isAtBottomRef = useRef(true);
 
   // Streaming rewrites the last message on every token, so this effect fires dozens
@@ -922,22 +879,6 @@ export function ChatWindow({
               style={{ lineHeight: '1.5' }}
             />
           </div>
-          {/* Voice input button — fixed to match the textarea's own
-              min-height exactly, so the row lines up instead of the
-              buttons floating shorter than the input pill. */}
-          <button
-            type="button"
-            onClick={toggleVoice}
-            disabled={isLoading}
-            title={isRecording ? 'Dừng ghi âm' : 'Nhập bằng giọng nói (tiếng Việt)'}
-            className={`shrink-0 flex items-center justify-center h-11 w-11 sm:h-12 sm:w-12 rounded-2xl transition-all border ${
-              isRecording
-                ? 'bg-red-500/10 border-red-500/50 text-red-600 dark:text-red-400 animate-pulse'
-                : 'bg-surface-2 border-border text-text-muted hover:text-accent hover:border-accent/50'
-            } ${isLoading ? 'opacity-40 cursor-not-allowed' : ''}`}
-          >
-            {isRecording ? <MicOff size={16} /> : <Mic size={16} />}
-          </button>
           <button
             type="button"
             onClick={handleSubmit}

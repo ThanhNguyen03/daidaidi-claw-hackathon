@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from 'react';
-import { ChevronRight, X, RefreshCw, Info, AlertCircle, Download, FileText, GitBranch, Image as ImageIcon } from 'lucide-react';
+import { ChevronRight, X, RefreshCw, Info, AlertCircle, Download, ExternalLink, FileText, GitBranch, Image, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import type { Brief, FeedbackRule as FeedbackRuleType } from '../lib/types';
 
 // Artifact types
@@ -264,8 +264,21 @@ function ContextPanelInner({
                           onClick={() => onDownloadArtifact(artifact)}
                           className="flex items-center gap-1 bg-accent text-white border-none rounded-sm py-1.5 px-3 text-xs cursor-pointer hover:opacity-90"
                         >
-                          <Download size={12} />
-                          Download
+                          {/* The HTML deck opens in a new tab — it does not save a
+                              file to disk — so labelling it "Download" like the
+                              PPTX (which genuinely does) promised behavior it
+                              didn't deliver. */}
+                          {artifact.type === 'wireframe' ? (
+                            <>
+                              <ExternalLink size={12} />
+                              Xem
+                            </>
+                          ) : (
+                            <>
+                              <Download size={12} />
+                              Download
+                            </>
+                          )}
                         </button>
                       )}
                     </div>

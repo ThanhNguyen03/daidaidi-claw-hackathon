@@ -311,8 +311,38 @@ TIMELINES:
   - If gantt would be complex, use a Markdown pipe table instead: Phase | Duration | Deliverable
 """
 
-    def _build_system_prompt(self, constraints: list[FeedbackRule]) -> str:
+    async def _fetch_org_rules(self) -> list[str]:
+        """Admin-Panel-authored org rules scoped to this skill.
+
+        `get_active_rules(scope)` already does real scope filtering — `scope IN
+        ('all', ?)` — but the only two callers in the codebase (central_agent's
+        planner and its final synthesizer) always passed the literal string
+        "all", which the function treats as "no filter, return every active rule
+        regardless of scope." So the per-skill scope picker in the Admin Panel
+        ("Compliance", "Product Solution", ...) never actually narrowed anything,
+        and worse: neither of those two callers is the skill that writes the
+        content a scoped rule is meant to constrain. A rule scoped to
+        "Compliance" never reached compliance/skill.py at all. Passing self.name
+        here is what makes the scope picker real, and calling it from the skill
+        itself is what makes the rule reach the prompt that matters.
+        """
+        try:
+            from database import get_active_rules
+            rules = await asyncio.to_thread(get_active_rules, self.name)
+            if rules:
+                print(f"[org_rules] {self.name}: {len(rules)} active rule(s) injected")
+            return rules
+        except Exception as e:
+            print(f"[org_rules] {self.name}: lookup failed, non-fatal ({e})")
+            return []
+
+    def _build_system_prompt(
+        self, constraints: list[FeedbackRule], org_rules: Optional[list[str]] = None
+    ) -> str:
         prompt = self._skill_content
+        if org_rules:
+            rules_block = "\n".join(f"- {r}" for r in org_rules)
+            prompt = f"## Quy tắc tổ chức bắt buộc tuân thủ\n{rules_block}\n\n---\n\n" + prompt
         if constraints:
             scoped = [c for c in constraints if not c.scope or self.name in c.scope]
             if scoped:

@@ -210,19 +210,35 @@ draws those tokens from the same `max_tokens` budget as the answer. Without it t
 planner prompt never returned inside 150s, and `gemini-3.5-flash` came back
 `finish_reason: length` having produced nothing.
 
-**Rate limits are the main operational risk.** A full proposal turn fans out to
-planner, selectors, four specialists, assembler and synthesis. Six concurrent
-requests draw a 429; a whole run on free tier produced 28 of them and failed four
-skills. Hence concurrency 1 and the long retry ceiling. Before a demo, either buy
-quota or run a session in advance and present that.
+**The project moved to paid Tier 1 on 2026-07-28** (billing linked, $250/mo cap).
+Tier 1 ceilings for the models this app uses are roughly 50-500x the free-tier ones
+below — `gemini-3.6-flash` alone went from 5 RPM/20 RPD to 1,000 RPM/10,000 RPD.
+`config/model_limits.yaml` has been updated to the Tier 1 numbers (read off AI
+Studio's Rate Limit page, the same way the originals were). The paragraphs below
+describe the free-tier regime the concurrency/retry/fallback settings were designed
+against; nothing about those settings changed with the upgrade — Tier 1 makes them
+more conservative than necessary, not wrong, and loosening `LLM_MAX_CONCURRENCY` or
+`LLM_FALLBACK_MODELS` is a deliberate decision to make later, not a side effect of
+updating the quota display. One thing the upgrade *does* explain: `out_of_quota_today`
+firing right after the upgrade was chasing the old free-tier ceiling, not a real
+Tier-1 problem — AI Studio's own 28-day peak-usage chart for this project never
+showed more than 25 RPD on `gemini-3.6-flash`, well under either ceiling.
 
-**Requests-per-day is the limit that actually stops a demo, and retrying cannot fix
-it.** Measured 2026-07-26: `gemini-3.6-flash` at 25/20 RPD while
-`gemini-3.5-flash-lite` sat at 246/500, and the five skills pinned to 3.6-flash all
-failed while the two on flash-lite sailed through. So `LLM_FALLBACK_MODELS` moves a
-call to the next model once one is spent, and the 429 body is read to tell a
-per-minute limit (wait it out) from a per-day one (switch immediately — six attempts
-across three models would hit the 270s skill timeout before reaching the last).
+**Rate limits were the main operational risk on free tier.** A full proposal turn
+fans out to planner, selectors, four specialists, assembler and synthesis. Six
+concurrent requests draw a 429 on free tier; a whole run produced 28 of them and
+failed four skills. Hence concurrency 1 and the long retry ceiling — kept as-is
+after the Tier 1 upgrade until there's a reason to re-measure and loosen them.
+
+**Requests-per-day was the limit that actually stopped a demo on free tier, and
+retrying could not fix it.** Measured 2026-07-26: `gemini-3.6-flash` at 25/20 RPD
+while `gemini-3.5-flash-lite` sat at 246/500, and the five skills pinned to
+3.6-flash all failed while the two on flash-lite sailed through. So
+`LLM_FALLBACK_MODELS` moves a call to the next model once one is spent, and the 429
+body is read to tell a per-minute limit (wait it out) from a per-day one (switch
+immediately — six attempts across three models would hit the 270s skill timeout
+before reaching the last). Both mechanisms stay in place post-upgrade; they just
+fire far less often now.
 
 ```
 LLM_FALLBACK_MODELS=gemini-3.5-flash-lite,gemini-3.5-flash
@@ -452,6 +468,22 @@ supporting constants/prompt — all provably zero-caller before deletion.)
   so it answered a Vietnamese rep in English partway through their own session.
   `_casual_reply` now takes `state` and calls `_is_vietnamese(message, state)` like
   every other language decision in this file.
+- **A scope parameter that only one caller ever sets is not a filter, it's a
+  constant.** `get_active_rules(scope)` in `database.py` does real filtering —
+  `scope IN ('all', ?)` — but both call sites in the codebase (the planner and
+  the final synthesizer) always passed the literal string `"all"`, which the
+  function special-cases to mean "no filter, return every active rule". So the
+  Admin Panel's per-skill scope picker ("Compliance", "Product Solution", ...)
+  never actually narrowed anything — and more importantly, neither the planner
+  nor the synthesizer is the thing that writes a proposal's compliance section
+  or strategy section. A rule scoped to "Compliance" never reached
+  `compliance/skill.py` at all; it only ever reached two calls that don't own
+  that content. `BaseSkill._fetch_org_rules()` now calls
+  `get_active_rules(self.name)` from inside each of the 6 skills that build
+  their own system prompt, which is what makes the scope picker real. Also had
+  zero observability — nothing logged when a rule was or wasn't injected — so
+  there was no way to confirm from outside that it worked; a `[org_rules]` line
+  now prints wherever a rule is actually injected.
 
 ---
 
