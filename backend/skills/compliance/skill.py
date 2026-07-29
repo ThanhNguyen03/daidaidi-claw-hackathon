@@ -63,8 +63,13 @@ class ComplianceSkill(BaseSkill):
                 # required docs, safe-content parameters) with no length
                 # guidance in SKILL.md — the same budget market_strategy gets
                 # for six. Vietnamese runs token-heavy, so 2000 was a real
-                # truncation risk on a full audit.
-                max_tokens=3500,
+                # truncation risk on a full audit. Raised again to 6000 when
+                # MODEL_COMPLIANCE moved to gemini-3.1-pro-preview: measured on
+                # this key, Pro spent 397 of a 400-token budget on hidden
+                # reasoning before producing 16 tokens of content, even at
+                # LLM_REASONING_EFFORT=low — a Pro call needs much more total
+                # headroom than a Flash call for the same visible output.
+                max_tokens=6000,
             )
         except Exception as e:
             return SkillOutput(
