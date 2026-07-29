@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from 'react';
-import { ChevronRight, X, RefreshCw, Info, AlertCircle, Download, ExternalLink, FileText, GitBranch, Image, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { ChevronRight, X, RefreshCw, Info, AlertCircle, Download, ExternalLink, FileText, GitBranch, Image, PanelRightClose, PanelRightOpen, ImageIcon } from 'lucide-react';
 import type { Brief, FeedbackRule as FeedbackRuleType } from '../lib/types';
 
 // Artifact types
