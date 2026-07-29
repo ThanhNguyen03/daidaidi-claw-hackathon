@@ -468,6 +468,22 @@ supporting constants/prompt — all provably zero-caller before deletion.)
   so it answered a Vietnamese rep in English partway through their own session.
   `_casual_reply` now takes `state` and calls `_is_vietnamese(message, state)` like
   every other language decision in this file.
+- **A scope parameter that only one caller ever sets is not a filter, it's a
+  constant.** `get_active_rules(scope)` in `database.py` does real filtering —
+  `scope IN ('all', ?)` — but both call sites in the codebase (the planner and
+  the final synthesizer) always passed the literal string `"all"`, which the
+  function special-cases to mean "no filter, return every active rule". So the
+  Admin Panel's per-skill scope picker ("Compliance", "Product Solution", ...)
+  never actually narrowed anything — and more importantly, neither the planner
+  nor the synthesizer is the thing that writes a proposal's compliance section
+  or strategy section. A rule scoped to "Compliance" never reached
+  `compliance/skill.py` at all; it only ever reached two calls that don't own
+  that content. `BaseSkill._fetch_org_rules()` now calls
+  `get_active_rules(self.name)` from inside each of the 6 skills that build
+  their own system prompt, which is what makes the scope picker real. Also had
+  zero observability — nothing logged when a rule was or wasn't injected — so
+  there was no way to confirm from outside that it worked; a `[org_rules]` line
+  now prints wherever a rule is actually injected.
 
 ---
 
