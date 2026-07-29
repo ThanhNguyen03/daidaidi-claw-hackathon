@@ -207,12 +207,22 @@ class ModelUsageTracker:
                 })
             return {
                 "models": models,
-                "counted_since_restart": True,
+                # Was hardcoded True regardless of what actually happened — counts
+                # are loaded from data/usage_stats.json on startup (_load_stats),
+                # so they survive a restart/redeploy rather than reset to zero. A
+                # panel reader taking this literally would wrongly expect a restart
+                # to clear a stuck "out of quota" state.
+                "counted_since_restart": False,
                 "caveat": (
-                    "Số lượt gọi do chính app này đếm từ lần khởi động gần nhất. "
+                    "Số lượt gọi do chính app này đếm, lưu trên đĩa nên sống sót qua "
+                    "cả restart/redeploy — không phải chỉ từ lần khởi động gần nhất. "
                     "Google không cung cấp API báo quota còn lại, nên nếu key được "
                     "dùng ở nơi khác thì con số thực tế sẽ cao hơn. Trạng thái "
-                    "'hết quota hôm nay' thì lấy trực tiếp từ lỗi 429 của Google."
+                    "'hết quota hôm nay' lấy trực tiếp từ lỗi 429 của Google và tự "
+                    "hết hạn sau 24h kể từ lỗi đó — nếu ceiling trong "
+                    "model_limits.yaml vừa được nâng lên (vd nâng gói trả phí), "
+                    "trạng thái này có thể vẫn còn 'dính' từ trước khi nâng cấp cho "
+                    "tới khi đủ 24h, dù hạn mức thật đã cao hơn nhiều."
                 ),
             }
 
