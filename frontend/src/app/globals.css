@@ -18,21 +18,17 @@
    * generic light theme with a blue accent bolted on. */
   --color-bg: #eef3fa;
   --color-surface: #ffffff;
-  /* Was #e7eff9 — only ~2% lighter than --color-bg, so sunken elements
-   * (the composer input, disabled buttons, code blocks) had no visible fill
-   * against the page. Pulled it clearly darker so "this is a distinct
-   * surface" reads without needing the border to do all the work. */
-  --color-surface-2: #dde7f3;
-  --color-surface-hover: #e4edf9;
-  --color-text: #0a1628;
-  /* Darker than the original #5b6b84 — that read fine in isolation but felt
-   * washed out across a whole screen of secondary labels. Same navy hue as
-   * --color-text, just lifted lighter than it, not a generic grey. */
-  --color-text-muted: #3d4a5f;
-  /* Borders were within a couple percent lightness of the backgrounds they
-   * outlined — invisible at a glance. Given real separation from bg/surface. */
-  --color-border: #c7d4e6;
-  --color-border-strong: #a9bcd4;
+  --color-surface-2: #f3f4f6;
+  --color-surface-hover: #f9fafb;
+  /* Opaque counterpart to --color-surface. Modal cards and any surface that
+     must be read against arbitrary content behind it use this, not
+     --color-surface — a modal is a focus trap and translucency there just
+     lets the page behind it interfere with the modal's own content. */
+  --color-surface-solid: #ffffff;
+  --color-text: #111827;
+  --color-text-muted: #6b7280;
+  --color-border: #e5e7eb;
+  --color-border-strong: #d1d5db;
 
   /* Accent — Zalo blue (#0068FF), the brand's one non-negotiable color. */
   --color-accent: #0068ff;
@@ -99,14 +95,18 @@
  * of needing heavy borders, and borders stay low-contrast so the eye follows
  * content, not the chrome. */
 .dark {
-  --color-bg: #060b14;
-  --color-surface: #0d1520;
-  --color-surface-2: #141f2f;
-  --color-surface-hover: #192637;
-  --color-text: #e8eef7;
-  --color-text-muted: #7e8ea5;
-  --color-border: #1c2a3d;
-  --color-border-strong: #283a51;
+  --color-bg: #0a0a12;
+  --color-surface: rgba(18, 18, 28, 0.6);
+  --color-surface-2: rgba(26, 26, 40, 0.7);
+  --color-surface-hover: rgba(31, 31, 48, 0.8);
+  /* rgba(18,18,28,0.6) over #0a0a12 composites to roughly #0f0f18 — this is a
+     few levels lighter, so an opaque modal still reads as raised above the
+     page rather than as a flat cutout. */
+  --color-surface-solid: #14141f;
+  --color-text: #e8e8f0;
+  --color-text-muted: #8a8aa3;
+  --color-border: #24243a;
+  --color-border-strong: #33334d;
 
   /* Zalo blue at full saturation (#0068ff) reads muddy on near-black — it
    * needs lifting toward white to hold contrast, the way any saturated hue
@@ -144,9 +144,13 @@
   pointer-events: none;
   z-index: 0;
   background:
-    radial-gradient(60rem 40rem at 12% -10%, rgba(0, 104, 255, 0.12), transparent 60%),
-    radial-gradient(50rem 34rem at 100% 0%, rgba(56, 189, 248, 0.07), transparent 55%),
-    radial-gradient(44rem 30rem at 50% 110%, rgba(61, 148, 255, 0.06), transparent 60%);
+    radial-gradient(60rem 40rem at 12% -10%, rgba(124, 108, 245, 0.10), transparent 60%),
+    radial-gradient(50rem 34rem at 100% 0%, rgba(56, 189, 248, 0.06), transparent 55%),
+    radial-gradient(44rem 30rem at 50% 110%, rgba(167, 139, 250, 0.05), transparent 60%),
+    linear-gradient(rgba(124, 108, 245, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 108, 245, 0.03) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 100% 100%, 30px 30px, 30px 30px;
+  background-position: center;
 }
 
 .dark #__next,
