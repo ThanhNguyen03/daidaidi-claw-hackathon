@@ -90,7 +90,6 @@ const SALE_AGENTS: { name: string; display_name: string }[] = [
   { name: 'market_strategy', display_name: 'Market Strategy' },
   { name: 'compliance', display_name: 'Compliance' },
   { name: 'product_solution', display_name: 'Product Solution' },
-  { name: 'design', display_name: 'UX Design' },
   { name: 'client_simulator', display_name: 'Client Simulator' },
   { name: 'proposal_assembler', display_name: 'Proposal Assembler' },
   { name: 'wireframe_designer', display_name: 'Deck Generator' },

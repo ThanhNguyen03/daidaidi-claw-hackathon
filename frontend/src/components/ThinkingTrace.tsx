@@ -90,7 +90,6 @@ const SKILL_NAMES_MAP: Record<string, string> = {
   product_solution: 'Product Solution',
   compliance: 'Compliance',
   client_simulator: 'Client Simulator',
-  design: 'UX Design',
   proposal_assembler: 'Proposal Assembler',
   wireframe_designer: 'Deck Generator',
   cs_agent: 'CS Assistant',
