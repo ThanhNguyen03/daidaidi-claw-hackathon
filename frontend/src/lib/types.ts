@@ -190,11 +190,11 @@ export interface Message {
   timestamp: string;
   proposalAssets?: { deck_url?: string; pptx_url?: string };
   thinkingSteps?: ThinkingStep[];
+  
+  isActionSummary?: boolean;
 }
 
-// =============================================================================
 // Thinking Step (Agent reasoning trace)
-// =============================================================================
 
 export interface ThinkingStep {
   step: string;
@@ -204,9 +204,7 @@ export interface ThinkingStep {
   status?: 'running' | 'completed' | 'failed';
 }
 
-// =============================================================================
 // API Request/Response Types
-// =============================================================================
 
 export interface ChatRequest {
   message: string;

@@ -7,15 +7,10 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, MessageCircle, Headphones, Plus, PanelRightOpen } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { MessageBubble } from './MessageBubble';
+import { MessageBubble, AgentRichContent } from './MessageBubble';
 import { QuestionCard } from './QuestionCard';
 import { ThinkingTrace } from './ThinkingTrace';
 import type { Message, Question, Checkpoint, Brief, ChatMode, ThinkingStep } from '../lib/types';
-
-// Render-invariant — see the same constant in MessageBubble.tsx.
-const REMARK_PLUGINS = [remarkGfm];
 
 interface ChatWindowProps {
   messages: Message[];
@@ -113,9 +108,6 @@ function CheckpointCard({
 
   const hasBlocking = checkpoint.compliance_findings?.some(f => f.severity === 'block');
 
-  // Chốt 1 sends the brief split by where each item came from. Showing that split is
-  // the whole value of the stop: a rep skims "inferred" and "assumed" for the one line
-  // that is wrong, which is much faster than re-reading a brief they already wrote.
   const SOURCE_GROUPS: { key: string; label: string; hint: string; tone: string }[] = [
     { key: 'said', label: 'Bạn đã nói', hint: 'lấy nguyên từ tin nhắn của bạn', tone: 'text-text' },
     { key: 'inferred', label: 'Mình tự suy ra', hint: 'suy từ ngữ cảnh — kiểm giúp', tone: 'text-accent-text' },
@@ -318,7 +310,7 @@ function CheckpointCard({
                   </span>
                 </div>
                 <div className="text-sm text-text leading-relaxed max-w-full wrap-break-word">
-                  <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{cleanedText}</ReactMarkdown>
+                  <AgentRichContent content={cleanedText} />
                 </div>
               </div>
             );
@@ -329,14 +321,11 @@ function CheckpointCard({
 
     return (
       <div className="p-3 bg-surface-2 rounded-xl text-xs text-text leading-relaxed wrap-break-word overflow-hidden">
-        <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{formatValueHumanReadable(preview)}</ReactMarkdown>
+        <AgentRichContent content={formatValueHumanReadable(preview)} />
       </div>
     );
   };
 
-  // Chốt 1 exists so the rep can correct what we misread, which means Edit has to
-  // actually edit. It used to open a panel reading "Edit functionality available"
-  // and submit an empty object.
   const briefGroups = (checkpoint.action.preview as { groups?: Record<string, Array<Record<string, string>>> } | undefined)
     ?.groups;
   const editableFields = briefGroups
@@ -368,7 +357,11 @@ function CheckpointCard({
   };
 
   return (
-    <div className="border-2 border-accent bg-accent-soft rounded-2xl p-4 mb-4 max-w-full overflow-hidden shadow-md">
+    <div className="flex gap-2 sm:gap-3 mt-3 sm:mt-4 mb-4 animate-fade-in-up">
+      <div className="shrink-0 aspect-square p-2 size-fit rounded-full flex items-center justify-center text-white bg-accent glow-border" style={{ boxShadow: '0 0 12px rgba(0, 104, 255, 0.5)' }}>
+        <Bot size={16} className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+      </div>
+      <div className="flex-1 min-w-0 border-2 border-accent bg-accent-soft rounded-2xl p-4 max-w-full overflow-hidden shadow-md">
       {/* Compliance Findings */}
       {checkpoint.compliance_findings && checkpoint.compliance_findings.length > 0 && (
         <div className="mb-4 max-w-full overflow-hidden">
@@ -506,6 +499,7 @@ function CheckpointCard({
           </div>
         </div>
       </div>
+      </div>
     </div>
   );
 }
@@ -539,6 +533,21 @@ export function ChatWindow({
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isAtBottomRef = useRef(true);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const [composerHeight, setComposerHeight] = useState(0);
+
+  // The composer grows up to 120px as the textarea wraps to multiple lines —
+  // the scroll-to-bottom button anchors above it by this measured height, not
+  // a guessed constant, so it never sits over the input or leaves a gap.
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    const update = () => setComposerHeight(el.offsetHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Streaming rewrites the last message on every token, so this effect fires dozens
   // of times a second. `behavior: 'smooth'` starts a new animation on each of those
@@ -618,7 +627,7 @@ export function ChatWindow({
     }
   };
   return (
-    <div className="flex-1 flex flex-col h-full bg-bg overflow-hidden">
+    <div className="flex-1 flex flex-col h-full bg-bg overflow-hidden relative">
       {/* Header - compact */}
       <header className="app-chrome shrink-0 sticky top-0 z-20 safe-area-inset-top min-h-14 px-3 sm:px-4 md:px-6 bg-surface border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -775,7 +784,18 @@ export function ChatWindow({
 
         {messages.map((msg, index) => {
           const prevMsg = index > 0 ? messages[index - 1] : null;
-          const isGrouped = prevMsg && prevMsg.role === msg.role && prevMsg.agent === msg.agent;
+          // An action-summary message (checkpoint approval, question-card
+          // answers) never groups with what's before or after it — a whole
+          // approve/answer interaction happened in between, even though the
+          // checkpoint/question card itself isn't a `messages` array entry,
+          // so to the array these look like two adjacent same-role messages.
+          // Grouping them read as one continuous thought.
+          const isGrouped =
+            prevMsg &&
+            prevMsg.role === msg.role &&
+            prevMsg.agent === msg.agent &&
+            !msg.isActionSummary &&
+            !prevMsg.isActionSummary;
           const isLastMsg = index === messages.length - 1;
           return (
             <React.Fragment key={index}>
@@ -839,21 +859,33 @@ export function ChatWindow({
             auto-scroll we do want while streaming. */}
         <div ref={messagesEndRef} style={{ overflowAnchor: 'none' }} />
         </div>
-
-        {/* Scroll to bottom button */}
-        {showScrollButton && (
-          <button
-            onClick={scrollToBottom}
-            className="absolute bottom-4 right-3 sm:right-4 md:right-8 p-2.5 sm:p-2 bg-accent text-white rounded-full shadow-lg hover:opacity-90 transition-opacity z-10"
-            title="Scroll to bottom"
-          >
-            <ArrowDown size={16} className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
-          </button>
-        )}
       </div>
 
+      {/* Scroll to bottom button — anchored to the outer (non-scrolling) flex
+          column, not the messages viewport it used to live inside. That div's
+          own content grows every time a reply streams in, so an absolutely
+          positioned child there sits relative to the *full scrolled height*,
+          not the visible bottom — it drifted up the page mid-stream instead of
+          staying pinned. Bottom offset tracks the composer's real height so it
+          always sits just above the input, never over it.
+          Always mounted (not conditionally rendered) so the opacity/translate
+          transition can actually play on the way out, not just the way in. */}
+      <button
+        onClick={scrollToBottom}
+        style={{ bottom: composerHeight + 12 }}
+        className={`absolute right-3 sm:right-4 md:right-8 z-10 p-2.5 sm:p-2 bg-accent-gradient text-white rounded-full shadow-lg hover:opacity-90 hover:shadow-xl transition-all duration-300 ease-out ${
+          showScrollButton
+            ? 'opacity-100 translate-y-0 pointer-events-auto'
+            : 'opacity-0 translate-y-3 pointer-events-none'
+        }`}
+        title="Scroll to bottom"
+        aria-hidden={!showScrollButton}
+      >
+        <ArrowDown size={16} className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+      </button>
+
       {/* Input area - refined composer */}
-      <div className="px-3 sm:px-4 md:px-6 py-2 sm:py-3 bg-bg border-t border-border pb-safe">
+      <div ref={composerRef} className="px-3 sm:px-4 md:px-6 py-2 sm:py-3 bg-bg border-t border-border pb-safe">
         <div className="flex gap-2 items-center max-w-6xl mx-auto">
           <div className="w-full flex items-center justify-center relative">
             <textarea

@@ -136,7 +136,7 @@ function sanitizeMermaid(raw: string): string {
 /** Detect bare mermaid blocks that LLMs emit without backtick fences.
  * Pattern: a line containing only "mermaid" immediately followed by diagram code
  * (flowchart, graph, sequenceDiagram, etc.) — wraps the block in ```mermaid fences. */
-function fixBareMermaidBlocks(content: string): string {
+export function fixBareMermaidBlocks(content: string): string {
   const MERMAID_TYPES = /^(flowchart|graph|sequenceDiagram|gantt|classDiagram|stateDiagram(-v2)?|erDiagram|journey|gitgraph|pie|mindmap|timeline)\b/i;
   const lines = content.split('\n');
   const result: string[] = [];
@@ -172,6 +172,30 @@ function fixBareMermaidBlocks(content: string): string {
       continue; // the empty line (if any) will be processed next iteration
     }
 
+    // A diagram-type line directly, with no preceding bare "mermaid" line at
+    // all — the more common real shape: the LLM writes a prose lead-in like
+    // "2. Sơ đồ Mermaid" (mentioning the word as part of a sentence, not a
+    // standalone line) and starts the actual diagram on the very next line.
+    // Requiring the line right after it to look like real diagram syntax
+    // (indented, with an arrow or bracket) keeps a stray sentence that
+    // happens to start with e.g. "Graph of ..." from being swept in.
+    if (
+      MERMAID_TYPES.test(trimmed) &&
+      i + 1 < lines.length &&
+      /^\s+\S/.test(lines[i + 1]) &&
+      /(-->|--\||\[.*\]|\(.*\))/.test(lines[i + 1])
+    ) {
+      result.push('```mermaid');
+      result.push(line);
+      i++;
+      while (i < lines.length && lines[i].trim() !== '') {
+        result.push(lines[i]);
+        i++;
+      }
+      result.push('```');
+      continue;
+    }
+
     result.push(line);
     i++;
   }
@@ -181,7 +205,7 @@ function fixBareMermaidBlocks(content: string): string {
 
 /** Strip emoji from box-drawing ASCII art so column alignment is preserved.
  * Terminal emoji = 2 columns wide; browsers render them narrower → replace with 2 spaces. */
-function sanitizeBoxArt(content: string): string {
+export function sanitizeBoxArt(content: string): string {
   if (!/[┌┐└┘│─├┤┬┴┼═╔╗╚╝║]/.test(content)) return content;
   // Surrogate pairs = supplementary plane chars (emoji U+1F000+); BMP misc symbols U+2600-U+27BF
   return content
@@ -239,7 +263,7 @@ function useDarkMode(): boolean {
 // single most expensive operation in this app, and props are just `chart`
 // (a string) + `isStreaming` — both stable unless this specific diagram's
 // own source changed.
-const MermaidDiagram = React.memo(function MermaidDiagram({ chart, isStreaming = false }: { chart: string; isStreaming?: boolean }) {
+export const MermaidDiagram = React.memo(function MermaidDiagram({ chart, isStreaming = false }: { chart: string; isStreaming?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(`mermaid-diag-${++_mermaidIdCounter}`);
   const isDarkMode = useDarkMode();
@@ -369,7 +393,7 @@ const MermaidDiagram = React.memo(function MermaidDiagram({ chart, isStreaming =
 // Detect and fix tables that have header + data but NO delimiter row
 // Example: "| A | B |" + "| X | Y |" (missing |---|---|)
 // Skips content inside fenced code blocks (``` ... ```)
-function fixMissingDelimiterTables(content: string): string {
+export function fixMissingDelimiterTables(content: string): string {
   const lines = content.split('\n');
   const result: string[] = [];
   let addedDelimiterThisBlock = false;
@@ -422,7 +446,7 @@ function fixMissingDelimiterTables(content: string): string {
   return result.join('\n');
 }
 
-type ContentBlock =
+export type ContentBlock =
   | { kind: 'markdown'; content: string }
   | { kind: 'table'; headers: string[]; rows: string[][] };
 
@@ -477,7 +501,7 @@ function parseTableBlock(lines: string[]): { headers: string[]; rows: string[][]
   };
 }
 
-function tryRenderPipeTable(content: string): React.ReactElement | null {
+export function tryRenderPipeTable(content: string): React.ReactElement | null {
   const lines = content
     .split('\n')
     .map(line => line.trim())
@@ -496,7 +520,7 @@ function tryRenderPipeTable(content: string): React.ReactElement | null {
   return <TableBlock headers={parsed.headers} rows={parsed.rows} />;
 }
 
-function splitContentIntoBlocks(content: string): ContentBlock[] {
+export function splitContentIntoBlocks(content: string): ContentBlock[] {
   // `content` here is already processedContent, which ran fixMalformedTables
   // upstream — re-running it is a no-op (it only rewrites concatenated `|`
   // rows, and a rewritten row no longer matches that pattern) and was costing
@@ -561,7 +585,7 @@ function splitContentIntoBlocks(content: string): ContentBlock[] {
 // contentBlocks is memoized on processedContent (see MessageBubbleInner), so
 // this now actually re-renders only when its own data changes instead of on
 // every streamed token of the message it belongs to.
-const TableBlock = React.memo(function TableBlock({
+export const TableBlock = React.memo(function TableBlock({
   headers,
   rows,
 }: {
@@ -682,7 +706,7 @@ function tryFixConcatenatedTable(line: string): string[] | null {
 
 // Fix malformed markdown tables that are concatenated onto a single line.
 // Also tracks fenced code blocks and skips content inside them.
-function fixMalformedTables(content: string): string {
+export function fixMalformedTables(content: string): string {
   const lines = content.split('\n');
   const result: string[] = [];
   let inCodeBlock = false;
@@ -846,7 +870,6 @@ const AGENT_COLORS: Record<string, string> = {
   market_strategy: '#ec4899',
   compliance: '#f97316',
   product_solution: '#10b981',
-  design: '#3b82f6',
   client_simulator: '#06b6d4',
   proposal_assembler: '#8b5cf6',
   wireframe_designer: '#f59e0b',
@@ -858,14 +881,13 @@ const AGENT_NAMES: Record<string, string> = {
   market_strategy: 'Market Strategy',
   compliance: 'Compliance',
   product_solution: 'Product Solution',
-  design: 'UX Design',
   client_simulator: 'Client Simulator',
   proposal_assembler: 'Proposal Assembler',
   wireframe_designer: 'Deck Generator',
   system: 'System',
 };
 
-function cleanSectionHeadersAndDividers(content: string): string {
+export function cleanSectionHeadersAndDividers(content: string): string {
   if (!content) return content;
   let text = content
     .replace(/\$*\\+rightarrow\$*/gi, ' → ')
@@ -873,27 +895,81 @@ function cleanSectionHeadersAndDividers(content: string): string {
     .replace(/\$*\\+leftarrow\$*/gi, ' ← ')
     .replace(/\$*\\+Leftarrow\$*/gi, ' ⇐ ');
 
-  // Convert raw section lines like "------------------ SECTION 7 — NEXT STEPS ------------------" or "================== SECTION 7 — NEXT STEPS =================="
-  text = text.replace(/^[-=]{3,}\s*(SECTION\s*\d*\s*[—-]?\s*[^-\n=]*)[-=]*$/gim, (_m, title) => {
-    const cleanTitle = title.replace(/^[—-]\s*/, '').trim();
-    return `\n\n### ${cleanTitle}\n\n`;
-  });
+  // Convert raw section lines like "------------------ SECTION 7 — NEXT STEPS ------------------",
+  // "================== SECTION 7 — NEXT STEPS ==================", or any of the
+  // Unicode box-drawing rule variants this backend also emits — "━" (heavy),
+  // "─" (light), "═" (double) — same shape, different character each time, and
+  // without all three this line passed straight through as plain paragraph
+  // text with its rule-characters intact either side (e.g. "──── FINDINGS ────").
+  const RULE_CHARS = '\\-=━─═';
 
-  // Convert lines like "=========================================== Prepared by AdtimaBox | 2026-07-28 This proposal is confidential..."
-  text = text.replace(/^[-=]{3,}\s*(Prepared by [^\n=]*)[-=]*$/gim, (_m, title) => {
-    return `\n\n---\n*${title.trim()}*\n\n`;
-  });
+  // "Prepared by ..." footer gets its own italic-under-hr treatment — this has
+  // to run BEFORE the generic divider+title rule below, which would otherwise
+  // match this same line first and turn it into a plain "### Prepared by ..."
+  // heading instead.
+  text = text.replace(
+    new RegExp(`^[${RULE_CHARS}]{3,}\\s*(Prepared by [^\\n${RULE_CHARS}]*)[${RULE_CHARS}]*$`, 'gim'),
+    (_m, title) => `\n\n---\n*${title.trim()}*\n\n`
+  );
+
+  text = text.replace(
+    new RegExp(`^[${RULE_CHARS}]{3,}\\s*((?:SECTION\\s*\\d*\\s*[—-]?\\s*)?[^${RULE_CHARS}\\n]*)[${RULE_CHARS}]*$`, 'gim'),
+    (_m, title) => {
+      const cleanTitle = title.replace(/^[—-]\s*/, '').trim();
+      return cleanTitle ? `\n\n### ${cleanTitle}\n\n` : '\n\n---\n\n';
+    }
+  );
 
   // Convert uppercase headings like "KEY DECISIONS FOR CLIENT:", "ITEMS REQUIRING TECH CONFIRMATION (before signing):", "DOCUMENTS TO REQUEST FROM CLIENT:"
   text = text.replace(/^(KEY DECISIONS FOR CLIENT|ITEMS REQUIRING TECH CONFIRMATION|DOCUMENTS TO REQUEST FROM CLIENT|SUGGESTED TIMELINE)(:|\s*\(.*?\):)/gim, (_m, title) => {
     return `\n\n#### ${title.trim()}\n`;
   });
 
-  // Convert lines that are ONLY = or - characters (pure dividers, 4+ chars) → markdown hr
-  // This catches lines like "================" not matched by the SECTION rule above
-  text = text.replace(/^([=]{4,}|-{4,})$/gm, '---');
+  // Convert lines that are ONLY rule characters (pure dividers, 4+ chars) →
+  // markdown hr. This catches lines like "================" or "━━━━━━━━" not
+  // matched by the SECTION rule above (no title on that particular line).
+  text = text.replace(new RegExp(`^([${RULE_CHARS}])\\1{3,}$`, 'gm'), '---');
 
-  return text;
+  return preserveLineBreaks(text);
+}
+
+const BLOCK_START_RE = /^\s*(#{1,6}\s|[-*+]\s|\d+\.\s|>|\|.*\||---\s*$)/;
+
+function preserveLineBreaks(content: string): string {
+  const lines = content.split('\n');
+  const out: string[] = [];
+  let inFence = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (/^\s*(`{3,}|~{3,})/.test(line)) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+
+    const next = lines[i + 1];
+    const isBlockLevel = BLOCK_START_RE.test(line);
+    const trimmed = line.replace(/\s+$/, '');
+    const nextHasContent = next !== undefined && next.trim() !== '';
+    const nextStartsBlock = next !== undefined && BLOCK_START_RE.test(next);
+
+    if (trimmed && nextHasContent && !isBlockLevel && nextStartsBlock) {
+      out.push(line);
+      out.push('');
+    } else if (trimmed && nextHasContent && !isBlockLevel) {
+      out.push(trimmed + '  ');
+    } else {
+      out.push(line);
+    }
+  }
+
+  return out.join('\n');
 }
 
 function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }: MessageBubbleProps) {
@@ -1168,7 +1244,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
           {/* Timestamp */}
           {!isGrouped && (
             <span className="text-[12px] sm:text-sm text-gray-400 mt-1 mr-1">
-              {new Date(message.timestamp).toLocaleTimeString()}
+              {new Date(message.timestamp).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
             </span>
           )}
         </div>
@@ -1287,7 +1363,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
         {/* Timestamp */}
         {!isGrouped && (
           <span className="text-xs text-gray-400 mt-3 ml-1">
-            {new Date(message.timestamp).toLocaleTimeString()}
+            {new Date(message.timestamp).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
           </span>
         )}
       </div>
@@ -1332,3 +1408,112 @@ export const MessageBubble = React.memo(
         prev.message.thinkingSteps === next.message.thinkingSteps))
 );
 MessageBubble.displayName = 'MessageBubble';
+
+/**
+ * Rich-text renderer for agent-produced content shown outside a full chat
+ * bubble — CheckpointCard's own preview text (per-skill outputs like
+ * `product_solution`'s mermaid user-flow diagram) used to go straight to a
+ * bare <ReactMarkdown>, none of the cleanup or mermaid/ascii/table detection
+ * a real assistant message gets. A bare "flowchart TD ..." block rendered as
+ * plain paragraph text instead of a diagram, and every "Label: value" row
+ * glued onto one line for the same reason chat messages used to. This reuses
+ * the exact same functions, just without the streaming-only affordances
+ * (image lightbox, live mermaid placeholder) a static preview doesn't need.
+ */
+export function AgentRichContent({ content }: { content: string }) {
+  const processed = useMemo(
+    () => cleanSectionHeadersAndDividers(wrapAsciiBoxes(fixMissingDelimiterTables(fixMalformedTables(fixBareMermaidBlocks(content))))),
+    [content]
+  );
+  const blocks = useMemo(() => splitContentIntoBlocks(processed), [processed]);
+
+  const components: any = useMemo(() => ({
+    p: ({ children }: { children: React.ReactNode }) => {
+      const text = React.Children.toArray(children).map((c) => (typeof c === 'string' ? c : '')).join('');
+      if (/^[—\s]*SECTION\s*\d*\s*—/i.test(text.trim())) {
+        return (
+          <div className="my-5 p-3 rounded-xl border border-accent/40 bg-accent/5 flex items-center justify-between shadow-xs">
+            <span className="text-xs font-bold text-accent tracking-wider uppercase">{text.replace(/^[—\s]*/, '').replace(/—[—\s]*$/, '')}</span>
+          </div>
+        );
+      }
+      return <p style={{ margin: '0.6rem 0', lineHeight: 1.75 }}>{children}</p>;
+    },
+    h3: ({ children }: { children: React.ReactNode }) => {
+      const text = React.Children.toArray(children).map((c) => (typeof c === 'string' ? c : '')).join('');
+      if (/SECTION\s*\d*/i.test(text)) {
+        return (
+          <div className="my-5 p-3 rounded-xl border border-accent/40 bg-accent/10 flex items-center gap-2 shadow-xs">
+            <span className="px-2 py-0.5 rounded-sm bg-accent text-white text-[10px] font-bold uppercase tracking-wider">Section</span>
+            <h3 className="text-sm font-bold text-text m-0">{text.replace(/^[—\s]*SECTION\s*\d*\s*—?\s*/i, '')}</h3>
+          </div>
+        );
+      }
+      return <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '1rem 0 0.5rem', color: 'var(--color-text)' }}>{children}</h3>;
+    },
+    code: ({ children, className }: { children: React.ReactNode; className?: string }) => {
+      if (!className) {
+        return (
+          <code style={{ backgroundColor: 'var(--color-surface)', padding: '0.2rem 0.4rem', borderRadius: '4px', fontSize: '0.85em', fontFamily: 'monospace' }}>
+            {children}
+          </code>
+        );
+      }
+      return <code className={className}>{children}</code>;
+    },
+    pre: ({ children }: { children: React.ReactNode }) => {
+      const child = React.Children.toArray(children)[0];
+      if (React.isValidElement(child)) {
+        const el = child as React.ReactElement<{ className?: string; children?: React.ReactNode }>;
+        const rawContent = String(el.props.children ?? '').replace(/\n$/, '');
+
+        if (el.props.className === 'language-mermaid') {
+          return <MermaidDiagram chart={rawContent} />;
+        }
+        if (!el.props.className) {
+          const table = tryRenderPipeTable(rawContent);
+          if (table) return table;
+          const sanitized = sanitizeBoxArt(rawContent);
+          if (sanitized !== rawContent) {
+            return (
+              <pre style={{ backgroundColor: 'var(--color-surface)', padding: '1rem', borderRadius: '8px', overflowX: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0', whiteSpace: 'pre' }}>
+                <code>{sanitized}</code>
+              </pre>
+            );
+          }
+        }
+      }
+      return (
+        <pre style={{ backgroundColor: 'var(--color-surface)', padding: '1rem', borderRadius: '8px', overflowX: 'auto', fontSize: '0.85em', fontFamily: 'monospace', margin: '1rem 0', whiteSpace: 'pre' }}>
+          {children}
+        </pre>
+      );
+    },
+    hr: () => (
+      <div className="my-6 flex items-center gap-3 opacity-80">
+        <div className="flex-1 h-px bg-linear-to-r from-transparent via-border to-transparent" />
+        <span className="w-1.5 h-1.5 rounded-full bg-accent/50" />
+        <div className="flex-1 h-px bg-linear-to-r from-transparent via-border to-transparent" />
+      </div>
+    ),
+    blockquote: ({ children }: { children: React.ReactNode }) => (
+      <blockquote className="my-4 p-3.5 rounded-xl border-l-4 border-accent bg-surface-2/60 text-text-muted text-xs sm:text-sm italic shadow-xs">
+        {children}
+      </blockquote>
+    ),
+  }), []);
+
+  return (
+    <>
+      {blocks.map((block, index) =>
+        block.kind === 'table' ? (
+          <TableBlock key={`table-${index}`} headers={block.headers} rows={block.rows} />
+        ) : (
+          <ReactMarkdown key={`markdown-${index}`} components={components} remarkPlugins={REMARK_PLUGINS}>
+            {block.content}
+          </ReactMarkdown>
+        )
+      )}
+    </>
+  );
+}
