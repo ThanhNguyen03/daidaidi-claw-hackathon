@@ -1553,11 +1553,18 @@ class CentralAgent:
         if _CENTRAL_SKILL:
             system_prompt = f"{_CENTRAL_SKILL}\n\n---\n\n{system_prompt}"
 
-        # Inject Admin-configured Org Rules (learning from Admin Panel)
+        # Inject Admin-configured Org Rules (learning from Admin Panel). scope="all"
+        # here is deliberate and unrelated to which scope an admin picked when
+        # creating a rule — get_active_rules() treats "all" as "no filter, return
+        # every active rule", so the planner sees every org rule regardless of its
+        # scope. Each specialist skill additionally fetches its own scope-filtered
+        # subset via BaseSkill._fetch_org_rules(), which is what makes the Admin
+        # Panel's per-skill scope picker actually mean something.
         try:
             from database import get_active_rules
             rules = await asyncio.to_thread(get_active_rules, scope="all")
             if rules:
+                print(f"[org_rules] planner: {len(rules)} active rule(s) injected")
                 rules_block = "\n".join(f"- {r}" for r in rules)
                 system_prompt = (
                     f"{system_prompt}\n\n"
@@ -2131,11 +2138,14 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                 "Do not repeat what was already covered in the previous response."
             )
 
-        # Inject Admin-configured Org Rules into synthesis too
+        # Inject Admin-configured Org Rules into synthesis too. scope="all" here
+        # is the same deliberate "no filter" as the planner's — the per-skill
+        # scope picker is enforced by BaseSkill._fetch_org_rules() instead.
         try:
             from database import get_active_rules
             syn_rules = await asyncio.to_thread(get_active_rules, scope="all")
             if syn_rules:
+                print(f"[org_rules] synthesizer: {len(syn_rules)} active rule(s) injected")
                 rules_block = "\n".join(f"- {r}" for r in syn_rules)
                 system = f"{system}\n\n## Quy tắc tổ chức bắt buộc tuân thủ\n{rules_block}"
         except Exception:

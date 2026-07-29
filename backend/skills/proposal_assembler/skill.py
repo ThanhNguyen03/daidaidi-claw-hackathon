@@ -29,7 +29,8 @@ class ProposalAssemblerSkill(BaseSkill):
         )
 
     async def execute(self, context: SkillContext) -> SkillOutput:
-        system = self._build_system_prompt(context.constraints)
+        org_rules = await self._fetch_org_rules()
+        system = self._build_system_prompt(context.constraints, org_rules)
 
         # Assembly rules + quality checklist live in reference/, pulled in on demand.
         ref_context = await self.retrieve_reference_context(context, top_k=1)
