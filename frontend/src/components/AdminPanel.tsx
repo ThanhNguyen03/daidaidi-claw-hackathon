@@ -142,7 +142,7 @@ export function AdminPanel({ isOpen, onClose, currentUser }: AdminPanelProps) {
     <div className="modal-scrim items-start p-4">
       <div className="w-full max-w-3xl rounded-2xl my-8 modal-card">
         {/* Header */}
-        <header className="flex items-center justify-between px-6 py-4 border-b border-border">
+        <header className="shrink-0 flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
             <ShieldCheck size={18} className="text-accent" />
             Admin Panel
@@ -153,7 +153,7 @@ export function AdminPanel({ isOpen, onClose, currentUser }: AdminPanelProps) {
         </header>
 
         {/* Tabs */}
-        <div className="flex border-b border-border px-6">
+        <div className="shrink-0 flex border-b border-border px-6">
           <button
             onClick={() => setTab('rules')}
             className={`admin-tab ${tab === 'rules' ? 'admin-tab--active' : ''}`}
@@ -170,7 +170,7 @@ export function AdminPanel({ isOpen, onClose, currentUser }: AdminPanelProps) {
           </button>
         </div>
 
-        <div className="p-6">
+        <div className="modal-card-body p-6">
           {error && (
             <div className="mb-4 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs">
               {error}

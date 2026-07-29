@@ -715,6 +715,17 @@ export function ChatWindow({
             </div>
           )}
 
+          {onNewChat && (
+            <button
+              onClick={onNewChat}
+              className="md:hidden p-1.5 sm:p-2 text-accent hover:bg-accent/10 rounded-lg transition-all"
+              title="Cuộc trò chuyện mới"
+              aria-label="Cuộc trò chuyện mới"
+            >
+              <Plus size={20} />
+            </button>
+          )}
+
           {onToggleContextPanel && (
             <button
               onClick={onToggleContextPanel}
@@ -726,21 +737,6 @@ export function ChatWindow({
               ) : (
                 <PanelRightOpen size={18} className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
               )}
-            </button>
-          )}
-
-          {/* Mobile: new chat — the drawer's own New Chat button is gone now that
-              the drawer is the full Sidebar, whose New Chat button sits above the
-              history list rather than in the header. Keeping one reachable
-              without opening the drawer first. */}
-          {onNewChat && (
-            <button
-              onClick={onNewChat}
-              className="md:hidden p-1.5 sm:p-2 text-accent hover:bg-accent/10 rounded-lg transition-all"
-              title="Cuộc trò chuyện mới"
-              aria-label="Cuộc trò chuyện mới"
-            >
-              <Plus size={20} />
             </button>
           )}
         </div>
@@ -902,7 +898,7 @@ export function ChatWindow({
       {/* Input area - refined composer */}
       <div className="px-3 sm:px-4 md:px-6 py-2 sm:py-3 bg-bg border-t border-border pb-safe">
         <div className="flex gap-2 items-center max-w-6xl mx-auto">
-          <div className="flex-1 relative">
+          <div className="w-full flex items-center justify-center relative">
             <textarea
               ref={textareaRef}
               id='promt'

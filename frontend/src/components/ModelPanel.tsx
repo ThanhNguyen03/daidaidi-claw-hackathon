@@ -124,16 +124,14 @@ export function ModelPanel({ isOpen, onClose }: ModelPanelProps) {
 
   const models: ModelInfo[] = data?.models ?? [];
   const skills: SkillModel[] = data?.skills ?? [];
-  // Only offer models that can actually serve a request. A zero allowance in the
-  // limits file means "known not to work on this tier" — offering it as a choice
-  // would be offering a way to break the demo.
+  
   const selectable = models.filter((m) => (m.limit_rpd ?? 0) > 0).map((m) => m.model);
   const globalOverride = data?.overrides?.['*'] ?? '';
 
   return (
     <div className="modal-scrim items-start p-4">
       <div className="w-full max-w-2xl rounded-xl my-8 modal-card">
-        <header className="flex items-center justify-between px-5 py-4 border-b border-border">
+        <header className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-border">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
             <Cpu size={16} />
             Model &amp; Quota
@@ -157,6 +155,7 @@ export function ModelPanel({ isOpen, onClose }: ModelPanelProps) {
           </div>
         </header>
 
+        <div className="modal-card-body">
         {error && (
           <div className="mx-5 mt-4 flex items-start gap-2 text-xs text-status-failed">
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
@@ -275,9 +274,10 @@ export function ModelPanel({ isOpen, onClose }: ModelPanelProps) {
             </p>
           ) : null}
         </section>
+        </div>
 
         {data?.caveat && (
-          <footer className="flex items-start gap-2 px-5 py-3 border-t border-border text-[11px] text-text-muted">
+          <footer className="shrink-0 flex items-start gap-2 px-5 py-3 border-t border-border text-[11px] text-text-muted">
             <Info size={13} className="mt-0.5 shrink-0" />
             <span>{data.caveat}</span>
           </footer>

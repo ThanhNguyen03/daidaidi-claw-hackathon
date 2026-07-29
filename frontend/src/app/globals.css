@@ -620,9 +620,6 @@ html {
   50%      { transform: translateY(-3px) scale(1.025); }
 }
 
-/* ---- Boot sequence: what "Start" does ------------------------------------
-   Three beats in ~950ms — lock the card, flash a ring outward, wipe to the app.
-   Long enough to feel deliberate, short enough that nobody waits for it. */
 
 .tf-booting .tf-card {
   animation: tf-lock 950ms cubic-bezier(.3,.9,.2,1) forwards;
@@ -707,9 +704,6 @@ html {
    Thinking Trace — collapsible agent reasoning display
    ============================================================ */
 .thinking-trace-container {
-  /* The AI avatar is w-8 + gap-2 on mobile and w-10 + gap-3 from sm: up — an
-     unconditional 2.75rem indent was sized for the latter only, and on a
-     375px screen that is 12% of the viewport spent on whitespace. */
   margin-left: 0;
 }
 @media (min-width: 640px) {
@@ -842,6 +836,8 @@ html {
   border-radius: 20px;
   padding: 32px;
   box-shadow: 0 32px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255,255,255,0.05);
+  max-height: 80dvh;
+  overflow-y: auto;
 }
 
 .auth-modal-header {
@@ -849,11 +845,7 @@ html {
   margin-bottom: 24px;
 }
 
-/* ===== SHARED MODAL CHROME =====
- * Depth lives on the scrim (blurred, near-opaque), never on the card. A modal
- * is a focus trap — nothing behind it should still be legible through it.
- * This is the same recipe as .auth-modal-overlay/.auth-modal-card above,
- * generalised for ModelPanel, AdminPanel and the image lightbox. */
+/* ===== SHARED MODAL CHROME ===== */
 .modal-scrim {
   position: fixed;
   inset: 0;
@@ -870,6 +862,17 @@ html {
   background: var(--color-surface-solid);
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  max-height: 80dvh;
+  overflow: hidden;
+}
+
+.modal-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .auth-modal-logo {
@@ -1232,15 +1235,12 @@ html {
   opacity: 0.5;
 }
 
-/* Glassmorphism Utilities */
 .glass-panel {
   background: var(--color-surface);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 .dark .glass-panel {
-  border: 1px solid rgba(61, 148, 255, 0.15);
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1), inset 0 0 0 1px rgba(61, 148, 255, 0.05);
 }
 
