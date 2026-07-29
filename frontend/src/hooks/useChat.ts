@@ -352,7 +352,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
               // Normal path: process event for the currently active mode
               try {
                 const data = JSON.parse(line.slice(6));
-                await handleSSEEvent(data);
+                handleSSEEvent(data);
               } catch {
                 console.error('Failed to parse SSE data');
               }
@@ -397,9 +397,14 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     [sessionId, salespersonId, resetAgentStatuses, mode]
   );
 
-  // Handle SSE events
+  // Handle SSE events. Synchronous — every branch is a state setter or a ref
+  // write, nothing here ever awaits. It used to be declared `async` and
+  // called with `await` anyway, which cost one microtask tick per SSE event
+  // for no reason — and that tick is exactly what defeated React 18's
+  // automatic batching, turning one render-worthy network read into one
+  // render per event.
   const handleSSEEvent = useCallback(
-    async (data: { type: string; [key: string]: unknown }) => {
+    (data: { type: string; [key: string]: unknown }) => {
       switch (data.type) {
         case 'session':
           // Session confirmed — persist id and sync brief from BE
@@ -464,8 +469,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           setIsThinking(false);
           {
             const content = data.content as string;
-            // Determine agent name for this streaming turn
-            const streamAgent = mode === 'cs' ? 'cs_agent' : 'sales_orchestrator';
+            // Determine agent name for this streaming turn. Reads the ref, not
+            // the `mode` prop directly — `mode` is whatever it was on the
+            // render that last recreated this closure, and a mode switch
+            // mid-stream used to tag a token with the previous mode's agent
+            // name. currentModeRef is updated synchronously at the top of the
+            // mode-switch effect, so it always reflects the live mode.
+            const streamAgent = currentModeRef.current === 'cs' ? 'cs_agent' : 'sales_orchestrator';
             // Attach accumulated thinking steps to the first assistant message of this turn
             const steps = thinkingStepsRef.current.length > 0 ? [...thinkingStepsRef.current] : undefined;
             if (steps) {
@@ -651,8 +661,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           console.log('Unknown SSE event:', data);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sessionId]
+    // Every value read above is a ref or a setState function — both stable
+    // identities — so this callback never needs to change.
+    []
   );
 
   // Answer a pending question

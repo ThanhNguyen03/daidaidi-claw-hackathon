@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Iterator
+from typing import Iterator, Optional
 
 # --------------------------------------------------------------------------
 # Patterns
@@ -105,6 +105,12 @@ class SessionMasker:
         self._to_alias: dict[str, str] = {}   # raw value -> alias
         self._to_raw: dict[str, str] = {}     # alias -> raw value
         self._counters: dict[str, int] = {}
+        # unmask() runs on every streamed SSE chunk for the life of the turn,
+        # and used to re-sort self._to_raw by length on every single call.
+        # Alias counts are single digits so the sort itself was cheap, but it
+        # was still wasted work on a hot path — invalidated only when a new
+        # alias is actually added.
+        self._sorted_aliases: Optional[list[str]] = None
 
     def _alias_for(self, kind: str, raw: str) -> str:
         existing = self._to_alias.get(raw)
@@ -114,6 +120,7 @@ class SessionMasker:
         alias = f"[{kind}-{self._counters[kind]}]"
         self._to_alias[raw] = alias
         self._to_raw[alias] = raw
+        self._sorted_aliases = None
         return alias
 
     def mask(self, text: str) -> MaskResult:
@@ -146,7 +153,9 @@ class SessionMasker:
         """
         if not text or not self._to_raw:
             return text
-        for alias in sorted(self._to_raw, key=len, reverse=True):
+        if self._sorted_aliases is None:
+            self._sorted_aliases = sorted(self._to_raw, key=len, reverse=True)
+        for alias in self._sorted_aliases:
             text = text.replace(alias, self._to_raw[alias])
         return text
 

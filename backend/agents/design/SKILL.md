@@ -1,6 +1,6 @@
 ---
-name: solution_designer_agent
-description: Solution Designer — complete user journey design, screen specs, Mermaid flow diagrams, integration assessment
+name: design
+description: Solution Designer — user journey design, screen specs, Mermaid flow diagrams, integration assessment
 ---
 
 # Solution Designer Agent

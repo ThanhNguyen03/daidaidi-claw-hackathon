@@ -27,6 +27,7 @@ from typing import Any, AsyncGenerator, Optional
 
 import gate
 from knowledge.loader import RequestLedger
+from llm.pool import LLM_POOL
 from llm.usage import get_tracker
 from schemas.state import (
     AgentOutput,
@@ -38,6 +39,7 @@ from schemas.state import (
 from skills.base import (
     SkillContext,
     SkillOutput,
+    ThinkFilter,
     extract_json_block,
     loads_lenient,
     strip_think_blocks,
@@ -1540,7 +1542,7 @@ class CentralAgent:
         # Inject Admin-configured Org Rules (learning from Admin Panel)
         try:
             from database import get_active_rules
-            rules = get_active_rules(scope="all")
+            rules = await asyncio.to_thread(get_active_rules, scope="all")
             if rules:
                 rules_block = "\n".join(f"- {r}" for r in rules)
                 system_prompt = (
@@ -1565,7 +1567,7 @@ class CentralAgent:
 
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
-            None,
+            LLM_POOL,
             partial(
                 client.create_completion,
                 messages=[
@@ -1845,7 +1847,6 @@ class CentralAgent:
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream a synthesized final response from all skill outputs."""
         from llm.client import get_llm_client
-        from main import _ThinkFilter
 
         proposal_out = skill_outputs.get("proposal_assembler")
         if proposal_out and proposal_out.content:
@@ -1958,13 +1959,17 @@ Given specialist analysis from multiple skill modules, assemble ONE cohesive pro
 
 Language rule: DEFAULT TO 100% VIETNAMESE (TIẾNG VIỆT). Write ALL headings, body text, analysis, assumptions, and recommendations fully in Vietnamese. Only use English if the user explicitly writes in English or for technical brand terms (e.g. Zalo OA, Mini App, ZNS, CSHub, Scan Bill). Never output raw JSON code blocks to the user.
 
-Output structure (use ALL sections that have relevant content):
+Output structure (use ALL sections that have relevant content). This mirrors
+the 7-section proposal template (see proposal_assembler_agent/SKILL.md) so a
+rep sees the same shape here as in the formal proposal document — merge or
+drop sections with no content rather than renumbering:
 1. **Tóm tắt đề xuất** — 3–4 sentence executive summary: what we recommend and why
-2. **Phân tích chiến lược** — key strategic insights, market context, consumer insight
-3. **Giải pháp Zalo** — recommended solution with user journey (include Mermaid diagrams AS-IS)
-4. **Báo giá ước tính** — pricing table if available
+2. **Bài toán kinh doanh** — key strategic insights, market context, consumer insight, current pain vs desired outcome
+3. **Giải pháp & Lộ trình triển khai** — recommended solution with user journey (include Mermaid diagrams AS-IS)
+4. **Minh chứng thực tế** — analogous case(s) with results, if available
 5. **Compliance & lưu ý pháp lý** — policy notes (only if compliance skill flagged something)
-6. **Bước tiếp theo** — 3–5 concrete next steps
+6. **Báo giá ước tính** — pricing table if available
+7. **Bước tiếp theo** — 3–5 concrete next steps
 
 Format rules:
 - Use ## for section headers, ### for sub-sections
@@ -1990,7 +1995,7 @@ BAR CHARTS (budget breakdown, allocation, percentages):
   ╠═════════════════════════════════════════╣
   │  35%  MiniApp Development               │
   │  25%  Voucher System                    │
-  │  15%  ZNS/Ads                           │
+  │  15%  ZNS Campaign                      │
   └─────────────────────────────────────────┘
   ```
   Rules: percentage FIRST then label on same line. NEVER use █ block chars. NEVER put a box inside another box.
@@ -2009,6 +2014,7 @@ INFO BOXES (game concepts, form wireframes, feature lists, structured text):
   └─────────────────────────────────────────┘
   ```
   Rules: ONE level of box only — NEVER nest a box inside another box. Use ├──┤ separator (not ╠═╣) for info boxes.
+  Each box = its OWN separate ``` code block. NEVER put 2+ boxes inside one fence.
 
 DIAGRAMS (user flows, architecture):
   Use Mermaid in a ```mermaid block. Copy AS-IS from specialist outputs when available.
@@ -2114,7 +2120,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
         # Inject Admin-configured Org Rules into synthesis too
         try:
             from database import get_active_rules
-            syn_rules = get_active_rules(scope="all")
+            syn_rules = await asyncio.to_thread(get_active_rules, scope="all")
             if syn_rules:
                 rules_block = "\n".join(f"- {r}" for r in syn_rules)
                 system = f"{system}\n\n## Quy tắc tổ chức bắt buộc tuân thủ\n{rules_block}"
@@ -2150,9 +2156,9 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
             finally:
                 loop.call_soon_threadsafe(_safe_put, _DONE)
 
-        producer = loop.run_in_executor(None, _stream_worker)
+        producer = loop.run_in_executor(LLM_POOL, _stream_worker)
 
-        tf = _ThinkFilter()
+        tf = ThinkFilter()
         accumulated = ""
         _TOKEN_TIMEOUT = 180.0
 
@@ -2374,7 +2380,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
             client = get_llm_client("central_agent")
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
-                None,
+                LLM_POOL,
                 partial(
                     client.create_completion,
                     messages=[
@@ -2463,7 +2469,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
         loop = asyncio.get_running_loop()
         try:
             response = await loop.run_in_executor(
-                None,
+                LLM_POOL,
                 partial(
                     client.create_completion,
                     messages=[

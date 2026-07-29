@@ -116,6 +116,27 @@ Four code paths arrange that plan. The arrangement pass at the end of `_plan` is
 last word — it used to collapse every sequential skill into a single final group and
 silently undid the other three.
 
+**The proposal document has exactly one section scheme: 7 sections, defined in
+`proposal_assembler_agent/SKILL.md` and mirrored exactly in
+`wireframe_designer_agent/SKILL.md`'s slide map** (Section 5 = Compliance, Section 6 =
+Investment — the deck's compliance gate keys off "SECTION 5" verbatim, so the two
+files cannot drift). `product_solution` owns the journey and Mermaid diagram in
+Section 3 on every turn; `design` only contributes there when the rep explicitly asked
+for design artifacts, and never duplicates what `product_solution` already produced.
+The synthesizer's own non-assembled fallback answer (when there is no formal
+`proposal_assembler` output to stream) uses the same 7-section shape for consistency,
+even though it is a different code path and not read by the deck extractor.
+
+**Compliance emits one machine-readable token, and everything reads the same one.**
+`compliance/skill.py` requires a `VERDICT: CLEAR|CONDITIONS|BLOCKED` line — exactly
+that word, alone on its line — and regex-extracts it into `payload["verdict"]`. This
+existed as three different spellings before ("CLEAR TO PROCEED", "PROCEED WITH
+CONDITIONS", a bare "CLEAR / CONDITIONS / BLOCKED" in the same reference file
+contradicting its own template 114 lines up) and nothing downstream could gate on any
+of them despite the SKILL.md's workflow claiming to "gate downstream." An unrecognised
+or missing verdict defaults to `CONDITIONS`, never `CLEAR` — an unreadable verdict
+should read as "not fully cleared."
+
 ---
 
 ## Adding a skill
@@ -164,6 +185,16 @@ queued analysis skills are skipped, announced as skipped, and the answer is buil
 from what finished. `proposal_assembler` and `wireframe_designer` are exempt — they
 are the deliverable, and skipping one of those means the rep waited out the whole
 budget for nothing.
+
+**Every LLM call runs on its own thread pool (`llm/pool.py`), separate from the
+default executor `asyncio.to_thread` uses for DB and file I/O.** `llm/client.py`'s
+`_INFLIGHT` semaphore parks a worker thread for the whole time it waits on a slot, and
+the synthesis stream worker holds one for an entire token stream — on the default
+pool (`min(32, cpu+4)`, as few as 6 threads on a 2-vCPU box) that was enough to starve
+session saves and deck writes queued behind them. Concurrency at the provider is still
+capped at `LLM_MAX_CONCURRENCY` either way; only which pool the waiting happens on
+changed. The default executor itself is widened in `lifespan` (`IO_POOL_WORKERS`,
+default 16) for the same reason, on the DB/file side.
 
 Measured on this key's free tier — do not re-litigate these without re-measuring:
 
@@ -259,11 +290,13 @@ Every turn should produce this trail. If a line is missing, that stage did not r
 
 ## Known dead code
 
-Present, unreferenced, and safe to delete when someone has time. Roughly 1,500 lines.
+Present, unreferenced, and safe to delete when someone has time. Roughly 1,000 lines.
+(`main.py` already lost ~510 lines this way — `_maybe_create_checkpoint`,
+`_extract_agent_content`, `process_simple`, the sync `get_or_create_session`, and their
+supporting constants/prompt — all provably zero-caller before deletion.)
 
 | Path | Note |
 |---|---|
-| `main.py:_maybe_create_checkpoint` | ~260 lines, no callers. The live checkpoints are built in `central_agent/agent.py` |
 | `validation/validator.py` | No callers. The BRD critiques its `MANDATORY_FIELDS`; `gate.py` supersedes it |
 | `mode/brainstorm.py` | Mode is "coming soon" in the UI |
 | `generation/pptx.py`, `generation/userflow.py` | Superseded by `pptx_adtimabox.py` and inline Mermaid |
@@ -346,6 +379,37 @@ Present, unreferenced, and safe to delete when someone has time. Roughly 1,500 l
 - **`core.autocrlf` is on for the team's Windows checkouts.** `.gitattributes` pins LF
   for shell, compose and nginx files; without it a fresh clone hands `deploy.sh` CRLF
   and bash refuses it.
+- **Per-call state cannot live on `self` inside a skill.** `BaseSkill` instances are
+  process-wide singletons (`skills/registry.py`) serving every concurrent turn —
+  writing `self.last_call_truncated` in `_call_llm` for one turn to read looked like
+  the natural place, until it was clear a second turn's call could overwrite the flag
+  before the first turn read it. `_call_llm` returns `(text, truncated)` instead;
+  nothing about a single call is ever stored on the shared instance.
+- **A truncated reply was indistinguishable from a whole one.** Nothing checked
+  `finish_reason`, so a skill's answer cut off by `max_tokens` still came back
+  `status="COMPLETE"` and got assembled into the proposal as if it were finished.
+  `_call_llm`'s second return value is `True` on `finish_reason == "length"`; every
+  skill wraps it as `status="PARTIAL"` and appends a note to its own summary.
+- **`tableLayout: 'fixed'` silently defeated the overflow-x-auto wrapper built to fix
+  wide tables.** Fixed layout forces every column into the container width no matter
+  what the wrapper allows, so a 5-column ratecard in a narrow chat bubble squeezed
+  every figure into single-digit pixel columns instead of scrolling — the wrapper
+  never got the chance to activate. `tableLayout: 'auto'` + `width: max-content` +
+  `minWidth: '100%'` on the `<table>` is what actually lets the wrapper do its job.
+- **A modal card without its own opaque background reads as broken, not just
+  translucent.** `--color-surface` is 60% alpha in the (default) dark theme, and two
+  modals painted their card with it and no `backdrop-filter` — 16-20% of the page
+  behind them showed through unblurred, directly behind dense numeric quota rows.
+  A separate bare-`header`/`form` CSS selector then made the modal's own header *more*
+  transparent than its body. Modals get an opaque `--color-surface-solid` card plus a
+  blurred scrim (`.modal-card`/`.modal-scrim`); the frosted-chrome selector is scoped
+  to an explicit `.app-chrome` class so it never lands on a modal by accident again.
+- **The entire session history and agent status list were unreachable on a phone.**
+  The sidebar was hard-wrapped in `hidden md:block`, and the mobile drawer that stood
+  in for it carried only two mode buttons — seven of eight sidebar capabilities,
+  Model & Quota included, had no mobile path at all. The sidebar is one off-canvas
+  component now (`fixed` + `translate-x`), shared by desktop and the mobile drawer, so
+  there is only ever one place to fix.
 
 ---
 

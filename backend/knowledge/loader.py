@@ -287,11 +287,12 @@ async def select(agent: str, task: str, catalog: list[ReferenceEntry]) -> list[s
         from functools import partial
 
         from llm.client import get_llm_client
+        from llm.pool import LLM_POOL
 
         client = get_llm_client(os.getenv("KNOWLEDGE_SELECTOR_AGENT", "central_agent"))
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
-            None,
+            LLM_POOL,
             partial(
                 client.create_completion,
                 messages=[

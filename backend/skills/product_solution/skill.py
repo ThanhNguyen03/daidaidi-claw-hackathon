@@ -39,7 +39,7 @@ class ProductSolutionSkill(BaseSkill):
         user_msg = f"{context.task}\n\n{context_block}" if context_block else context.task
 
         try:
-            content = await self._call_llm(
+            content, truncated = await self._call_llm(
                 system=system,
                 user_msg=user_msg,
                 history=context.messages,
@@ -56,8 +56,8 @@ class ProductSolutionSkill(BaseSkill):
 
         return SkillOutput(
             skill=self.name,
-            status="COMPLETE",
+            status="PARTIAL" if truncated else "COMPLETE",
             payload={"solution_summary": content, "content": content},
-            summary=content[:200],
+            summary=(content[:200] + " [Bị cắt do giới hạn độ dài]") if truncated else content[:200],
             content=content,
         )

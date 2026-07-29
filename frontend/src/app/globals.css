@@ -6,6 +6,11 @@
 
 @import "tailwindcss";
 
+/* Tailwind v4 keys `dark:` off prefers-color-scheme by default, but this
+   app's theme is a class set before first paint (see layout.tsx) — without
+   this, every `dark:` utility silently keys off the OS instead of the app. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ===== THEME SYSTEM (CSS Variables for Tailwind) ===== */
 @theme {
   /* Light theme (default) */
@@ -13,6 +18,11 @@
   --color-surface: #ffffff;
   --color-surface-2: #f3f4f6;
   --color-surface-hover: #f9fafb;
+  /* Opaque counterpart to --color-surface. Modal cards and any surface that
+     must be read against arbitrary content behind it use this, not
+     --color-surface — a modal is a focus trap and translucency there just
+     lets the page behind it interfere with the modal's own content. */
+  --color-surface-solid: #ffffff;
   --color-text: #111827;
   --color-text-muted: #6b7280;
   --color-border: #e5e7eb;
@@ -33,6 +43,24 @@
   /* Shadows */
   --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+
+  /* Body text scale, bumped ~2px from Tailwind's defaults (see the
+     `.text-xs { font-size: ... !important }` block below — this replaces it
+     for the four sizes that need one). Sizes are px, not rem, so
+     html{font-size:18px} at >=1024px does not compound them.
+     Line-heights are explicit: the old !important-only overrides changed
+     font-size but Tailwind still emitted the ORIGINAL paired line-height, so
+     e.g. text-xs rendered 14px glyphs in a 16px line box — two-level
+     Vietnamese diacritics (ế, ộ, ữ) collide across wrapped lines at that
+     ratio. */
+  --text-xs: 14px;
+  --text-xs--line-height: calc(20 / 14);
+  --text-sm: 16px;
+  --text-sm--line-height: 1.5;
+  --text-base: 18px;
+  --text-base--line-height: 1.55;
+  --text-lg: 20px;
+  --text-lg--line-height: 1.35;
 
   /* Fonts */
   --font-sans: sans-serif;
@@ -66,6 +94,10 @@
   --color-surface: rgba(18, 18, 28, 0.6);
   --color-surface-2: rgba(26, 26, 40, 0.7);
   --color-surface-hover: rgba(31, 31, 48, 0.8);
+  /* rgba(18,18,28,0.6) over #0a0a12 composites to roughly #0f0f18 — this is a
+     few levels lighter, so an opaque modal still reads as raised above the
+     page rather than as a flat cutout. */
+  --color-surface-solid: #14141f;
   --color-text: #e8e8f0;
   --color-text-muted: #8a8aa3;
   --color-border: #24243a;
@@ -182,11 +214,10 @@ h4,
   line-height: 1.3;
 }
 
-/* Tailwind text utilities bumped by +2px */
-.text-xs { font-size: 14px !important; }
-.text-sm { font-size: 16px !important; }
-.text-base { font-size: 18px !important; }
-.text-lg { font-size: 20px !important; }
+/* text-xs/sm/base/lg now come from the @theme scale above, with matching
+   line-heights. text-xl/text-2xl stay !important here — they are also part
+   of the responsive headline block above, which is what makes them scale at
+   >=1024px; moving them into @theme would lose that responsiveness. */
 .text-xl { font-size: 22px !important; }
 .text-2xl { font-size: 24px !important; }
 
@@ -328,22 +359,6 @@ a:hover {
   padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0));
 }
 
-/* Mobile/Tablet responsive fixes */
-@media (max-width: 767px) {
-  /* Ensure main content doesn't overflow on small screens */
-  .h-screen {
-    height: 100dvh;
-    height: -webkit-fill-available;
-  }
-}
-
-/* Tablet specific (768px - 1023px) */
-@media (min-width: 768px) and (max-width: 1023px) {
-  html, body {
-    font-size: 14px;
-  }
-}
-
 /* Smooth animations for mobile */
 @media (prefers-reduced-motion: no-preference) {
   * {
@@ -379,10 +394,15 @@ html {
    rather than a document. All scoped to .dark so light is untouched.
    ============================================================ */
 
-/* Frosted chrome. The aurora behind the page shows through the header and the
-   composer, which is what stops large flat panels looking like dead rectangles. */
-.dark header,
-.dark form {
+/* Frosted chrome. The aurora behind the page shows through the header, which
+   is what stops it looking like a dead rectangle.
+ *
+ * Scoped to .app-chrome, not to bare `header`/`form` — those matched every
+ * modal's <header> and <form> too, landing them at 0.6*0.72=0.43 alpha: more
+ * transparent than the modal body they sit on, and the only part blurred, so
+ * header and body visibly disagreed. A modal card is opaque (.modal-card)
+ * precisely so nothing behind it interferes with its own content. */
+.dark .app-chrome {
   background-color: color-mix(in srgb, var(--color-surface) 72%, transparent);
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
@@ -415,37 +435,33 @@ html {
 }
 
 /* Tables carry the pricing, which is the part people actually scrutinise.
-   Zebra striping and a held header make a long ratecard scannable. */
+   Zebra striping makes a long ratecard scannable. A held header (position:
+   sticky) was tried here too, but the table's only scrolling ancestor is
+   horizontal (.agent-output-table's wrapper) — the nearest one with a height
+   limit is the message list itself, so the header detached and floated over
+   unrelated content underneath the app header instead of sticking to its
+   own table. */
 .dark table tbody tr:nth-child(even) {
   background-color: color-mix(in srgb, var(--color-surface-2) 45%, transparent);
 }
 .dark table thead th {
   background-color: var(--color-surface-2);
-  position: sticky;
-  top: 0;
 }
 
-/* Wide content — ratecards especially — scrolls inside its own box. Without this
-   a long pricing table either clips its right-hand columns or forces the whole
-   page sideways, which is exactly how figures went missing. */
-.markdown-body table,
-.prose table {
-  display: block;
-  max-width: 100%;
-  overflow-x: auto;
-  white-space: nowrap;
+/* Ratecards grow to their natural width and the wrapper scrolls horizontally
+   — tableLayout:fixed used to force every column into the container width,
+   squeezing a 5-column ratecard's figures into single-digit pixel widths
+   inside a phone-width bubble, which is how numbers went missing. Padding
+   lives here (not inline) so it can shrink on narrow screens. */
+.agent-output-table th,
+.agent-output-table td {
+  padding: 0.75rem 1rem;
 }
-.markdown-body table td,
-.markdown-body table th,
-.prose table td,
-.prose table th {
-  white-space: normal;
-  min-width: 6rem;
-}
-/* Figures should never wrap mid-number. */
-.markdown-body table td:has(+ td),
-.prose table td {
-  font-variant-numeric: tabular-nums;
+@media (min-width: 640px) {
+  .agent-output-table th,
+  .agent-output-table td {
+    padding: 1rem 1.25rem;
+  }
 }
 
 /* Dark scrollbars: the light-theme thumb is a bright bar on a near-black page. */
@@ -671,7 +687,15 @@ html {
    Thinking Trace — collapsible agent reasoning display
    ============================================================ */
 .thinking-trace-container {
-  margin-left: 2.75rem; /* Align with message bubble (w-8 + gap-3) */
+  /* The AI avatar is w-8 + gap-2 on mobile and w-10 + gap-3 from sm: up — an
+     unconditional 2.75rem indent was sized for the latter only, and on a
+     375px screen that is 12% of the viewport spent on whitespace. */
+  margin-left: 0;
+}
+@media (min-width: 640px) {
+  .thinking-trace-container {
+    margin-left: 2.75rem;
+  }
 }
 
 .thinking-trace-header {
@@ -793,7 +817,7 @@ html {
 .auth-modal-card {
   width: 100%;
   max-width: 400px;
-  background: var(--color-surface);
+  background: var(--color-surface-solid);
   border: 1px solid var(--color-border);
   border-radius: 20px;
   padding: 32px;
@@ -803,6 +827,29 @@ html {
 .auth-modal-header {
   text-align: center;
   margin-bottom: 24px;
+}
+
+/* ===== SHARED MODAL CHROME =====
+ * Depth lives on the scrim (blurred, near-opaque), never on the card. A modal
+ * is a focus trap — nothing behind it should still be legible through it.
+ * This is the same recipe as .auth-modal-overlay/.auth-modal-card above,
+ * generalised for ModelPanel, AdminPanel and the image lightbox. */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: center;
+  overflow-y: auto;
+  background: rgba(10, 10, 18, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.modal-card {
+  background: var(--color-surface-solid);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
 }
 
 .auth-modal-logo {

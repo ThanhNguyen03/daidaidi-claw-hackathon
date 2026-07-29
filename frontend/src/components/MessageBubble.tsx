@@ -5,13 +5,17 @@
  * Uses Tailwind CSS for styling.
  */
 
-import React, { useMemo, useRef, useEffect, useState } from 'react';
+import React, { useMemo, useRef, useEffect, useState, useSyncExternalStore } from 'react';
 import type { Message } from '../lib/types';
-import { Bot, User, Sparkles, FileText, Users, Target, Clock, TrendingUp, ZoomIn, ZoomOut } from 'lucide-react';
+import { Bot, User, ZoomIn, ZoomOut } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { tryRenderAsciiChart, wrapAsciiBoxes } from './AsciiChartRenderer';
 import { ImageLightbox } from './ImageLightbox';
+
+// Render-invariant — a fresh array literal here forces ReactMarkdown to treat
+// the plugin list as changed on every render, which defeats its internal memo.
+const REMARK_PLUGINS = [remarkGfm];
 
 // Mermaid diagram renderer — dynamically imports mermaid to avoid SSR issues
 let _mermaidIdCounter = 0;
@@ -200,21 +204,42 @@ function renderInlineMarkdown(text: string): React.ReactNode {
   });
 }
 
-function useDarkMode(): boolean {
-  const [isDark, setIsDark] = useState(
-    () => typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
-  );
-  useEffect(() => {
-    const observer = new MutationObserver(() => {
-      setIsDark(document.documentElement.classList.contains('dark'));
-    });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-    return () => observer.disconnect();
-  }, []);
-  return isDark;
+// Module-scope singleton: a MutationObserver per MermaidDiagram instance meant
+// N diagrams on screen ran N observers, each doing its own setState on every
+// class-attribute toggle. One observer, shared via useSyncExternalStore.
+let _darkModeCached = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+const _darkModeListeners = new Set<() => void>();
+let _darkModeObserver: MutationObserver | null = null;
+
+function _ensureDarkModeObserver(): void {
+  if (_darkModeObserver || typeof document === 'undefined') return;
+  _darkModeObserver = new MutationObserver(() => {
+    const next = document.documentElement.classList.contains('dark');
+    if (next !== _darkModeCached) {
+      _darkModeCached = next;
+      _darkModeListeners.forEach((listener) => listener());
+    }
+  });
+  _darkModeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 }
 
-function MermaidDiagram({ chart, isStreaming = false }: { chart: string; isStreaming?: boolean }) {
+function useDarkMode(): boolean {
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      _ensureDarkModeObserver();
+      _darkModeListeners.add(onStoreChange);
+      return () => { _darkModeListeners.delete(onStoreChange); };
+    },
+    () => _darkModeCached,
+    () => false
+  );
+}
+
+// Memoized: a mermaid re-render (dynamic import + parse + SVG render) is the
+// single most expensive operation in this app, and props are just `chart`
+// (a string) + `isStreaming` — both stable unless this specific diagram's
+// own source changed.
+const MermaidDiagram = React.memo(function MermaidDiagram({ chart, isStreaming = false }: { chart: string; isStreaming?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(`mermaid-diag-${++_mermaidIdCounter}`);
   const isDarkMode = useDarkMode();
@@ -339,7 +364,7 @@ function MermaidDiagram({ chart, isStreaming = false }: { chart: string; isStrea
       />
     </div>
   );
-}
+});
 
 // Detect and fix tables that have header + data but NO delimiter row
 // Example: "| A | B |" + "| X | Y |" (missing |---|---|)
@@ -397,181 +422,9 @@ function fixMissingDelimiterTables(content: string): string {
   return result.join('\n');
 }
 
-// Detect if content is a brief document (has tables with specific structure)
-function isBriefDocument(content: string): boolean {
-  const hasBriefHeader = /📋|BRIEF|Chương trình|TỔNG QUAN/i.test(content);
-  const hasTable = /\|.+\|/.test(content);
-  const hasProjectInfo = /Client|Mục tiêu|TA|Kênh|Timeline/i.test(content);
-  return hasBriefHeader && hasTable && hasProjectInfo;
-}
-
-// Extract brief info for custom rendering
-interface BriefInfo {
-  title: string;
-  sections: Array<{ key: string; value: string }>;
-}
-
 type ContentBlock =
   | { kind: 'markdown'; content: string }
   | { kind: 'table'; headers: string[]; rows: string[][] };
-
-function parseBriefContent(content: string): BriefInfo | null {
-  if (!isBriefDocument(content)) return null;
-
-  const lines = content.split('\n');
-  let title = '';
-  const sections: Array<{ key: string; value: string }> = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    // Match lines like: | Client | [Tên brand sẽ được điền] |
-    const tableMatch = trimmed.match(/^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$/);
-    if (tableMatch) {
-      const key = tableMatch[1].trim();
-      const value = tableMatch[2].trim();
-      // Check if it's a header row (no dashes)
-      if (!key.includes('-') && !value.includes('-') && key && value) {
-        if (!title && /📋|BRIEF/i.test(key)) {
-          title = value;
-        } else if (key && value) {
-          sections.push({ key, value });
-        }
-      }
-    }
-  }
-
-  return sections.length > 0 ? { title, sections } : null;
-}
-
-// Icon mapping for brief sections
-const sectionIcons: Record<string, React.ReactNode> = {
-  'client': <Users size={16} />,
-  'mục tiêu': <Target size={16} />,
-  'ta': <Users size={16} />,
-  'target audience': <Users size={16} />,
-  'kênh': <FileText size={16} />,
-  'channel': <FileText size={16} />,
-  'timeline': <Clock size={16} />,
-  'budget': <TrendingUp size={16} />,
-  'ngân sách': <TrendingUp size={16} />,
-};
-
-// Custom Brief Document Renderer
-function BriefDocument({ content }: { content: string }) {
-  const briefInfo = useMemo(() => parseBriefContent(content), [content]);
-
-  if (!briefInfo) return null;
-
-  return (
-    <div className="w-full my-4">
-      {/* Header Card */}
-      {briefInfo.title && (
-        <div
-          className="rounded-t-xl px-6 py-4"
-          style={{
-            background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
-          }}
-        >
-          <h2 className="text-white text-lg font-semibold m-0 flex items-center gap-2">
-            <FileText size={20} />
-            {briefInfo.title}
-          </h2>
-        </div>
-      )}
-
-      {/* Info Cards Grid */}
-      <div
-        className="rounded-b-xl overflow-hidden"
-        style={{
-          backgroundColor: 'var(--color-surface)',
-          boxShadow: '0 10px 40px -10px rgba(0,0,0,0.15)',
-        }}
-      >
-        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
-          {briefInfo.sections.map((section, index) => {
-            const iconKey = Object.keys(sectionIcons).find(k =>
-              section.key.toLowerCase().includes(k)
-            );
-            const icon = iconKey ? sectionIcons[iconKey] : <FileText size={16} />;
-
-            return (
-              <div
-                key={index}
-                className="p-4 flex items-start gap-3"
-                style={{
-                  borderBottom: '1px solid var(--color-border)',
-                  borderRight: index % 2 === 0 ? '1px solid var(--color-border)' : 'none',
-                }}
-              >
-                <div
-                  className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
-                  style={{
-                    backgroundColor: 'rgba(79, 70, 229, 0.1)',
-                    color: '#4f46e5',
-                  }}
-                >
-                  {icon}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p
-                    className="text-xs font-medium m-0 mb-1"
-                    style={{
-                      color: 'var(--color-text-muted)',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                    }}
-                  >
-                    {section.key}
-                  </p>
-                  <p
-                    className="text-sm m-0"
-                    style={{
-                      color: 'var(--color-text)',
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    {section.value}
-                  </p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Format structured table output from agent into proper markdown
-// Detects patterns with numbered sections, headers, and content
-function formatStructuredAgentTables(content: string): string {
-  const lines = content.split('\n');
-  const result: string[] = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-    const trimmed = line.trim();
-
-    // Look for section headers like "1.1. Section Name" followed by table
-    const sectionMatch = trimmed.match(/^(\d+(?:\.\d+)?)\.\s+([^:]+)(?::\s*)?$/);
-    if (sectionMatch && i + 1 < lines.length) {
-      const nextLine = lines[i + 1].trim();
-      // Check if next few lines look like a table structure
-      if (nextLine.includes('|') && nextLine.includes('-')) {
-        // This is a section header before a table - add it and continue
-        result.push(line);
-        i++;
-        continue;
-      }
-    }
-
-    result.push(line);
-    i++;
-  }
-
-  return result.join('\n');
-}
 
 function splitTableRow(line: string): string[] {
   const trimmed = line.trim();
@@ -644,8 +497,11 @@ function tryRenderPipeTable(content: string): React.ReactElement | null {
 }
 
 function splitContentIntoBlocks(content: string): ContentBlock[] {
-  const normalized = fixMalformedTables(formatStructuredAgentTables(content));
-  const lines = normalized.split('\n');
+  // `content` here is already processedContent, which ran fixMalformedTables
+  // upstream — re-running it is a no-op (it only rewrites concatenated `|`
+  // rows, and a rewritten row no longer matches that pattern) and was costing
+  // a second full-content scan on every render.
+  const lines = content.split('\n');
   const blocks: ContentBlock[] = [];
   const proseBuffer: string[] = [];
   let inCodeBlock = false;
@@ -701,7 +557,11 @@ function splitContentIntoBlocks(content: string): ContentBlock[] {
   return blocks;
 }
 
-function TableBlock({
+// Memoized: `headers`/`rows` keep their identity across re-renders once
+// contentBlocks is memoized on processedContent (see MessageBubbleInner), so
+// this now actually re-renders only when its own data changes instead of on
+// every streamed token of the message it belongs to.
+const TableBlock = React.memo(function TableBlock({
   headers,
   rows,
 }: {
@@ -710,14 +570,13 @@ function TableBlock({
 }) {
   return (
     <div className="overflow-x-auto my-5 rounded-xl border border-border shadow-md" style={{ backgroundColor: 'var(--color-surface)' }}>
-      <table className="agent-output-table" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.875em', tableLayout: 'fixed' }}>
+      <table className="agent-output-table" style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%', fontSize: '0.875em', tableLayout: 'auto' }}>
         <thead>
           <tr>
             {headers.map((header, index) => (
               <th
                 key={index}
                 style={{
-                  padding: '1rem 1.25rem',
                   textAlign: 'left',
                   fontWeight: 700,
                   fontSize: '0.75em',
@@ -726,8 +585,7 @@ function TableBlock({
                   letterSpacing: '0.08em',
                   backgroundColor: 'var(--color-accent)',
                   borderBottom: '3px solid color-mix(in srgb, var(--color-accent) 85%, black)',
-                  whiteSpace: 'normal',
-                  wordWrap: 'break-word',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 {renderInlineMarkdown(header)}
@@ -742,13 +600,14 @@ function TableBlock({
                 <td
                   key={cellIndex}
                   style={{
-                    padding: '1rem 1.25rem',
                     fontSize: '0.875em',
                     color: 'var(--color-text)',
                     lineHeight: 1.6,
                     borderBottom: '1px solid var(--color-border)',
                     wordWrap: 'break-word',
+                    minWidth: '8rem',
                     maxWidth: '500px',
+                    fontVariantNumeric: 'tabular-nums',
                   }}
                 >
                   {renderInlineMarkdown(cell)}
@@ -760,7 +619,7 @@ function TableBlock({
       </table>
     </div>
   );
-}
+});
 
 // Parse a single-line concatenated table like:
 // "| H1 | H2 | H3 | | --- | --- | --- | |---|---|---| | D1 | D2 | D3 | | D4 | | D5 |"
@@ -1046,9 +905,23 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
 
   const showHeader = !isGrouped && !isUser && !isSystem && agentName;
   const isAI = !isUser && !isSystem;
-  const processedContent = cleanSectionHeadersAndDividers(wrapAsciiBoxes(fixMissingDelimiterTables(formatStructuredAgentTables(fixMalformedTables(fixBareMermaidBlocks(convertScreenSpecsToPhoneBlock(message.content)))))));
+  // Content streams token-by-token (useChat appends to the last message's
+  // content on every chunk), so without this memo the six-pass transform
+  // chain below reran on every token over the whole accumulated string —
+  // O(N^2) over the length of a streamed answer. Deps on message.content
+  // only, not on selectedImageSrc, which used to also trigger a full re-parse
+  // when the user merely clicked an image in an earlier message.
+  const processedContent = useMemo(
+    () => cleanSectionHeadersAndDividers(wrapAsciiBoxes(fixMissingDelimiterTables(fixMalformedTables(fixBareMermaidBlocks(convertScreenSpecsToPhoneBlock(message.content)))))),
+    [message.content]
+  );
   const contentBlocks = useMemo(() => splitContentIntoBlocks(processedContent), [processedContent]);
-  const markdownComponents: any = {
+  // A fresh object (and a fresh remarkPlugins array, see REMARK_PLUGINS below)
+  // on every render forced every ReactMarkdown instance to re-parse from
+  // scratch on every token. isStreaming is the only value this closes over
+  // that actually changes across a message's lifetime — setSelectedImageSrc
+  // has a stable identity from useState.
+  const markdownComponents: any = useMemo(() => ({
     p: ({ children }: { children: React.ReactNode }) => {
       const text = React.Children.toArray(children).map(c => typeof c === 'string' ? c : '').join('');
       if (/^[—\s]*SECTION\s*\d*\s*—/i.test(text.trim())) {
@@ -1113,7 +986,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
             transition: background-color 0.2s;
           }
         `}</style>
-        <table className="agent-output-table" style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.875em', tableLayout: 'fixed' }}>
+        <table className="agent-output-table" style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%', fontSize: '0.875em', tableLayout: 'auto' }}>
           {children}
         </table>
       </div>
@@ -1123,7 +996,6 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
     tr: ({ children }: { children: React.ReactNode }) => <tr>{children}</tr>,
     th: ({ children }: { children: React.ReactNode }) => (
       <th style={{
-        padding: '1rem 1.25rem',
         textAlign: 'left',
         fontWeight: 700,
         fontSize: '0.75em',
@@ -1132,21 +1004,21 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
         letterSpacing: '0.08em',
         backgroundColor: 'var(--color-accent)',
         borderBottom: '3px solid color-mix(in srgb, var(--color-accent) 85%, black)',
-        whiteSpace: 'normal',
-        wordWrap: 'break-word',
+        whiteSpace: 'nowrap',
       }}>
         {children}
       </th>
     ),
     td: ({ children }: { children: React.ReactNode }) => (
       <td style={{
-        padding: '1rem 1.25rem',
         fontSize: '0.875em',
         color: 'var(--color-text)',
         lineHeight: 1.6,
         borderBottom: '1px solid var(--color-border)',
         wordWrap: 'break-word',
+        minWidth: '8rem',
         maxWidth: '500px',
+        fontVariantNumeric: 'tabular-nums',
       }}>
         {children}
       </td>
@@ -1248,7 +1120,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
         </div>
       </div>
     ),
-  };
+  }), [isStreaming]);
 
   // System messages render as a thin centered divider
   if (isSystem) {
@@ -1267,7 +1139,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
       <div className={`flex w-full flex-row-reverse gap-2 sm:gap-3 animate-fade-in-up ${isGrouped ? 'mt-1' : 'mt-3 sm:mt-4'}`}>
         {/* Avatar */}
         {!isGrouped && (
-          <div className="shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-border text-[#374151]">
+          <div className="shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-surface-2 text-text-muted">
             <User size={16} className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
         )}
@@ -1339,7 +1211,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
             }
 
             return (
-              <ReactMarkdown key={`markdown-${index}`} components={markdownComponents} remarkPlugins={[remarkGfm]}>
+              <ReactMarkdown key={`markdown-${index}`} components={markdownComponents} remarkPlugins={REMARK_PLUGINS}>
                 {block.content}
               </ReactMarkdown>
             );
@@ -1439,11 +1311,22 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
 export const MessageBubble = React.memo(
   MessageBubbleInner,
   (prev, next) =>
-    prev.message.content === next.message.content &&
-    prev.message.role === next.message.role &&
-    prev.message.agent === next.message.agent &&
-    prev.message.timestamp === next.message.timestamp &&
     prev.isGrouped === next.isGrouped &&
-    prev.isStreaming === next.isStreaming
+    prev.isStreaming === next.isStreaming &&
+    (prev.message === next.message ||
+      (prev.message.content === next.message.content &&
+        prev.message.role === next.message.role &&
+        prev.message.agent === next.message.agent &&
+        prev.message.timestamp === next.message.timestamp &&
+        // Missing these two was the actual bug: useChat sets ONLY
+        // proposalAssets (or only thinkingSteps) on an existing message
+        // object, so a comparator that ignored them could skip a render
+        // that was supposed to make the deck/PPTX buttons — or the
+        // thinking trace — appear. It was masked by isStreaming flipping
+        // shortly after in the common case, but not on a turn where
+        // isLoading was already false (e.g. right after a question_card
+        // or checkpoint event cleared it).
+        prev.message.proposalAssets === next.message.proposalAssets &&
+        prev.message.thinkingSteps === next.message.thinkingSteps))
 );
 MessageBubble.displayName = 'MessageBubble';

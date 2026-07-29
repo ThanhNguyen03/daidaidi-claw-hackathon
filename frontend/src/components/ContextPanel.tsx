@@ -31,7 +31,7 @@ interface ContextPanelProps {
   onDownloadArtifact?: (artifact: Artifact) => void;
 }
 
-export function ContextPanel({
+function ContextPanelInner({
   isOpen,
   onToggle,
   brief,
@@ -57,7 +57,7 @@ export function ContextPanel({
     return (
       <button
         onClick={onToggle}
-        className="fixed right-0 top-1/2 -translate-y-1/2 bg-accent text-white border-none py-3 sm:py-4 px-1.5 sm:px-2 rounded-l-lg cursor-pointer text-xs font-medium z-50 flex items-center gap-1 shadow-card hover:opacity-90 transition-all"
+        className="fixed right-0 top-1/2 -translate-y-1/2 bg-accent text-white border-none py-3 sm:py-4 px-1.5 sm:px-2 rounded-l-lg cursor-pointer text-xs font-medium z-40 flex items-center gap-1 shadow-card hover:opacity-90 transition-all"
         title="Open Context Panel"
       >
         <PanelRightOpen size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
@@ -78,11 +78,11 @@ export function ContextPanel({
       <aside className="
         glass-panel border-l border-border flex flex-col
         fixed right-0 top-0 bottom-0 z-50 shrink-0
-        w-80 sm:w-80
-        lg:sticky lg:top-0 lg:bottom-auto lg:h-screen lg:w-80
+        w-[min(20rem,88vw)]
+        lg:sticky lg:top-0 lg:bottom-auto lg:h-full lg:w-80
         transform transition-transform duration-300 ease-out
         lg:transform-none
-        pb-20 lg:pb-0
+        pb-4 lg:pb-0
       ">
         {/* Header */}
         <div className="px-4 py-3 sm:py-4 border-b border-border flex items-center justify-between">
@@ -159,7 +159,7 @@ export function ContextPanel({
             </button>
 
             {expandedSections.constraints && (
-              <div className="p-3 bg-red-50 rounded-lg">
+              <div className="p-3 bg-red-500/10 border border-red-500/25 rounded-lg">
                 {isLoading ? (
                   <div className="flex items-center gap-2 text-text-muted">
                     <RefreshCw size={14} className="animate-spin" />
@@ -170,7 +170,7 @@ export function ContextPanel({
                     {constraints.map((constraint) => (
                       <div
                         key={constraint.rule_id}
-                        className="flex items-start gap-2 p-2 bg-white rounded border border-red-100"
+                        className="flex items-start gap-2 p-2 bg-surface-2 rounded border border-border"
                       >
                         <AlertCircle
                           size={16}
@@ -244,24 +244,24 @@ export function ContextPanel({
                   {artifacts.map((artifact) => (
                     <div
                       key={artifact.id}
-                      className="p-3 bg-sky-50 rounded-lg border border-sky-200"
+                      className="p-3 bg-accent-soft rounded-lg border border-accent/25"
                     >
                       <div className="flex items-center gap-2 mb-2">
-                        {artifact.type === 'pptx' && <FileText size={16} className="text-sky-600" />}
-                        {artifact.type === 'userflow' && <GitBranch size={16} className="text-violet-600" />}
-                        {artifact.type === 'wireframe' && <Image size={16} className="text-emerald-600" />}
-                        {artifact.type === 'quote' && <FileText size={16} className="text-red-600" />}
-                        <span className="text-xs font-medium text-sky-900">{artifact.title}</span>
+                        {artifact.type === 'pptx' && <FileText size={16} className="text-sky-400" />}
+                        {artifact.type === 'userflow' && <GitBranch size={16} className="text-violet-400" />}
+                        {artifact.type === 'wireframe' && <Image size={16} className="text-emerald-400" />}
+                        {artifact.type === 'quote' && <FileText size={16} className="text-red-400" />}
+                        <span className="text-xs font-medium text-text">{artifact.title}</span>
                       </div>
 
                       {artifact.type === 'userflow' && artifact.data && (
-                        <div className="bg-white p-2 rounded text-[10px] font-mono text-gray-600 overflow-hidden text-ellipsis max-h-12 mb-2">
+                        <div className="bg-surface-2 p-2 rounded text-[10px] font-mono text-text-muted overflow-hidden text-ellipsis max-h-12 mb-2">
                           {artifact.data.substring(0, 200)}...
                         </div>
                       )}
 
                       {artifact.preview && (
-                        <p className="text-xs text-sky-700 mb-2">{artifact.preview}</p>
+                        <p className="text-xs text-text-muted mb-2">{artifact.preview}</p>
                       )}
 
                       {onDownloadArtifact && (
@@ -285,4 +285,8 @@ export function ContextPanel({
   );
 }
 
+// Memoized for the same reason as Sidebar: page.tsx re-renders on every
+// streamed token, and this panel's callbacks are now stable (see page.tsx).
+export const ContextPanel = React.memo(ContextPanelInner);
+ContextPanel.displayName = 'ContextPanel';
 export default ContextPanel;

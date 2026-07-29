@@ -93,7 +93,13 @@ const SKILL_NAMES_MAP: Record<string, string> = {
   cs_agent: 'CS Assistant',
 };
 
-export function ThinkingTrace({ steps, isActive }: ThinkingTraceProps) {
+// Memoized: one of these is mounted per historical assistant message in
+// ChatWindow's message list, and that list re-renders on every streamed
+// token of whichever message is currently live. `steps` keeps its array
+// identity once attached to a message (set once at message creation, never
+// mutated afterward), so a completed trace now skips re-rendering — including
+// its own scrollHeight read in the effect below, which forces a layout.
+function ThinkingTraceInner({ steps, isActive }: ThinkingTraceProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const contentRef = useRef<HTMLDivElement>(null);
   const [contentHeight, setContentHeight] = useState<number>(0);
@@ -208,3 +214,6 @@ export function ThinkingTrace({ steps, isActive }: ThinkingTraceProps) {
     </div>
   );
 }
+
+export const ThinkingTrace = React.memo(ThinkingTraceInner);
+ThinkingTrace.displayName = 'ThinkingTrace';

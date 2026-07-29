@@ -30,15 +30,10 @@ load_dotenv()
 from schemas.state import (
     SalesCaseState,
     Brief,
-    FeedbackRule,
-    CheckpointAction,
 )
 
 # Import repositories
-from repos.memory_repo import get_memory_repo, SQLiteMemoryRepo
-
-# Import LLM
-from llm.client import get_llm_client
+from repos.memory_repo import get_memory_repo
 
 # Multi-skills: central agent + skill registry
 from central_agent.agent import get_central_agent
@@ -57,10 +52,6 @@ from checkpoint.manager import get_checkpoint_manager
 # PII masking — system component, must run before any model sees the message (BRD §3)
 from pii.masking import get_masker, forget_session as forget_masked_session
 
-# Import generation (Day 6)
-from generation.pptx import create_pptx_generator
-from generation.userflow import create_userflow_generator
-from design.backend import get_default_backend
 
 # =============================================================================
 # Configuration
@@ -117,6 +108,22 @@ async def lifespan(app: FastAPI):
             print(f"Warning: knowledge ingest failed (non-fatal): {e}")
     else:
         print("Knowledge: static lookup via knowledge/loader.py (vector index disabled)")
+
+    # LLM calls now run on their own pool (llm/pool.py), so asyncio's default
+    # executor — used by every `asyncio.to_thread` DB/file write — is no
+    # longer competing with them for threads. Widen it anyway: the default of
+    # min(32, cpu+4) is as few as 6 threads on a 2-vCPU container, and a turn
+    # can have several DB writes and file writes in flight at once (session
+    # save, deck HTML, PPTX). Must happen before any request touches
+    # to_thread, so here, before `yield`, is the only safe place.
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        io_workers = int(os.getenv("IO_POOL_WORKERS", "16"))
+        asyncio.get_running_loop().set_default_executor(
+            ThreadPoolExecutor(max_workers=io_workers, thread_name_prefix="io")
+        )
+    except Exception as e:
+        print(f"Warning: could not widen default executor (non-fatal): {e}")
 
     yield  # App runs here
 
@@ -204,7 +211,9 @@ def _get_current_user(authorization: Optional[str] = None) -> Optional[dict]:
 async def auth_register(req: RegisterRequest):
     from database import register_user
     try:
-        user = register_user(req.username, req.password, req.full_name)
+        # pbkdf2 at 100_000 rounds is deliberately slow; off the loop so a
+        # registration does not stall every other rep's open SSE stream.
+        user = await asyncio.to_thread(register_user, req.username, req.password, req.full_name)
         return user
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -215,7 +224,9 @@ async def auth_register(req: RegisterRequest):
 async def auth_login(req: LoginRequest):
     from database import login_user
     try:
-        user = login_user(req.username, req.password)
+        # Same reason as register: pbkdf2 verification is ~60-100ms of pure
+        # CPU, and it runs while other reps' streams are open.
+        user = await asyncio.to_thread(login_user, req.username, req.password)
         return user
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
@@ -600,28 +611,6 @@ def _artifact_available(artifact_id: Optional[str]) -> bool:
     )
 
 
-def get_or_create_session(
-    session_id: Optional[str], salesperson_id: str, mode: str = "chat"
-) -> SalesCaseState:
-    """Get existing session or create new one."""
-    mode = _normalize_mode(mode)
-    # First check in-memory store
-    if session_id and session_id in _session_store:
-        state = _session_store[session_id]
-        state.mode = _normalize_mode(state.mode)
-        return state
-
-    # Create new session (resume from DB happens via separate endpoint)
-    new_session = SalesCaseState(
-        session_id=session_id or f"sess_{uuid.uuid4().hex[:12]}",
-        salesperson_id=salesperson_id,
-        mode=mode,
-        validation_status="PENDING",
-    )
-    _session_store[new_session.session_id] = new_session
-    return new_session
-
-
 async def get_or_create_session_async(
     session_id: Optional[str], salesperson_id: str, mode: str = "chat"
 ) -> SalesCaseState:
@@ -767,10 +756,6 @@ async def _with_heartbeat(source: AsyncGenerator[str, None], interval: float = S
 # =============================================================================
 
 
-# Day 5: Checkpoint-triggering action types
-CHECKPOINT_TRIGGER_TYPES = {"generate_quote", "generate_pptx", "generate_wireframe", "generate_userflow"}
-
-
 async def _recompute_preview(state: SalesCaseState, params: dict) -> Optional[dict]:
     """
     Re-compute the preview/quote with updated parameters.
@@ -808,394 +793,6 @@ async def _recompute_preview(state: SalesCaseState, params: dict) -> Optional[di
             pass
 
     return payload
-
-
-async def _maybe_create_checkpoint(state: SalesCaseState) -> Optional[Any]:
-    """
-    Check if agent outputs contain a checkpoint-triggering action and create checkpoint.
-
-    Day 5-6: This creates a checkpoint when:
-    - Account agent outputs a quote (generate_quote)
-    - Plan agent outputs a plan (generate_pptx, generate_userflow)
-    - Design agent outputs wireframe requirements (generate_wireframe)
-    """
-    # Check whether any agent output requires human approval.
-    # Mode no longer controls checkpointing; the output type does.
-
-    # Get checkpoint manager
-    cpm = get_checkpoint_manager()
-
-    # Register handlers for checkpoint actions
-    async def handle_generate_quote(params: dict) -> dict:
-        """Execute quote generation (Day 6)."""
-        quote_id = params.get("quote_id", f"Q{uuid.uuid4().hex[:8].upper()}")
-        artifact_id = f"quote_{uuid.uuid4().hex[:10]}"
-        # Build a simple text quote
-        lines = [f"QUOTATION #{quote_id}\n"]
-        for item in params.get("items", []):
-            lines.append(f"  - {item.get('name', '?')}: {item.get('price', 0):,} VND")
-        total = params.get("total_vnd", 0)
-        lines.append(f"\nTotal: {total:,} VND")
-        content = "\n".join(lines).encode("utf-8")
-
-        _artifact_store[artifact_id] = {
-            "storage": "memory",
-            "content": content,
-            "filename": f"quote_{quote_id}.txt",
-            "media_type": "text/plain",
-            "type": "quote",
-            "title": f"Quotation #{quote_id}",
-        }
-        return {
-            "status": "executed",
-            "quote_id": quote_id,
-            "total_vnd": total,
-            "artifact_id": artifact_id,
-            "download_url": f"/artifact/{artifact_id}",
-        }
-
-    async def handle_generate_pptx(params: dict) -> dict:
-        """Execute PPTX generation (Day 6). Saves file to disk, returns download URL."""
-        artifact_id = f"pptx_{uuid.uuid4().hex[:10]}"
-        os.makedirs(ARTIFACTS_DIR, exist_ok=True)
-        output_path = os.path.join(ARTIFACTS_DIR, f"{artifact_id}.pptx")
-
-        pptx_gen = create_pptx_generator()
-        result = await pptx_gen.generate(
-            plan_data=params,
-            client_name=params.get("client_name", "Client"),
-            output_path=output_path,
-        )
-
-        if result.get("status") == "success" and result.get("file_path"):
-            client_name = params.get("client_name", "Client")
-            _artifact_store[artifact_id] = {
-                "storage": "file",
-                "path": output_path,
-                "filename": f"proposal_{client_name}.pptx",
-                "media_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                "type": "pptx",
-                "title": f"PPTX Proposal -- {client_name}",
-            }
-            result["artifact_id"] = artifact_id
-            result["download_url"] = f"/artifact/{artifact_id}"
-        elif result.get("fallback"):
-            # python-pptx not available -- save fallback text
-            content = (result.get("preview") or "").encode("utf-8")
-            _artifact_store[artifact_id] = {
-                "storage": "memory",
-                "content": content,
-                "filename": f"proposal_{params.get('client_name', 'Client')}.md",
-                "media_type": "text/markdown",
-                "type": "pptx",
-                "title": f"Proposal (text fallback) -- {params.get('client_name', 'Client')}",
-            }
-            result["artifact_id"] = artifact_id
-            result["download_url"] = f"/artifact/{artifact_id}"
-
-        return result
-
-    async def handle_generate_userflow(params: dict) -> dict:
-        """Execute userflow generation (Day 6). Registers Mermaid artifact."""
-        userflow_gen = create_userflow_generator()
-        result = await userflow_gen.generate(
-            plan_data=params,
-            format=params.get("format", "mermaid"),
-        )
-
-        if result.get("status") == "success":
-            artifact_id = f"flow_{uuid.uuid4().hex[:10]}"
-            if result.get("format") == "mermaid" and result.get("code"):
-                content = result["code"].encode("utf-8")
-                _artifact_store[artifact_id] = {
-                    "storage": "memory",
-                    "content": content,
-                    "filename": "userflow.mmd",
-                    "media_type": "text/plain",
-                    "type": "userflow",
-                    "title": "Userflow Diagram (Mermaid)",
-                }
-                result["artifact_id"] = artifact_id
-                result["download_url"] = f"/artifact/{artifact_id}"
-
-        return result
-
-    async def handle_generate_wireframe(params: dict) -> dict:
-        """Execute wireframe generation (Day 6). Registers HTML/FigJam artifact."""
-        design_backend = get_default_backend()
-        result = await design_backend.generate_wireframe(
-            requirements=params,
-            output_format=params.get("output_format", "html"),
-        )
-
-        if result.get("status") == "success" and result.get("content"):
-            artifact_id = f"wire_{uuid.uuid4().hex[:10]}"
-            content = result["content"]
-            if isinstance(content, str):
-                content = content.encode("utf-8")
-            _artifact_store[artifact_id] = {
-                "storage": "memory",
-                "content": content,
-                "filename": "wireframe.html",
-                "media_type": "text/html",
-                "type": "wireframe",
-                "title": f"Wireframe -- {params.get('brand_name', 'Brand')}",
-            }
-            result["artifact_id"] = artifact_id
-            result["download_url"] = f"/artifact/{artifact_id}"
-
-        return result
-
-    # Register all handlers
-    cpm.register_handler("generate_quote", handle_generate_quote)
-    cpm.register_handler("generate_pptx", handle_generate_pptx)
-    cpm.register_handler("generate_userflow", handle_generate_userflow)
-    cpm.register_handler("generate_wireframe", handle_generate_wireframe)
-
-    # Determine what kind of generation to checkpoint based on outputs
-    payload = None
-    action_type = None
-    action_description = None
-
-    # Check for quote output from product solution agent
-    product_output = state.outputs.get("product_solution")
-    if product_output:
-        product_payload = product_output.payload or {}
-        pricing_breakdown = product_payload.get("pricing_breakdown") or {}
-        if pricing_breakdown.get("total_vnd") or product_payload.get("quote_id"):
-            payload = {
-                "quote_id": product_payload.get("quote_id", "PENDING"),
-                "items": pricing_breakdown.get("items", []),
-                "total_vnd": pricing_breakdown.get("total_vnd", 0),
-                "valid_until": pricing_breakdown.get("valid_until"),
-                "payment_terms": product_payload.get("payment_terms", "To be confirmed"),
-            }
-            action_type = "generate_quote"
-            action_description = f"Generate quotation for {payload.get('total_vnd', 0):,} VND"
-
-    # Check for plan output from plan agent (or other agent with plan data)
-    if not payload:
-        for agent_name, output in state.outputs.items():
-            if not output or not output.payload:
-                continue
-            agent_payload = output.payload
-
-            # Check if this is a plan/proposal output (flexible detection)
-            # Also check for key fields that indicate a structured plan/proposal
-            is_plan_output = (
-                agent_payload.get("plan") or
-                agent_payload.get("solutions") or
-                agent_payload.get("title") or
-                agent_payload.get("proposal") or
-                agent_payload.get("recommendations") or  # Common StubAgent output
-                agent_payload.get("deliverables")  # Common StubAgent output
-            )
-
-            if is_plan_output:
-                payload = agent_payload
-                # Day 6: Check for explicit user journey/flow first
-                # If found, generate userflow. Otherwise generate PPTX.
-                # For demo: also check for 'journey', 'steps', 'process' keys
-                has_userflow_data = (
-                    agent_payload.get("user_journey") or
-                    agent_payload.get("flow") or
-                    agent_payload.get("journey") or
-                    agent_payload.get("steps") or
-                    agent_payload.get("process")
-                )
-                if has_userflow_data:
-                    action_type = "generate_userflow"
-                    action_description = "Generate userflow diagram"
-                else:
-                    # For any plan/proposal, generate both PPTX AND userflow
-                    # Userflow will use fallback data from the plan
-                    action_type = "generate_userflow"
-                    action_description = "Generate userflow diagram + PPTX deck"
-                    # Add fallback user journey data to payload
-                    if "recommendations" in agent_payload:
-                        payload["user_journey"] = [
-                            f"Review {agent_payload.get('target_segment', 'proposal')}",
-                            "Analyze recommendations",
-                            "Select solution",
-                            "Proceed with implementation"
-                        ]
-                break
-
-    # Check for design output
-    if not payload:
-        design_output = state.outputs.get("design")
-        if design_output:
-            design_payload = design_output.payload or {}
-            if design_payload.get("wireframe") or design_payload.get("requirements"):
-                payload = design_payload
-                action_type = "generate_wireframe"
-                action_description = "Generate wireframe design"
-
-    # If no generation action found, skip checkpoint
-    if not payload or not action_type:
-        return None
-
-    # Create the checkpoint
-    action = CheckpointAction(
-        type=action_type,
-        description=action_description,
-        parameters=payload,
-    )
-
-    # Day 5: Run compliance review BEFORE creating checkpoint
-    # Create a preliminary checkpoint for the review
-    from schemas.state import Checkpoint as CheckpointSchema
-    preliminary_checkpoint = CheckpointSchema(
-        id=f"preview_{uuid.uuid4().hex[:8]}",
-        action=action,
-        status="AWAITING",
-        preview=payload,
-    )
-
-    # Run the compliance review hooks
-    compliance_findings = await cpm.run_review_hooks(state, preliminary_checkpoint)
-
-    # Pass ComplianceFinding objects directly to create_checkpoint
-    # (it will handle serialization when storing)
-    checkpoint = await cpm.create_checkpoint(
-        session_id=state.session_id,
-        action=action,
-        preview=payload,
-        compliance_findings=compliance_findings,  # Pass objects, not dicts
-    )
-
-    # Attach to state
-    state.checkpoint = checkpoint
-
-    return checkpoint
-
-
-def _extract_agent_content(agent_name: str, output) -> str:
-    """
-    Pull the user-facing text out of an AgentOutput.payload so it can be
-    streamed directly to the chat window.
-    """
-    payload = getattr(output, "payload", {}) or {}
-
-    # product_solution: full solution narrative under "solution_summary"
-    if "content" in payload:
-        return str(payload["content"])
-
-    # market_strategy: full LLM text under "strategy"
-    if "strategy" in payload:
-        return str(payload["strategy"])
-
-    # product_solution: recommendations (string or list)
-    if "recommendations" in payload:
-        recs = payload["recommendations"]
-        if isinstance(recs, str):
-            return recs
-        if isinstance(recs, list):
-            lines = []
-            for r in recs:
-                if isinstance(r, dict):
-                    lines.append(f"- **{r.get('category', '')}**: {r.get('item', '')}")
-                else:
-                    lines.append(f"- {r}")
-            return "\n".join(lines)
-
-    # compliance agent: findings list or narrative
-    if "findings" in payload:
-        findings = payload["findings"]
-        if isinstance(findings, str):
-            return findings
-        if isinstance(findings, list):
-            lines = [f"**Compliance Review -- {agent_name}**\n"]
-            for f in findings:
-                if isinstance(f, dict):
-                    severity = f.get("severity", "info").upper()
-                    lines.append(f"- [{severity}] {f.get('message', str(f))}")
-                else:
-                    lines.append(f"- {f}")
-            return "\n".join(lines)
-
-    # client_simulator: structured adversarial review
-    if "objections" in payload:
-        lines = [f"**Client Simulator Review -- {agent_name}**\n"]
-        scores = payload.get("scores", {})
-        if scores:
-            score_str = " | ".join(f"{k.replace('_', ' ').title()}: {v}/5" for k, v in scores.items())
-            lines.append(f"*Scores: {score_str}*\n")
-        for obj in payload.get("objections", []):
-            if isinstance(obj, dict):
-                lines.append(f"- [{obj.get('severity','').upper()}] {obj.get('text', str(obj))}")
-        for wp in payload.get("weak_points", []):
-            lines.append(f"⚠ {wp}")
-        for risk in payload.get("risks", []):
-            lines.append(f"🚨 {risk}")
-        if payload.get("recommendations"):
-            lines.append("\n**Recommendations before AE review:**")
-            for rec in payload["recommendations"]:
-                lines.append(f"- {rec}")
-        return "\n".join(lines)
-
-    # compliance: narrative field
-    if "narrative" in payload:
-        return str(payload["narrative"])
-
-    # requirement elicitation: normalized brief / clarification summary
-    if "requirement_summary" in payload:
-        return str(payload["requirement_summary"])
-
-    if "next_questions" in payload:
-        questions = payload["next_questions"]
-        if isinstance(questions, list) and questions:
-            lines = ["**Need a few clarifications before proceeding:**"]
-            for q in questions:
-                if isinstance(q, dict):
-                    lines.append(f"- {q.get('text', str(q))}")
-                else:
-                    lines.append(f"- {q}")
-            return "\n".join(lines)
-
-    # product_solution / integration: integration summary
-    if "integration" in payload:
-        return str(payload["integration"])
-
-    if "solution_summary" in payload:
-        return str(payload["solution_summary"])
-
-    if "pricing_breakdown" in payload:
-        pricing = payload["pricing_breakdown"] or {}
-        lines = [f"**Báo giá / Solution**\n"]
-        for item in pricing.get("items", []):
-            price = item.get("price", 0)
-            lines.append(
-                f"- {item.get('name', '?')}: **{price:,.0f} VND** / {item.get('unit', '')}"
-                + (" *(ước tính)*" if item.get("is_estimate") else "")
-            )
-        if pricing.get("subtotal") is not None:
-            lines.append(f"\n**Subtotal:** {pricing.get('subtotal'):,.0f} VND")
-        if pricing.get("total_vnd") is not None:
-            lines.append(f"**Tổng cộng:** {pricing.get('total_vnd'):,.0f} VND")
-        if pricing.get("valid_until"):
-            lines.append(f"Hiệu lực Ä'ến: {pricing['valid_until']}")
-        return "\n".join(lines)
-
-    # product solution / quote: render as markdown table
-    if "quote_id" in payload:
-        lines = [f"**Báo giá #{payload['quote_id']}**\n"]
-        for item in payload.get("items", []):
-            price = item.get("price", 0)
-            lines.append(
-                f"- {item.get('name', '?')}: **{price:,.0f} VND** / {item.get('unit', '')} "
-                + ("*(ước tính)*" if item.get("is_estimate") else "")
-            )
-        total = payload.get("total_vnd", 0)
-        lines.append(f"\n**Tổng cộng: {total:,.0f} VND**")
-        if payload.get("valid_until"):
-            lines.append(f"Hiệu lực đến: {payload['valid_until']}")
-        if payload.get("payment_terms"):
-            lines.append(f"Điều khoản thanh toán: {payload['payment_terms']}")
-        return "\n".join(lines)
-
-    # fallback: use summary
-    return output.summary or ""
 
 
 async def process_with_central_agent(
@@ -1270,198 +867,6 @@ async def process_with_central_agent(
     state.summary = f"User: {message[:40]}... -> Skills: {', '.join(state.outputs.keys()) or 'none'}"
     yield _sse_data({"type": "done"})
 
-
-
-# =============================================================================
-# Simple LLM Processing (Day 1 fallback)
-# =============================================================================
-
-ORCHESTRATOR_SYSTEM_PROMPT = """You are a Sales AI Assistant --  a knowledgeable advisor for sales teams.
-
-## Your Role
-
-You coordinate the specialist agents internally and answer only from the
-evidence, context, and tools already available in the session.
-
-Do NOT invent missing details, do NOT assume unavailable values, and do NOT
-answer execute-level requirements unless the context is sufficient.
-
-## When User Shares a Sales Brief
-
-If the brief is incomplete, ask for the missing details BEFORE giving advice.
-Key fields to check:
-- Client/company name
-- Industry / product being sold
-- Target audience
-- Budget range
-- Goals or KPIs
-- Current tech stack (CRM, Zalo OA, etc.)
-
-Once you have enough context, coordinate the specialists and present a
-comprehensive, direct response with only grounded information.
-
-## Response Guidelines
-
-- Be helpful, professional, and thorough --  give real substance, not placeholders
-- Respond in the user's language (Vietnamese if they write in Vietnamese)
-- Use markdown headers and bullet points for readability
-- Never promise future actions you cannot take in this turn
-- Never expose hidden mode names to the user
-"""
-
-
-class _ThinkFilter:
-    """Streaming filter that strips <think>...</think> blocks from LLM output.
-
-    Emits (type, content) tuples:
-      ("think_start", "")  -- first <think> tag encountered
-      ("think", content)   -- text inside a <think> block (caller may discard)
-      ("think_end", "")    -- closing </think> tag
-      ("content", content) -- regular response text to stream to the client
-    """
-
-    OPEN = "<think>"
-    CLOSE = "</think>"
-
-    def __init__(self) -> None:
-        self._buf = ""
-        self._in_think = False
-
-    def push(self, token: str) -> list[tuple[str, str]]:
-        self._buf += token
-        events: list[tuple[str, str]] = []
-        while True:
-            if self._in_think:
-                pos = self._buf.find(self.CLOSE)
-                if pos >= 0:
-                    if pos > 0:
-                        events.append(("think", self._buf[:pos]))
-                    events.append(("think_end", ""))
-                    self._buf = self._buf[pos + len(self.CLOSE):]
-                    self._in_think = False
-                else:
-                    safe = max(0, len(self._buf) - len(self.CLOSE))
-                    if safe > 0:
-                        events.append(("think", self._buf[:safe]))
-                        self._buf = self._buf[safe:]
-                    break
-            else:
-                pos = self._buf.find(self.OPEN)
-                if pos >= 0:
-                    if pos > 0:
-                        events.append(("content", self._buf[:pos]))
-                    events.append(("think_start", ""))
-                    self._buf = self._buf[pos + len(self.OPEN):]
-                    self._in_think = True
-                else:
-                    safe = max(0, len(self._buf) - len(self.OPEN))
-                    if safe > 0:
-                        events.append(("content", self._buf[:safe]))
-                        self._buf = self._buf[safe:]
-                    break
-        return events
-
-    def flush(self) -> list[tuple[str, str]]:
-        if not self._buf:
-            return []
-        kind = "think" if self._in_think else "content"
-        result = [(kind, self._buf)]
-        self._buf = ""
-        return result
-
-
-async def process_simple(
-    state: SalesCaseState,
-    message: str,
-) -> AsyncGenerator[str, None]:
-    """
-    Process message with simple LLM call (chat mode fallback).
-    Uses central_agent system prompt. Strips <think> reasoning blocks and
-    emits thinking_start / thinking_end SSE events instead.
-    """
-    try:
-        client = get_llm_client("central_agent")
-    except ValueError as e:
-        yield _sse_data({'type': 'error', 'error': str(e)})
-        return
-
-    # Record user message in session history before calling the LLM
-    state.messages.append(
-        {
-            "role": "user",
-            "content": message,
-            "timestamp": datetime.now().isoformat(),
-        }
-    )
-
-    # Build messages: system prompt + rolling history.
-    llm_messages = [{"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT}]
-    llm_messages += [
-        {"role": msg["role"], "content": msg["content"]}
-        for msg in state.messages[-20:]
-    ]
-
-    # Append brief context to the last user message when available
-    if state.brief:
-        context_parts = []
-        if state.brief.industry:
-            context_parts.append(f"Industry: {state.brief.industry}")
-        if state.brief.goal:
-            context_parts.append(f"Goal: {state.brief.goal}")
-        if state.brief.target_audience:
-            context_parts.append(f"Audience: {state.brief.target_audience}")
-        if state.brief.budget_vnd:
-            context_parts.append(f"Budget: {state.brief.budget_vnd:,} VND")
-        if state.brief.timeline:
-            context_parts.append(f"Timeline: {state.brief.timeline}")
-        if state.brief.additional_context:
-            context_parts.append(f"Additional context: {state.brief.additional_context}")
-        if context_parts:
-            llm_messages[-1]["content"] += f"\n\nContext: {', '.join(context_parts)}"
-
-    try:
-        stream = client.create_completion(
-            messages=llm_messages,
-            stream=True,
-            temperature=0.7,
-            max_tokens=4000,
-        )
-
-        tf = _ThinkFilter()
-        accumulated = ""
-
-        for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                token = chunk.choices[0].delta.content
-                for kind, text in tf.push(token):
-                    if kind == "think_start":
-                        yield _sse_data({'type': 'thinking_start'})
-                    elif kind == "think_end":
-                        yield _sse_data({'type': 'thinking_end'})
-                    elif kind == "content" and text:
-                        accumulated += text
-                        yield _sse_data({'type': 'content', 'content': text})
-                    # "think" text is silently discarded
-
-        for kind, text in tf.flush():
-            if kind == "content" and text:
-                accumulated += text
-                yield _sse_data({'type': 'content', 'content': text})
-
-        if accumulated:
-            state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": accumulated,
-                    "agent": "central_agent",
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
-
-    except Exception as e:
-        yield _sse_data({'type': 'error', 'error': str(e)})
-
-    yield _sse_data({'type': 'done'})
 
 
 # =============================================================================

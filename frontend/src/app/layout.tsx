@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Be_Vietnam_Pro } from 'next/font/google';
 import './globals.css';
 
@@ -17,6 +17,20 @@ export const metadata: Metadata = {
   icons: {
     icon: '/favicon.svg',
   },
+};
+
+// `viewport-fit=cover` is what makes env(safe-area-inset-*) resolve to a real
+// value on iOS instead of 0 — without it, .pb-safe and the header/composer
+// safe-area padding are silent no-ops and content sits under the notch/home
+// indicator. Pinch-zoom is intentionally left enabled (no maximumScale).
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: '#0a0a12' },
+    { media: '(prefers-color-scheme: light)', color: '#faf9f7' },
+  ],
 };
 
 // Applied before first paint. React can only add the `dark` class after hydration,

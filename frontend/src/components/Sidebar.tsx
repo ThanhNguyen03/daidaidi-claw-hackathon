@@ -136,7 +136,7 @@ const getStatusColorStyle = (status: AgentStatus['status']): string => {
   return colors[status] || colors.idle;
 };
 
-export function Sidebar({
+function SidebarInner({
   currentMode,
   onModeChange,
   onNewChat,
@@ -245,14 +245,15 @@ export function Sidebar({
     if (agent.model) agentModelMap.set(agent.name, agent.model);
   });
 
-  const sidebarWidth = isCollapsed ? 'w-16' : 'w-64';
-
   return (
     <aside
       className={`
-        ${sidebarWidth} min-h-screen glass-panel border-r border-border overflow-y-auto
-        flex flex-col p-4 transition-sidebar sticky top-0 z-40 shrink-0
-        ${!isOpen ? 'hidden md:flex' : 'flex'}
+        w-72 max-w-[85vw] md:w-64 shrink-0 flex flex-col p-4 overflow-y-auto
+        glass-panel border-r border-border
+        fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-out
+        md:static md:z-auto md:h-full md:translate-x-0 md:transition-none
+        ${isOpen ? 'translate-x-0' : '-translate-x-full'}
+        ${isCollapsed ? 'md:w-16' : ''}
       `}
     >
       {/* Logo / Title */}
@@ -313,72 +314,8 @@ export function Sidebar({
         </div>
       </div>
 
-      {/* Active Agents */}
-      <div className="mb-6">
-        {!isCollapsed && (
-          <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3 flex items-center justify-between gap-2">
-            <span className="flex items-center gap-2">
-              <Users size={14} />
-              Active Agents
-            </span>
-            {onOpenModelPanel && (
-              <button
-                onClick={onOpenModelPanel}
-                className="p-1 rounded hover:bg-bg text-text-muted normal-case tracking-normal"
-                title="Model & quota"
-                aria-label="Model & quota"
-              >
-                <Cpu size={14} />
-              </button>
-            )}
-          </h2>
-        )}
-        <div className="flex flex-col gap-1">
-          {displayAgents.map((agent) => {
-            const status = agentStatusMap.get(agent.name) || 'idle';
-            const model = agentModelMap.get(agent.name);
-
-            return (
-              <div
-                key={agent.name}
-                className={`
-                  flex items-center gap-2 text-xs
-                  ${isCollapsed ? 'justify-center py-2' : 'px-3 py-1.5'}
-                `}
-                title={agent.display_name}
-              >
-                <span
-                  className={`w-2 h-2 rounded-full flex-shrink-0 ${getStatusColorClass(status)}`}
-                  style={{ backgroundColor: getStatusColorStyle(status) }}
-                  title={status}
-                />
-                {!isCollapsed && (
-                  <span className="min-w-0 flex flex-col leading-tight">
-                    <span
-                      className={getStatusTextClass(status)}
-                      style={{ color: getStatusColorStyle(status) }}
-                    >
-                      {agent.display_name}
-                      {status === 'thinking' && (
-                        <span className="ml-1 text-status-thinking">●</span>
-                      )}
-                    </span>
-                    {/* The model it actually ran on. Shown only once it has run,
-                        because before that it is a guess the fallback can overrule. */}
-                    {model && (
-                      <span className="text-[10px] text-text-muted truncate" title={model}>
-                        {model}
-                      </span>
-                    )}
-                  </span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Session History */}
+      {/* Session History — above Active Agents: which conversation you're in
+          matters more, more often, than which agent is currently running. */}
       {!isCollapsed && (
         <div className="mt-4 pt-3 border-t border-border/50">
           <div className="flex items-center justify-between px-1 mb-2">
@@ -491,6 +428,71 @@ export function Sidebar({
         </div>
       )}
 
+      {/* Active Agents */}
+      <div className="mb-6 mt-4">
+        {!isCollapsed && (
+          <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3 flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2">
+              <Users size={14} />
+              Active Agents
+            </span>
+            {onOpenModelPanel && (
+              <button
+                onClick={onOpenModelPanel}
+                className="p-1 rounded hover:bg-bg text-text-muted normal-case tracking-normal"
+                title="Model & quota"
+                aria-label="Model & quota"
+              >
+                <Cpu size={14} />
+              </button>
+            )}
+          </h2>
+        )}
+        <div className="flex flex-col gap-1">
+          {displayAgents.map((agent) => {
+            const status = agentStatusMap.get(agent.name) || 'idle';
+            const model = agentModelMap.get(agent.name);
+
+            return (
+              <div
+                key={agent.name}
+                className={`
+                  flex items-center gap-2 text-xs
+                  ${isCollapsed ? 'justify-center py-2' : 'px-3 py-1.5'}
+                `}
+                title={agent.display_name}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full flex-shrink-0 ${getStatusColorClass(status)}`}
+                  style={{ backgroundColor: getStatusColorStyle(status) }}
+                  title={status}
+                />
+                {!isCollapsed && (
+                  <span className="min-w-0 flex flex-col leading-tight">
+                    <span
+                      className={getStatusTextClass(status)}
+                      style={{ color: getStatusColorStyle(status) }}
+                    >
+                      {agent.display_name}
+                      {status === 'thinking' && (
+                        <span className="ml-1 text-status-thinking">●</span>
+                      )}
+                    </span>
+                    {/* The model it actually ran on. Shown only once it has run,
+                        because before that it is a guess the fallback can overrule. */}
+                    {model && (
+                      <span className="text-[10px] text-text-muted truncate" title={model}>
+                        {model}
+                      </span>
+                    )}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Spacer */}
       <div className="flex-1" />
 
@@ -579,10 +581,13 @@ export function Sidebar({
           {!isCollapsed && (isDarkMode ? 'Light' : 'Dark')}
         </button>
 
-        {/* Collapse/Expand Toggle - always visible on larger screens when needed */}
+        {/* Collapse/Expand — desktop only. The aside is off-canvas on mobile
+            (full width when open, translated away when closed), so "collapsed"
+            has no meaning there; the icon-only layout it produces would just
+            be a full-width drawer showing icons with no labels. */}
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="flex items-center justify-center p-2 rounded-md border border-border text-text-muted hover:bg-surface-hover"
+          className="hidden md:flex items-center justify-center p-2 rounded-md border border-border text-text-muted hover:bg-surface-hover"
           title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
           {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
@@ -591,3 +596,10 @@ export function Sidebar({
     </aside>
   );
 }
+
+// Memoized: this component re-renders on every streamed token otherwise
+// (page.tsx re-renders on every content event, and an unmemoized Sidebar
+// re-renders with it) — the callbacks it receives are now stable identities
+// (see page.tsx's useCallback wrappers), so the memo actually holds.
+export const Sidebar = React.memo(SidebarInner);
+Sidebar.displayName = 'Sidebar';
