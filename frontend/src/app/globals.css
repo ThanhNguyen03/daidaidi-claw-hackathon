@@ -18,17 +18,25 @@
    * generic light theme with a blue accent bolted on. */
   --color-bg: #eef3fa;
   --color-surface: #ffffff;
-  --color-surface-2: #f3f4f6;
-  --color-surface-hover: #f9fafb;
+  /* Was #f3f4f6 — only ~2% lighter than --color-bg, so sunken elements (the
+     composer input, disabled buttons, code blocks) had no visible fill
+     against the page. Pulled it clearly darker so "this is a distinct
+     surface" reads without needing the border to do all the work. */
+  --color-surface-2: #dde7f3;
+  --color-surface-hover: #e4edf9;
   /* Opaque counterpart to --color-surface. Modal cards and any surface that
      must be read against arbitrary content behind it use this, not
      --color-surface — a modal is a focus trap and translucency there just
      lets the page behind it interfere with the modal's own content. */
   --color-surface-solid: #ffffff;
   --color-text: #111827;
-  --color-text-muted: #6b7280;
-  --color-border: #e5e7eb;
-  --color-border-strong: #d1d5db;
+  /* Was #6b7280 — read fine in isolation but felt washed out across a whole
+     screen of secondary labels. Darker so it stays legible at a glance. */
+  --color-text-muted: #3d4a5f;
+  /* Borders were within a couple percent lightness of the backgrounds they
+     outlined — invisible at a glance. Given real separation from bg/surface. */
+  --color-border: #c7d4e6;
+  --color-border-strong: #a9bcd4;
 
   /* Accent — Zalo blue (#0068FF), the brand's one non-negotiable color. */
   --color-accent: #0068ff;
@@ -144,11 +152,11 @@
   pointer-events: none;
   z-index: 0;
   background:
-    radial-gradient(60rem 40rem at 12% -10%, rgba(124, 108, 245, 0.10), transparent 60%),
+    radial-gradient(60rem 40rem at 12% -10%, rgba(0, 104, 255, 0.10), transparent 60%),
     radial-gradient(50rem 34rem at 100% 0%, rgba(56, 189, 248, 0.06), transparent 55%),
-    radial-gradient(44rem 30rem at 50% 110%, rgba(167, 139, 250, 0.05), transparent 60%),
-    linear-gradient(rgba(124, 108, 245, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(124, 108, 245, 0.03) 1px, transparent 1px);
+    radial-gradient(44rem 30rem at 50% 110%, rgba(61, 148, 255, 0.05), transparent 60%),
+    linear-gradient(rgba(0, 104, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 104, 255, 0.03) 1px, transparent 1px);
   background-size: 100% 100%, 100% 100%, 100% 100%, 30px 30px, 30px 30px;
   background-position: center;
 }
@@ -1197,9 +1205,9 @@ html {
 }
 
 @keyframes pulseGlow {
-  0% { box-shadow: 0 0 0 0 rgba(124, 108, 245, 0.4); }
-  70% { box-shadow: 0 0 0 6px rgba(124, 108, 245, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(124, 108, 245, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(0, 104, 255, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(0, 104, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 104, 255, 0); }
 }
 
 .animate-pulse-glow {
@@ -1217,7 +1225,7 @@ html {
   left: 0;
   width: 100%;
   height: 8px;
-  background: linear-gradient(to bottom, transparent, rgba(124, 108, 245, 0.3), transparent);
+  background: linear-gradient(to bottom, transparent, rgba(0, 104, 255, 0.3), transparent);
   animation: scanLine 8s linear infinite;
   pointer-events: none;
   z-index: 50;
@@ -1232,23 +1240,24 @@ html {
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 .dark .glass-panel {
-  border: 1px solid rgba(124, 108, 245, 0.15);
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1), inset 0 0 0 1px rgba(124, 108, 245, 0.05);
+  border: 1px solid rgba(61, 148, 255, 0.15);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1), inset 0 0 0 1px rgba(61, 148, 255, 0.05);
 }
 
 /* Glow Utilities */
 .glow-border {
-  border: 1px solid rgba(124, 108, 245, 0.3);
-  box-shadow: 0 0 10px rgba(124, 108, 245, 0.15), inset 0 0 5px rgba(124, 108, 245, 0.05);
+  border: 1px solid rgba(0, 104, 255, 0.3);
+  box-shadow: 0 0 10px rgba(0, 104, 255, 0.15), inset 0 0 5px rgba(0, 104, 255, 0.05);
 }
 .glow-border-active {
-  border-color: rgba(124, 108, 245, 0.6);
-  box-shadow: 0 0 15px rgba(124, 108, 245, 0.3), inset 0 0 10px rgba(124, 108, 245, 0.1);
+  border-color: rgba(0, 104, 255, 0.6);
+  box-shadow: 0 0 15px rgba(0, 104, 255, 0.3), inset 0 0 10px rgba(0, 104, 255, 0.1);
 }
 
-/* Gradient Text Utilities */
+/* Gradient Text Utilities — Zalo blue into the same cyan the aurora/tf-stage
+   use elsewhere, so this reads as one brand gradient rather than a one-off. */
 .text-gradient-tech {
-  background: linear-gradient(135deg, #a78bfa 0%, #38bdf8 100%);
+  background: linear-gradient(135deg, #0068ff 0%, #38bdf8 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;

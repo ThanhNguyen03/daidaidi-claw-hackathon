@@ -332,6 +332,7 @@ export default function Home() {
           onEditCheckpoint={editCheckpoint}
           onClearError={clearError}
           onToggleContextPanel={toggleContextPanel}
+          isContextPanelOpen={contextPanelOpen}
           onToggleMobileSidebar={toggleSidebar}
           onModeChange={setMode}
           onNewChat={handleNewChat}

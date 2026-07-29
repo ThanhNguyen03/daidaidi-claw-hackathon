@@ -377,9 +377,9 @@ function CheckpointCard({
               key={idx}
               className={`
                 p-3 rounded-xl mb-2 max-w-full overflow-hidden
-                ${finding.severity === 'block' ? 'bg-red-500/10 border border-red-500/25 text-red-400' : ''}
-                ${finding.severity === 'warn' ? 'bg-amber-500/10 border border-amber-500/25 text-amber-300' : ''}
-                ${finding.severity === 'info' ? 'bg-blue-500/10 border border-blue-500/25 text-blue-300' : ''}
+                ${finding.severity === 'block' ? 'bg-red-500/10 border border-red-500/25 text-red-600 dark:text-red-400' : ''}
+                ${finding.severity === 'warn' ? 'bg-amber-500/10 border border-amber-500/25 text-amber-600 dark:text-amber-400' : ''}
+                ${finding.severity === 'info' ? 'bg-blue-500/10 border border-blue-500/25 text-blue-600 dark:text-blue-400' : ''}
               `}
             >
               <div className="flex items-start gap-2">
@@ -663,7 +663,7 @@ export function ChatWindow({
   return (
     <div className="flex-1 flex flex-col h-full bg-bg overflow-hidden">
       {/* Header - compact */}
-      <header className="app-chrome shrink-0 sticky top-0 z-20 safe-area-inset-top px-3 sm:px-4 md:px-6 py-1.5 sm:py-3 bg-surface border-b border-border flex items-center justify-between">
+      <header className="app-chrome shrink-0 sticky top-0 z-20 safe-area-inset-top min-h-14 px-3 sm:px-4 md:px-6 bg-surface border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           {/* Mobile sidebar toggle — the only hamburger now that the drawer lives
               directly on the Sidebar component, off-canvas. */}
@@ -718,7 +718,7 @@ export function ChatWindow({
           {onToggleContextPanel && (
             <button
               onClick={onToggleContextPanel}
-              className="hidden md:flex p-2 border border-border rounded-lg hover:bg-surface-hover transition-all"
+              className="flex p-1.5 sm:p-2 border border-border rounded-lg hover:bg-surface-hover transition-all"
               title={isContextPanelOpen ? 'Close Context Panel' : 'Open Context Panel'}
             >
               {isContextPanelOpen ? (
@@ -749,7 +749,7 @@ export function ChatWindow({
       {/* Error display */}
       {error && (
         <div className="shrink-0 px-3 md:px-6 py-3 bg-red-500/10 border-b border-red-500/25 flex items-center justify-between">
-          <span className="text-red-400 text-[12px]">{error}</span>
+          <span className="text-red-600 dark:text-red-400 text-[12px]">{error}</span>
           <button onClick={onClearError} className="text-text-muted hover:text-text">
             <X size={16} />
           </button>
@@ -902,7 +902,7 @@ export function ChatWindow({
       {/* Input area - refined composer */}
       <div className="px-3 sm:px-4 md:px-6 py-2 sm:py-3 bg-bg border-t border-border pb-safe">
         <div className="flex gap-2 items-center max-w-6xl mx-auto">
-          <div className="flex relative items-center justify-center w-full">
+          <div className="flex-1 relative">
             <textarea
               ref={textareaRef}
               id='promt'

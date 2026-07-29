@@ -1157,7 +1157,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
               background: 'linear-gradient(135deg, var(--color-accent) 0%, rgba(56, 189, 248, 0.8) 100%)',
               color: '#ffffff',
               borderRadius: '1rem 1rem 0.25rem 1rem',
-              boxShadow: 'var(--shadow-sm), 0 4px 14px 0 rgba(124, 108, 245, 0.39)',
+              boxShadow: 'var(--shadow-sm), 0 4px 14px 0 rgba(0, 104, 255, 0.39)',
               fontSize: '15px',
               lineHeight: 1.6,
             }}
@@ -1181,7 +1181,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
     <div className={`flex gap-2 sm:gap-3 animate-fade-in-up ${isGrouped ? 'mt-1' : 'mt-3 sm:mt-4'}`}>
       {/* Avatar */}
       {!isGrouped && (
-        <div className="shrink-0 aspect-square p-2 size-fit rounded-full flex items-center justify-center text-white bg-blue-500 glow-border" style={{boxShadow: '0 0 12px rgba(59, 130, 246, 0.5)'}}>
+        <div className="shrink-0 aspect-square p-2 size-fit rounded-full flex items-center justify-center text-white bg-accent glow-border" style={{boxShadow: '0 0 12px rgba(0, 104, 255, 0.5)'}}>
           <Bot size={16} className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
         </div>
       )}
@@ -1193,7 +1193,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
       <div className="flex flex-col items-start flex-1 glass-panel glow-border p-4 sm:p-5 rounded-2xl" style={{ maxWidth: '100%' }}>
         {/* Agent name */}
         {showHeader && (
-          <span className="text-[12px] sm:text-sm font-medium mb-1.5 sm:mb-2 ml-1 text-blue-500" >
+          <span className="text-[12px] sm:text-sm font-medium mb-1.5 sm:mb-2 ml-1 text-accent" >
             AdtimaBox Agent
           </span>
         )}

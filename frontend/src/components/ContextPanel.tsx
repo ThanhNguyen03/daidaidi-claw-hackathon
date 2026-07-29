@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from 'react';
-import { ChevronRight, X, RefreshCw, Info, AlertCircle, Download, FileText, GitBranch, Image as ImageIcon, PanelRightOpen, PanelRightClose } from 'lucide-react';
+import { ChevronRight, X, RefreshCw, Info, AlertCircle, Download, FileText, GitBranch, Image as ImageIcon } from 'lucide-react';
 import type { Brief, FeedbackRule as FeedbackRuleType } from '../lib/types';
 
 // Artifact types
@@ -52,19 +52,12 @@ function ContextPanelInner({
     setExpandedSections((prev) => ({ ...prev, [section]: !prev[section] }));
   };
 
-  // Toggle button when closed
-  if (!isOpen) {
-    return (
-      <button
-        onClick={onToggle}
-        className="fixed right-0 top-1/2 -translate-y-1/2 bg-accent text-white border-none py-3 sm:py-4 px-1.5 sm:px-2 rounded-l-lg cursor-pointer text-xs font-medium z-40 flex items-center gap-1 shadow-card hover:opacity-90 transition-all"
-        title="Open Context Panel"
-      >
-        <PanelRightOpen size={14} className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-        <span className="hidden sm:inline text-[11px] sm:text-xs">Context</span>
-      </button>
-    );
-  }
+  // Opening/closing is driven by the single toggle button in the chat header
+  // (and, below md, the sidebar's own mobile bar) — this panel does not also
+  // render its own close/open control, so there is only ever one place that
+  // does this job. It stays mounted at all times (rather than returning null
+  // or a standalone floating tab when closed) so the slide/width transitions
+  // below actually have something to animate between open and closed.
 
   return (
     <>
@@ -76,27 +69,28 @@ function ContextPanelInner({
         />
       )}
 
-      {/* Drawer panel - overlay on mobile/tablet, in-flow sticky panel on lg+ */}
-      <aside className="
-        glass-panel border-l border-border flex flex-col
-        fixed right-0 top-0 bottom-0 z-50 shrink-0
-        w-[min(20rem,88vw)]
-        lg:sticky lg:top-0 lg:bottom-auto lg:h-full lg:w-80
-        transform transition-transform duration-300 ease-out
-        lg:transform-none
-        pb-4 lg:pb-0
-      ">
-        {/* Header */}
-        <div className="px-4 py-3 sm:py-4 border-b border-border flex items-center justify-between">
+      {/* Drawer panel — slides in as a fixed overlay on mobile/tablet, and
+          widens/narrows in place as a docked column on lg+. Both are
+          animated so open/close always has motion, not a hard cut. */}
+      <aside
+        aria-hidden={!isOpen}
+        className={`
+          glass-panel border-l border-border flex flex-col
+          fixed right-0 top-0 bottom-0 z-50 shrink-0
+          w-[min(20rem,88vw)]
+          transform transition-transform duration-300 ease-out
+          ${isOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none'}
+          lg:translate-x-0 lg:pointer-events-auto
+          lg:sticky lg:top-0 lg:bottom-auto lg:h-full lg:overflow-hidden
+          lg:transition-[width] lg:duration-300 lg:ease-out
+          ${isOpen ? 'lg:w-80' : 'lg:w-0 lg:border-l-0'}
+          pb-4 lg:pb-0
+        `}
+      >
+        {/* Header — no close button here; the single toggle in the chat
+            header (or the backdrop tap on mobile/tablet) closes this panel. */}
+        <div className="h-14 px-4 border-b border-border flex items-center">
           <h3 className="text-sm sm:text-base font-semibold text-gradient-tech">Context</h3>
-          <button
-            onClick={onToggle}
-            className="flex items-center gap-1.5 bg-transparent border-none cursor-pointer text-text-muted hover:text-text p-1.5 sm:p-0 rounded-lg sm:rounded-none hover:bg-surface-hover sm:bg-transparent transition-all"
-            title="Close Context Panel"
-          >
-            <span className="hidden lg:inline text-[12px]">Close</span>
-            <PanelRightClose size={18} />
-          </button>
         </div>
 
         {/* Content */}
@@ -248,10 +242,10 @@ function ContextPanelInner({
                       className="p-3 bg-accent-soft rounded-lg border border-accent/25"
                     >
                       <div className="flex items-center gap-2 mb-2">
-                        {artifact.type === 'pptx' && <FileText size={16} className="text-sky-400" />}
-                        {artifact.type === 'userflow' && <GitBranch size={16} className="text-violet-400" />}
-                        {artifact.type === 'wireframe' && <ImageIcon size={16} className="text-emerald-400" />}
-                        {artifact.type === 'quote' && <FileText size={16} className="text-red-400" />}
+                        {artifact.type === 'pptx' && <FileText size={16} className="text-accent" />}
+                        {artifact.type === 'userflow' && <GitBranch size={16} className="text-violet-600 dark:text-violet-400" />}
+                        {artifact.type === 'wireframe' && <ImageIcon size={16} className="text-emerald-600 dark:text-emerald-400" />}
+                        {artifact.type === 'quote' && <FileText size={16} className="text-red-600 dark:text-red-400" />}
                         <span className="text-xs font-medium text-text">{artifact.title}</span>
                       </div>
 

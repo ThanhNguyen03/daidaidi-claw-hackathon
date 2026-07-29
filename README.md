@@ -46,37 +46,58 @@ When a client brief is submitted, the agents collaborate to clarify requirements
 
 ### Prerequisites
 
-- Python 3.11+
-- Node.js 18+
+- Python 3.11 (pinned in `backend/Dockerfile` and `backend/pyproject.toml`)
+- Node.js 20+ (required — `@tailwindcss/postcss` v4 needs APIs missing on Node 18
+  and breaks `next build`)
 - npm
-- A GreenNode MAAS API key
+- An API key for the LLM provider currently wired in — see below
+
+> The app runs on **Google Gemini through its OpenAI-compatible endpoint**, not
+> GreenNode MAAS (`backend/llm/client.py` speaks plain OpenAI, so the provider is
+> just env config — see `CLAUDE.md` → "Provider configuration"). Get a Gemini key
+> from Google AI Studio.
 
 ### 1. Configure the backend
 
-Copy the example environment file and fill in your values:
+Copy the example environment file:
 
 ```bash
 cp backend/.env.example backend/.env
 ```
 
-At minimum, set:
+`backend/.env.example` already ships with working defaults for the LLM provider —
+you only need to fill in your key and adjust two values for local (non-Docker) use:
 
 ```env
-LLM_BASE_URL=https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1/
-LLM_API_KEY=your_greennode_api_key_here
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+LLM_API_KEY=your_gemini_api_key_here
 PORT=8000
 FRONTEND_URL=http://localhost:3000
 ```
+
+`PORT` and `FRONTEND_URL` ship as `8080` and the production Vercel URL respectively
+(the AgentBase Runtime and production defaults) — override them as above for local
+dev, or just pass `--port 8000` to uvicorn as shown below and leave `PORT` alone.
+
+Everything else in the file (`AGENTBASE_MEMORY_ID`, `MEMORY_STRATEGY_ID`,
+`KB_VECTOR_ENABLED`, the per-skill `MODEL_*` overrides, etc.) is optional for a
+local run — the app falls back to local SQLite/LanceDB storage and the model
+defaults when those are unset.
 
 ### 2. Run the backend
 
 ```bash
 cd backend
 python -m venv venv
-venv\Scripts\activate
+venv\Scripts\activate      # Windows; use `source venv/bin/activate` on macOS/Linux
 pip install -r requirements.txt
 python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+`requirements.txt` pulls in `torch` + `sentence-transformers` for the local
+embedding fallback, which is a slow install. If you don't need
+`KB_VECTOR_ENABLED=true` (the default is `false` and nothing needs it — see
+`CLAUDE.md`), you can install the trimmed `backend/requirements-prod.txt` instead.
 
 Backend endpoints:
 
@@ -90,14 +111,9 @@ In a new terminal:
 
 ```bash
 cd frontend
+cp .env.example .env.local   # NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 npm install
 npm run dev
-```
-
-If needed, point the frontend to the backend:
-
-```env
-NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
 Frontend URL:
@@ -110,13 +126,27 @@ Open `http://localhost:3000` in your browser and start a chat session.
 
 ### Alternative: Run with Docker Compose
 
-You can run both services together with:
+`docker-compose.yml` reads `LLM_BASE_URL`, `LLM_API_KEY`, and the `MODEL_*`
+overrides from the **shell environment or a root-level `.env` file** — Compose does
+not read `backend/.env`. Create one at the repo root (or export the vars in your
+shell) before starting:
+
+```env
+# .env (repo root)
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+LLM_API_KEY=your_gemini_api_key_here
+```
+
+Then:
 
 ```bash
 docker compose up --build
 ```
 
-This starts:
+`docker-compose.yml` is the local-dev compose file (separate from
+`docker-compose.prod.yml`, used only by `deploy/deploy.sh`) — it mounts your
+source directories and runs `uvicorn --reload` / `npm run dev` inside the
+containers, so edits on the host are picked up live. It starts:
 
 - Backend on `http://localhost:8000`
 - Frontend on `http://localhost:3000`

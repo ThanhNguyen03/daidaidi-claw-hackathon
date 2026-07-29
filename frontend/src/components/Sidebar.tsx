@@ -69,7 +69,7 @@ function authHeaders(): Record<string, string> {
 // on mobile once opened, and a hover-only control cannot be tapped there at all.
 const DELETE_BTN_CLASS =
   'p-1 mr-1.5 rounded-sm text-text-muted opacity-60 md:opacity-0 md:group-hover:opacity-100 ' +
-  'focus:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0';
+  'focus:opacity-100 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0';
 
 interface AgentStatus {
   name: string;
@@ -334,7 +334,7 @@ function SidebarInner({
               {sessions.length > 0 && !confirmingClearAll && (
                 <button
                   onClick={() => { setConfirmingClearAll(true); setConfirmingId(null); }}
-                  className="p-1 rounded-sm text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                  className="p-1 rounded-sm text-text-muted hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 transition-colors"
                   title="Xoá toàn bộ lịch sử"
                   aria-label="Xoá toàn bộ lịch sử"
                 >
@@ -353,7 +353,7 @@ function SidebarInner({
                 <button
                   onClick={handleClearAll}
                   disabled={deletingId === '__all__'}
-                  className="flex-1 flex items-center justify-center gap-1 py-1 rounded-sm text-[11px] font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-50"
+                  className="flex-1 flex items-center justify-center gap-1 py-1 rounded-sm text-[11px] font-medium bg-red-500/15 text-red-600 dark:text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-50"
                 >
                   {deletingId === '__all__'
                     ? <Loader2 size={11} className="animate-spin" />
@@ -393,7 +393,7 @@ function SidebarInner({
                       <button
                         onClick={() => handleDelete(s.session_id)}
                         disabled={deletingId === s.session_id}
-                        className="p-1 rounded-sm text-red-400 hover:bg-red-500/15 transition-colors disabled:opacity-50"
+                        className="p-1 rounded-sm text-red-600 dark:text-red-400 hover:bg-red-500/15 transition-colors disabled:opacity-50"
                         title="Xác nhận xoá"
                         aria-label="Xác nhận xoá"
                       >
@@ -610,22 +610,12 @@ function SidebarInner({
             be a full-width drawer showing icons with no labels. */}
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="hidden md:flex items-center justify-center p-2 rounded-md border border-border text-text-muted hover:bg-surface-hover"
+          className={`hidden md:flex items-center justify-center rounded-md border border-border text-text-muted hover:bg-surface-hover ${isCollapsed ? 'w-8 h-8' : 'p-2'}`}
           title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
           {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
         </button>
       </div>
-
-      {isCollapsed && (
-        <button
-          onClick={() => setIsCollapsed(false)}
-          className="flex items-center justify-center w-8 h-8 mx-auto mt-2 rounded-md border border-border text-text-muted hover:bg-surface-hover"
-          title="Expand sidebar"
-        >
-          <ChevronRight size={16} />
-        </button>
-      )}
     </aside>
   );
 }
