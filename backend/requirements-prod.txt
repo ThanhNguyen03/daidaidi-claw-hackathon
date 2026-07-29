@@ -21,7 +21,6 @@ lancedb>=0.8.0
 # HTTP + retries
 httpx>=0.26.0
 tenacity>=8.2.0
-requests>=2.31.0
 
 # NOTE: pyyaml is a HARD requirement, not optional. tools/ingest.py reads
 # config/agents.yaml to decide which agents to index; if the import fails it
