@@ -8,7 +8,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   MessageCircle,
-  Headphones,
   Plus,
   Clock,
   Users,
@@ -81,9 +80,11 @@ interface AgentStatus {
 }
 
 
+// CS mode is hidden from the switcher (not removed — 'cs' stays a valid
+// ChatMode and the rest of the app still branches on it) — add the entry
+// back here to re-expose it.
 const MODES: { id: ChatMode; label: string; icon: React.ReactNode; description: string }[] = [
   { id: 'chat', label: 'PreSales', icon: <MessageCircle size={18} />, description: 'Q&A & advisory' },
-  { id: 'cs', label: 'Customer Services', icon: <Headphones size={18} />, description: 'Customer Service' },
 ];
 
 const SALE_AGENTS: { name: string; display_name: string }[] = [
@@ -287,35 +288,42 @@ function SidebarInner({
 
       <div className='p-2 md:p-4 flex flex-col justify-between items-center overflow-y-auto overflow-x-hidden flex-1 min-h-0 relative' >
         <div className='w-full flex flex-col'>
-          {/* Mode Switcher */}
-          {!isCollapsed && (
-            <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-              Mode
-            </h2>
+          {/* Mode Switcher — hidden while CS mode is hidden and MODES has only
+              one entry (a single always-active pill isn't a switcher, it's
+              clutter). Reappears on its own once a second mode is added back
+              to MODES above. */}
+          {MODES.length > 1 && (
+            <>
+              {!isCollapsed && (
+                <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+                  Mode
+                </h2>
+              )}
+              <div className="flex flex-col gap-1">
+                {MODES.map((mode) => (
+                  <button
+                    key={mode.id}
+                    onClick={() => onModeChange(mode.id)}
+                    className={`
+                      flex items-center gap-3 rounded-md cursor-pointer
+                      text-[12px] transition-all duration-150
+                      ${currentMode === mode.id
+                        ? 'bg-accent-soft text-accent font-medium'
+                        : 'text-text hover:bg-surface-hover'
+                      }
+                      ${isCollapsed ? 'w-8 h-8 mx-auto justify-center' : 'py-2.5 px-3 justify-start'}
+                    `}
+                    title={mode.description}
+                  >
+                    <span className={currentMode === mode.id ? 'text-accent' : 'text-text-muted'}>
+                      {mode.icon}
+                    </span>
+                    {!isCollapsed && <span className="flex items-center gap-2">{mode.label}</span>}
+                  </button>
+                ))}
+              </div>
+            </>
           )}
-          <div className="flex flex-col gap-1">
-            {MODES.map((mode) => (
-              <button
-                key={mode.id}
-                onClick={() => onModeChange(mode.id)}
-                className={`
-                  flex items-center gap-3 rounded-md cursor-pointer
-                  text-[12px] transition-all duration-150
-                  ${currentMode === mode.id
-                    ? 'bg-accent-soft text-accent font-medium'
-                    : 'text-text hover:bg-surface-hover'
-                  }
-                  ${isCollapsed ? 'w-8 h-8 mx-auto justify-center' : 'py-2.5 px-3 justify-start'}
-                `}
-                title={mode.description}
-              >
-                <span className={currentMode === mode.id ? 'text-accent' : 'text-text-muted'}>
-                  {mode.icon}
-                </span>
-                {!isCollapsed && <span className="flex items-center gap-2">{mode.label}</span>}
-              </button>
-            ))}
-          </div>
 
           {!isCollapsed && (
             <div className="mt-4 pt-3 border-t border-border/50">
