@@ -43,7 +43,6 @@ _EXTRACT_MAX_TOKENS = int(os.getenv("DECK_EXTRACT_MAX_TOKENS", "24000"))
 
 _REQUIRED_FIELDS = {
     "deck_meta": [],            # optional cover campaign_line, no required fields
-    "executive_summary": [],   # validated below: headline or summary
     "client_requirements": [],  # validated below: at least one of the 4 quadrants
     "solution_package": [],     # validated below: addons or package.name
     "user_journey": ["steps"],
@@ -53,15 +52,10 @@ _REQUIRED_FIELDS = {
     "quotation": [],            # validated below: line_items or total
     "quotation_alternative": [],
     "case_study": ["cases"],
-    "next_steps": [],           # validated below: weeks, decisions, or tech_items
 }
 
-# Sections gated behind compliance: the source proposal (proposal_assembler's
-# 7-section template) omits Investment and Next Steps entirely when compliance
-# is BLOCKED — the prompt is told to match that, but instruction is not
-# enforcement (see gate.py's whole reason for existing), so it's re-checked here
-# against whatever verdict the extraction actually returned.
-_BLOCKED_GATED_TYPES = {"quotation", "quotation_alternative", "next_steps"}
+# Sections gated behind compliance
+_BLOCKED_GATED_TYPES = {"quotation", "quotation_alternative"}
 
 
 def _validate_slides(slides: list) -> list:
@@ -82,9 +76,6 @@ def _validate_slides(slides: list) -> list:
         missing = [f for f in _REQUIRED_FIELDS[t] if not s.get(f)]
         if missing:
             dropped.append(f"{t}(missing {','.join(missing)})")
-            continue
-        if t == "executive_summary" and not (s.get("headline") or s.get("summary")):
-            dropped.append("executive_summary(no headline or summary)")
             continue
         if t == "client_requirements" and not any(
             s.get(k) for k in ("current_state", "core_pain", "desired_outcome", "gap")
@@ -107,9 +98,6 @@ def _validate_slides(slides: list) -> list:
             continue
         if t in ("quotation", "quotation_alternative") and not (s.get("line_items") or s.get("total")):
             dropped.append(f"{t}(no line_items or total)")
-            continue
-        if t == "next_steps" and not (s.get("weeks") or s.get("decisions") or s.get("tech_items")):
-            dropped.append("next_steps(no weeks, decisions, or tech_items)")
             continue
         valid.append(s)
     if dropped:

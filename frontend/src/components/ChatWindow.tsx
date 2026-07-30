@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, MessageCircle, Headphones, Plus, PanelRightOpen } from 'lucide-react';
+import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, MessageCircle, Plus, PanelRightOpen } from 'lucide-react';
 import { MessageBubble, AgentRichContent } from './MessageBubble';
 import { QuestionCard } from './QuestionCard';
 import { ThinkingTrace } from './ThinkingTrace';
@@ -36,9 +36,10 @@ interface ChatWindowProps {
   thinkingSteps?: ThinkingStep[];
 }
 
+// CS mode is hidden from the switcher (not removed — see Sidebar.tsx's MODES
+// for the matching desktop change; 'cs' stays a valid ChatMode elsewhere).
 const HEADER_MODES: { id: ChatMode; label: string; icon: React.ReactNode }[] = [
   { id: 'chat', label: 'Chat', icon: <MessageCircle size={16} /> },
-  { id: 'cs', label: 'CS', icon: <Headphones size={16} /> },
 ];
 
 // Openers for an empty chat, each scoped to ONE specialist rather than a full
@@ -641,10 +642,13 @@ export function ChatWindow({
             <Menu size={18} className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
           </button>
 
-          {/* Mobile: a compact 2-segment mode switcher — the bottom nav that used
-              to hold this is gone, and this is the only mode control left once
-              the drawer is closed. */}
-          {onModeChange && (
+          {/* Mobile: a compact mode switcher — the bottom nav that used to hold
+              this is gone, so this is the only mode control left once the
+              drawer is closed. Hidden entirely while CS mode is hidden and
+              HEADER_MODES has only one entry — a single always-active pill
+              isn't a switcher, it's clutter. Reappears on its own once a
+              second mode is added back to HEADER_MODES. */}
+          {onModeChange && HEADER_MODES.length > 1 && (
             <div className="md:hidden flex items-center gap-0.5 p-0.5 rounded-lg bg-surface-2 border border-border">
               {HEADER_MODES.map((m) => (
                 <button

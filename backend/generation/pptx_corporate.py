@@ -1,19 +1,30 @@
 """
 Adtima corporate-branded PPTX generator.
 
-Follows the visual skeleton of generation/sample-output.pptx: picture-backed
-chrome (assets/zbh-*.jpg extracted from that sample) and the 5 static Zalo/Adtima
-platform intro slides embedded verbatim. The client-specific section scheme
-covers all 7 sections of the source proposal document (Executive Summary and
-Next Steps were added beyond the sample's own 5-section agenda so no part of
-the proposal goes unexploited — compliance still folds into Solution, matching
-the sample). This is independent from html_deck.py's 14-type/7-section schema,
-which the HTML deck keeps using unchanged — only the downloadable PPTX uses
-this template.
+Follows the visual skeleton of generation/sample-output.pptx and the more
+thorough spec in agents/adtimabox-proposal-builder/SKILL.md (content rules,
+font metrics, validation checklist merged from there — see
+PPTX_CORPORATE_SCHEMA.md): picture-backed chrome (assets/zbh-*.jpg) and the 5
+static Zalo/Adtima platform intro slides embedded verbatim, then a fixed
+5-section client-specific scheme (Client Requirements, Solution, Quotation,
+Case Study — compliance folds into Solution). Deliberately NOT 7 sections:
+Executive Summary and Next Steps were tried and reverted — a 7-row agenda
+forces its font below the 11pt floor this module enforces (see
+_render_agenda), and the total-investment figure already surfaces on the
+quotation slide without one. This is independent from html_deck.py's
+14-type/7-section schema, which the HTML deck keeps using unchanged — only
+the downloadable PPTX uses this template.
 
 Section/page numbering is computed here from the final slide order, never taken
 from the extraction — slide counts vary (e.g. whether an alternative quotation
 tier exists), so trusting an LLM to count them produces wrong numbers.
+
+Font: every run declares "Be Vietnam Pro" (FONT below). python-pptx has no API
+to embed a font into the .pptx itself — the TTFs at assets/fonts/*.ttf are kept
+for reference/installation, not embedded. If the viewing machine doesn't have
+Be Vietnam Pro installed, PowerPoint substitutes and every line-break this
+module computes via _est_h shifts. Install the four weights on any machine that
+will present or edit the deck, or export to PDF before sending externally.
 """
 
 from __future__ import annotations
@@ -61,32 +72,25 @@ _STATIC_INTRO = [
 # Canonical order for dynamic content slides + which section/eyebrow they belong to.
 # One slide per type is kept (first occurrence) — extraction is told to skip any
 # type it has no source content for, so a shorter proposal just omits that slide
-# rather than fabricating one. All 7 sections of the original proposal document
-# are represented here (Executive Summary and Next Steps were missing from the
-# sample's own 5-section agenda — added as Section 2 and Section 7 so no part of
-# the source proposal goes unexploited).
+# rather than fabricating one.
 _CONTENT_ORDER = [
-    ("executive_summary", 2, "EXECUTIVE SUMMARY", "Executive summary"),
-    ("client_requirements", 3, "CLIENT REQUIREMENTS", "What the client needs"),
-    ("solution_package", 4, "SOLUTION", "Package and delivery items"),
-    ("user_journey", 4, "SOLUTION", "The user journey"),
-    ("solution_flowchart", 4, "SOLUTION", "Solution flow diagram"),
-    ("touchpoints_table", 4, "SOLUTION", "Automated touchpoints"),
-    ("compliance", 4, "SOLUTION", "Compliance and launch conditions"),
-    ("quotation", 5, "QUOTATION", "Quotation, recommended option"),
-    ("quotation_alternative", 5, "QUOTATION", "Alternative option"),
-    ("case_study", 6, "CASE STUDY", "Comparable campaigns we delivered"),
-    ("next_steps", 7, "NEXT STEPS", "Next steps and timeline"),
+    ("client_requirements", 2, "CLIENT REQUIREMENTS", "What the client needs"),
+    ("solution_package", 3, "SOLUTION", "Package and delivery items"),
+    ("user_journey", 3, "SOLUTION", "The user journey"),
+    ("solution_flowchart", 3, "SOLUTION", "Solution flow diagram"),
+    ("touchpoints_table", 3, "SOLUTION", "Automated touchpoints"),
+    ("compliance", 3, "SOLUTION", "Compliance and launch conditions"),
+    ("quotation", 4, "QUOTATION", "Quotation, recommended option"),
+    ("quotation_alternative", 4, "QUOTATION", "Alternative option"),
+    ("case_study", 5, "CASE STUDY", "Comparable campaigns we delivered"),
 ]
 
 _AGENDA_ITEMS = [
     (1, "About Zalo & Zalo Brand Hub", "Platform scale, the user lifecycle, our USP and why private traffic matters"),
-    (2, "Executive summary", "The headline ask, key numbers and why now"),
-    (3, "Client requirements", "Current state, core pain, desired outcome and the gap to close"),
-    (4, "Solution", "Package, user journey, solution flow, messaging and launch conditions"),
-    (5, "Quotation", "Grouped line items, totals and the alternative option"),
-    (6, "Case study", "Comparable campaigns Adtima has delivered"),
-    (7, "Next steps", "Implementation timeline, decisions and tech confirmation"),
+    (2, "Client requirements", "Current state, core pain, desired outcome and the gap to close"),
+    (3, "Solution", "Package, user journey, solution flow, messaging and launch conditions"),
+    (4, "Quotation", "Grouped line items, totals and the alternative option"),
+    (5, "Case study", "Comparable campaigns Adtima has delivered"),
 ]
 
 
@@ -156,7 +160,6 @@ class CorporatePPTXGenerator:
         total_pages = 2 + len(_STATIC_INTRO) + len(content_entries) + 1  # + closing
 
         dispatch = {
-            "executive_summary": self._render_executive_summary,
             "client_requirements": self._render_client_requirements,
             "solution_package": self._render_solution_package,
             "user_journey": self._render_user_journey,
@@ -166,7 +169,6 @@ class CorporatePPTXGenerator:
             "quotation": self._render_quotation,
             "quotation_alternative": self._render_quotation_alternative,
             "case_study": self._render_case_study,
-            "next_steps": self._render_next_steps,
         }
 
         # 1. Cover
@@ -225,24 +227,29 @@ class CorporatePPTXGenerator:
         return "".join(result)
 
     @staticmethod
-    def _est_lines(text: str, width_in: float, font_pt: float, bold: bool = False) -> int:
+    def _est_lines(text: str, width_in: float, font_pt: float) -> int:
         """Estimate wrapped line count — python-pptx text boxes don't reflow their
-        container, so callers must size boxes to real content height. Bold glyphs
-        run wider, so a bold label needs a smaller chars-per-line estimate or it
-        under-counts wraps and the next element crowds it (measured against
-        rendered PPTX, not just this formula)."""
+        container, so callers must size boxes to real content height.
+
+        WF (average character advance as a fraction of the em) = 0.58 for every
+        case, not a bold/regular split — this is the Be Vietnam Pro measurement
+        from agents/adtimabox-proposal-builder/SKILL.md sec. 6.2 (0.515 mixed-case
+        bold, 0.588 all-caps bold, measured from the actual font file, not
+        guessed): 0.58 clears the worst case with margin. The previous 0.52/0.60
+        split under-measured regular-weight text specifically — cross-checked by
+        running that skill's validate_deck.py against this module's own output,
+        which flagged real overflow (check 4) on boxes sized with 0.52."""
         if not text:
             return 0
-        avg_char_w_in = font_pt * (0.60 if bold else 0.52) / 72.0
+        avg_char_w_in = font_pt * 0.58 / 72.0
         chars_per_line = max(int(width_in / avg_char_w_in), 1)
         lines = 0
         for para in str(text).split("\n"):
             lines += max(1, math.ceil(len(para) / chars_per_line))
         return lines
 
-    def _est_h(self, text: str, width_in: float, font_pt: float, line_factor: float = 1.22,
-               bold: bool = False) -> float:
-        return self._est_lines(text, width_in, font_pt, bold) * font_pt * line_factor / 72.0
+    def _est_h(self, text: str, width_in: float, font_pt: float, line_factor: float = 1.22) -> float:
+        return self._est_lines(text, width_in, font_pt) * font_pt * line_factor / 72.0
 
     def _est_w(self, text: str, font_pt: float, bold: bool = True, pad_in: float = 0.36) -> float:
         """Estimate a pill/box width (inches) that fits `text` on one line —
@@ -291,16 +298,15 @@ class CorporatePPTXGenerator:
         gd.set("fmla", f"val {adj}")
 
     def _text(self, slide, left, top, width, height, text, size, color_hex,
-              bold=False, italic=False, align="LEFT", auto_fit=False, spc=None):
-        from pptx.util import Inches, Pt
+              bold=False, italic=False, align="LEFT", spc=None):
+        from pptx.util import Inches, Pt, Emu
         from pptx.enum.text import PP_ALIGN
         aligns = {"LEFT": PP_ALIGN.LEFT, "CENTER": PP_ALIGN.CENTER, "RIGHT": PP_ALIGN.RIGHT}
         tb = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
         tf = tb.text_frame
         tf.word_wrap = True
-        if auto_fit:
-            from pptx.enum.text import MSO_AUTO_SIZE
-            tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        tf.auto_size = None
+        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = Emu(0)
         p = tf.paragraphs[0]
         p.alignment = aligns.get(align, PP_ALIGN.LEFT)
         run = p.add_run()
@@ -441,19 +447,17 @@ class CorporatePPTXGenerator:
                 return f"Slide {pages[0]:02d}"
             return f"Slides {pages[0]:02d} to {pages[-1]:02d}"
 
-        # Row height/fonts scale to however many sections exist (7 today) rather
-        # than a fixed row count, so the agenda never overflows the slide if a
-        # section is added later — sized to fill BODY_TOP..6.55" evenly, well
-        # clear of the page-number chrome drawn at a fixed y=6.70 in
-        # _chrome_agenda (a 7-row agenda measured at "end at 6.85" ran the last
-        # row's bottom border straight through that page number).
-        n_rows = max(len(_AGENDA_ITEMS), 1)
-        row_gap = 0.08
-        available_h = 6.55 - BODY_TOP
-        row_h = max((available_h - row_gap * (n_rows - 1)) / n_rows, 0.45)
-        badge_size = min(0.36, row_h - 0.20)
-        title_size = 12 if row_h >= 0.65 else 10.5
-        desc_size = 10 if row_h >= 0.65 else 9
+        # Fixed row pitch for the fixed 5-section agenda (0.70 + 0.10 gap = 0.80,
+        # matching agents/adtimabox-proposal-builder/SKILL.md's reference deck) —
+        # 5 rows end at BODY_TOP + 4.00 = 5.95", leaving room before the 6.55"
+        # content floor rather than stretching to fill it exactly. Font floor is
+        # 11pt everywhere (validate_pptx.py check 3) — badge number, description
+        # and slide-range text used to sit at 9-10pt, never actually tied to it.
+        row_h = 0.70
+        row_gap = 0.10
+        badge_size = 0.36
+        title_size = 12
+        desc_size = 11
 
         y = BODY_TOP
         for num, title, desc in _AGENDA_ITEMS:
@@ -462,11 +466,11 @@ class CorporatePPTXGenerator:
             self._rect(slide, PAD_X, y, 0.05, row_h, fill_hex=_C["blue"])
             badge_y = y + (row_h - badge_size) / 2
             self._rect(slide, PAD_X + 0.26, badge_y, badge_size, badge_size, fill_hex=_C["blue"], corner_adj=50000)
-            self._text(slide, PAD_X + 0.26, badge_y, badge_size, badge_size, f"{num:02d}", 9.5,
+            self._text(slide, PAD_X + 0.26, badge_y, badge_size, badge_size, f"{num:02d}", 11,
                        _C["white"], bold=True, align="CENTER")
             self._text(slide, PAD_X + 0.80, y + (row_h - 0.28) / 2, 2.90, 0.28, title,
                        title_size, _C["ink"], bold=True)
-            self._text(slide, PAD_X + 3.80, y + (row_h - 0.42) / 2, 5.35, 0.42, desc,
+            self._text(slide, PAD_X + 3.80, y + (row_h - 0.48) / 2, 5.35, 0.48, desc,
                        desc_size, _C["gray"])
             self._text(slide, SLIDE_W - PAD_X - 1.85, y + (row_h - 0.27) / 2, 1.85, 0.27,
                        _range_text(pages), desc_size, _C["gray"], align="RIGHT")
@@ -507,92 +511,6 @@ class CorporatePPTXGenerator:
                    "Confidential, for discussion between the two parties only.", 11,
                    _C["footnote"])
 
-    # ── Executive summary (Section 1 of the source proposal) ────────────
-
-    def _render_executive_summary(self, slide, sd: dict):
-        headline = sd.get("headline", "")
-        summary = sd.get("summary", "")
-        metrics = (sd.get("metrics") or [])[:4]
-
-        y = BODY_TOP
-        if headline:
-            h = self._est_h(headline, CONTENT_W, 16, bold=True) + 0.10
-            self._text(slide, PAD_X, y, CONTENT_W, h, headline, 16, _C["blue"], bold=True)
-            y += h + 0.16
-        if summary:
-            h = self._est_h(summary, CONTENT_W, 12) + 0.10
-            self._text(slide, PAD_X, y, CONTENT_W, h, summary, 12, _C["ink"])
-            y += h + 0.34
-
-        if metrics:
-            n = len(metrics)
-            gap = 0.24
-            card_w = (CONTENT_W - gap * (n - 1)) / n
-            card_h = min(SLIDE_H - y - 0.85, 1.70)
-            accents = [_C["blue"], _C["cyan"], _C["red"], _C["blue"]]
-            value_h, label_gap, label_h = 0.55, 0.58, 0.45
-            top_pad = max((card_h - (label_gap + label_h)) / 2, 0.10)
-            for i, m in enumerate(metrics):
-                x = PAD_X + i * (card_w + gap)
-                self._card(slide, x, y, card_w, card_h, accents[i % len(accents)])
-                self._text(slide, x + 0.14, y + top_pad, card_w - 0.28, value_h,
-                           m.get("value", ""), 26, _C["ink"], bold=True, align="CENTER",
-                           auto_fit=True)
-                self._text(slide, x + 0.14, y + top_pad + label_gap, card_w - 0.28, label_h,
-                           m.get("label", ""), 10, _C["gray"], align="CENTER")
-
-    # ── Next steps (Section 7 of the source proposal — timeline + decisions) ──
-
-    def _render_next_steps(self, slide, sd: dict):
-        weeks = (sd.get("weeks") or [])[:4]
-        decisions = (sd.get("decisions") or [])[:4]
-        tech_items = (sd.get("tech_items") or [])[:4]
-
-        y = BODY_TOP
-        top_h = 2.20
-        if weeks:
-            self._card(slide, PAD_X, y, CONTENT_W, top_h, _C["blue"])
-            self._text(slide, PAD_X + 0.26, y + 0.20, CONTENT_W - 0.52, 0.27,
-                       "IMPLEMENTATION TIMELINE", 11, _C["gray"], bold=True)
-            avail = top_h - 0.55
-            row_h = avail / len(weeks)
-            wy = y + 0.52
-            for w in weeks:
-                items_text = " · ".join(w.get("items") or [])
-                label_line = f"{w.get('label', '')} — {items_text}" if items_text else w.get("label", "")
-                self._text(slide, PAD_X + 0.26, wy, 1.35, row_h - 0.06, w.get("week", ""),
-                           10, _C["blue"], bold=True)
-                self._text(slide, PAD_X + 1.70, wy, CONTENT_W - 1.96, row_h - 0.06,
-                           label_line, 10, _C["ink"])
-                wy += row_h
-            y += top_h + 0.18
-        else:
-            y += 0.0
-
-        col_h = SLIDE_H - y - 0.85
-        col_w = (CONTENT_W - 0.28) / 2
-
-        def _col(x, label, items, accent):
-            self._card(slide, x, y, col_w, col_h, accent)
-            self._text(slide, x + 0.24, y + 0.20, col_w - 0.48, 0.27, label, 11,
-                       _C["gray"], bold=True)
-            avail = col_h - 0.55
-            kept, heights, more = self._fit_list_height(items, col_w - 0.44, 10, avail, min_item_h=0.32)
-            cy = y + 0.52
-            for it, h in zip(kept, heights):
-                text = it.get("text", "") if isinstance(it, dict) else it
-                self._rect(slide, x + 0.26, cy + 0.06, 0.075, 0.075, fill_hex=accent, corner_adj=50000)
-                self._text(slide, x + 0.46, cy, col_w - 0.72, h, text, 10, _C["ink"])
-                cy += h
-            if more:
-                self._text(slide, x + 0.26, cy, col_w - 0.5, 0.20, f"+{more} more...", 9,
-                           _C["gray"], italic=True)
-
-        if decisions:
-            _col(PAD_X, "KEY DECISIONS REQUIRED", decisions, _C["blue"])
-        if tech_items:
-            _col(PAD_X + col_w + 0.28, "TECH CONFIRMATION REQUIRED", tech_items, _C["cyan"])
-
     # ── Client requirements (2x2 grid) ───────────────────────────────────
 
     def _render_client_requirements(self, slide, sd: dict):
@@ -628,45 +546,47 @@ class CorporatePPTXGenerator:
         self._text(slide, PAD_X + 0.26, BODY_TOP + 0.24, left_w - 0.52, 0.27,
                    "CAMPAIGN INSTANT ADD-ONS", 11, _C["gray"], bold=True, spc=60)
         avail = left_h - 0.60
-        kept, heights, more = self._fit_list_height(addons, left_w - 0.90, 10.5, avail, min_item_h=0.34)
+        kept, heights, more = self._fit_list_height(addons, left_w - 0.75, 11, avail, min_item_h=0.34)
         y = BODY_TOP + 0.56
         for item, h in zip(kept, heights):
             self._rect(slide, PAD_X + 0.28, y + 0.06, 0.075, 0.075, fill_hex=_C["blue"], corner_adj=50000)
-            self._text(slide, PAD_X + 0.48, y, left_w - 0.75, h, item, 10.5, _C["ink"])
+            self._text(slide, PAD_X + 0.48, y, left_w - 0.75, h, item, 11, _C["ink"])
             y += h
         if more:
-            self._text(slide, PAD_X + 0.28, y, left_w - 0.55, 0.22, f"+{more} more...", 9,
+            self._text(slide, PAD_X + 0.28, y, left_w - 0.55, 0.27, f"+{more} more...", 11,
                        _C["gray"], italic=True)
 
         rx = PAD_X + left_w + 0.28
         right_w = CONTENT_W - left_w - 0.28
 
-        pkg_h = 1.50
+        tier_note = package.get("tier_note", "")
+        tier_note_h = self._est_h(tier_note, right_w - 0.52, 11) + 0.06
+        pkg_h = 0.95 + max(tier_note_h, 0.55) + 0.10
         self._card(slide, rx, BODY_TOP, right_w, pkg_h, _C["blue"])
         self._text(slide, rx + 0.26, BODY_TOP + 0.24, right_w - 0.52, 0.27, "PACKAGE", 11,
                    _C["gray"], bold=True, spc=60)
         self._text(slide, rx + 0.26, BODY_TOP + 0.55, right_w - 0.52, 0.38,
                    package.get("name", ""), 16, _C["ink"], bold=True)
-        self._text(slide, rx + 0.26, BODY_TOP + 0.95, right_w - 0.52, 0.55,
-                   package.get("tier_note", ""), 10, _C["gray"])
+        self._text(slide, rx + 0.26, BODY_TOP + 0.95, right_w - 0.52, tier_note_h,
+                   tier_note, 11, _C["gray"])
 
         tech_y = BODY_TOP + pkg_h + 0.18
         tech_h = left_h - pkg_h - 0.18
         self._card(slide, rx, tech_y, right_w, tech_h, _C["cyan"])
-        label_h = self._est_h("CUSTOM ITEMS REQUIRING TECH CONFIRMATION", right_w - 0.52, 11, bold=True) + 0.06
+        label_h = self._est_h("CUSTOM ITEMS REQUIRING TECH CONFIRMATION", right_w - 0.52, 11) + 0.06
         self._text(slide, rx + 0.26, tech_y + 0.24, right_w - 0.52, label_h,
                    "CUSTOM ITEMS REQUIRING TECH CONFIRMATION", 11, _C["gray"], bold=True, spc=60)
         list_start = tech_y + 0.30 + label_h
         t_avail = tech_h - (list_start - tech_y) - 0.10
         t_kept, t_heights, t_more = self._fit_list_height(
-            tech_items, right_w - 0.55, 10, t_avail, min_item_h=0.34)
+            tech_items, right_w - 0.75, 11, t_avail, min_item_h=0.34)
         ty = list_start
         for item, h in zip(t_kept, t_heights):
             self._rect(slide, rx + 0.28, ty + 0.06, 0.075, 0.075, fill_hex=_C["cyan"], corner_adj=50000)
-            self._text(slide, rx + 0.48, ty, right_w - 0.75, h, item, 10, _C["ink"])
+            self._text(slide, rx + 0.48, ty, right_w - 0.75, h, item, 11, _C["ink"])
             ty += h
         if t_more:
-            self._text(slide, rx + 0.28, ty, right_w - 0.55, 0.22, f"+{t_more} more...", 9,
+            self._text(slide, rx + 0.28, ty, right_w - 0.55, 0.27, f"+{t_more} more...", 11,
                        _C["gray"], italic=True)
 
     # ── Solution: user journey (icon-flow) ───────────────────────────────
@@ -686,7 +606,7 @@ class CorporatePPTXGenerator:
             role = st.get("role", "consumer")
             rc = role_colors.get(role, _C["blue"])
             self._card(slide, x, y, card_w, card_h, rc, accent_h=0.06)
-            self._text(slide, x + 0.18, y + 0.22, card_w - 0.36, 0.27, role.upper(), 9,
+            self._text(slide, x + 0.18, y + 0.22, card_w - 0.36, 0.27, role.upper(), 11,
                        _C["gray"], bold=True)
             badge_y = y + 0.62
             self._rect(slide, x + 0.18, badge_y, 0.40, 0.40, fill_hex=rc, corner_adj=50000)
@@ -695,7 +615,7 @@ class CorporatePPTXGenerator:
             self._text(slide, x + 0.18, y + 1.18, card_w - 0.36, 0.28, st.get("label", ""),
                        11, _C["ink"], bold=True)
             self._text(slide, x + 0.18, y + 1.52, card_w - 0.36, 0.63, st.get("desc", ""),
-                       9.5, _C["gray"])
+                       11, _C["gray"])
 
             if i < n - 1:
                 arr_x = x + card_w + 0.03
@@ -708,7 +628,7 @@ class CorporatePPTXGenerator:
             self._card(slide, PAD_X, fy, CONTENT_W, fh, _C["blue"])
             self._text(slide, PAD_X + 0.30, fy + 0.18, CONTENT_W - 0.60, 0.27, "JOURNEY", 11,
                        _C["gray"], bold=True)
-            self._text(slide, PAD_X + 0.30, fy + 0.50, CONTENT_W - 0.60, fh - 0.55, footer, 10.5,
+            self._text(slide, PAD_X + 0.30, fy + 0.50, CONTENT_W - 0.60, fh - 0.55, footer, 11,
                        _C["ink"])
 
     # ── Solution: flowchart (new layout, no precedent) ───────────────────
@@ -742,7 +662,7 @@ class CorporatePPTXGenerator:
                 else:
                     self._card(slide, x, y, box_w, row_h, _C["blue"], accent_h=0.05)
                     self._text(slide, x + 0.18, y + 0.22, box_w - 0.36, row_h - 0.30,
-                               text, 10.5, _C["ink"])
+                               text, 11, _C["ink"])
                 if x + box_w < PAD_X + CONTENT_W - 0.05:
                     arr_x = x + box_w + 0.03
                     self._rect(slide, arr_x, y + row_h / 2 - 0.01, max(gap - 0.06, 0.05), 0.015,
@@ -751,7 +671,7 @@ class CorporatePPTXGenerator:
             y += row_h + row_gap
 
         if side_note:
-            self._text(slide, PAD_X, y, CONTENT_W, 0.27, side_note, 10, _C["gray"], italic=True)
+            self._text(slide, PAD_X, y, CONTENT_W, 0.27, side_note, 11, _C["gray"], italic=True)
 
     # ── Solution: touchpoints table ──────────────────────────────────────
 
@@ -761,7 +681,7 @@ class CorporatePPTXGenerator:
         if not rows:
             return
         headers = ["Timing", "Message content", "Message type", "Channel"]
-        col_w = [2.40, 4.60, 2.40, 2.53]
+        col_w = [w * CONTENT_W for w in (0.2064, 0.3955, 0.2064, 0.1917)]
         n_rows = len(rows) + 1
         row_h = 0.58
         from pptx.util import Inches
@@ -806,14 +726,15 @@ class CorporatePPTXGenerator:
             self._text(slide, x + 0.24, col_y + 0.22, col_w - 0.48, 0.27, label, 11,
                        _C["gray"], bold=True)
             avail = col_h - 0.55
-            kept, heights, more = self._fit_list_height(items, col_w - 0.44, 10, avail, min_item_h=0.34)
+            # Width must match the render width below (col_w - 0.72).
+            kept, heights, more = self._fit_list_height(items, col_w - 0.72, 11, avail, min_item_h=0.34)
             cy = col_y + 0.58
             for it, h in zip(kept, heights):
                 self._rect(slide, x + 0.26, cy + 0.06, 0.075, 0.075, fill_hex=_C["blue"], corner_adj=50000)
-                self._text(slide, x + 0.46, cy, col_w - 0.72, h, it, 10, _C["ink"])
+                self._text(slide, x + 0.46, cy, col_w - 0.72, h, it, 11, _C["ink"])
                 cy += h
             if more:
-                self._text(slide, x + 0.26, cy, col_w - 0.5, 0.20, f"+{more} more...", 9,
+                self._text(slide, x + 0.26, cy, col_w - 0.5, 0.27, f"+{more} more...", 11,
                            _C["gray"], italic=True)
 
         if conditions:
@@ -826,13 +747,15 @@ class CorporatePPTXGenerator:
             self._card(slide, PAD_X, cy, CONTENT_W, 1.00, _C["blue"])
             self._text(slide, PAD_X + 0.26, cy + 0.18, CONTENT_W - 0.52, 0.27,
                        "MANDATORY CONSENT TEXT", 11, _C["gray"], bold=True)
-            self._text(slide, PAD_X + 0.26, cy + 0.50, CONTENT_W - 0.52, 0.45, consent_text, 10.5,
+            self._text(slide, PAD_X + 0.26, cy + 0.50, CONTENT_W - 0.52, 0.45, consent_text, 11,
                        _C["ink"])
 
     # ── Quotation ─────────────────────────────────────────────────────────
 
     def _quotation_table_and_card(self, slide, sd: dict, when_to_choose: list | None = None):
         line_items = (sd.get("line_items") or [])[:6]
+        gross = sd.get("gross", "")
+        discount = sd.get("discount", "")
         subtotal = sd.get("subtotal", "")
         vat = sd.get("vat", "")
         total = sd.get("total", "")
@@ -851,18 +774,24 @@ class CorporatePPTXGenerator:
         rx = PAD_X + 7.00 + 0.28
         right_w = CONTENT_W - 7.00 - 0.28
 
-        breakdown = [("Subtotal excl. VAT", subtotal), ("VAT 8%", vat)]
+        breakdown = []
+        if gross:
+            breakdown.append(("Total platform cost", gross))
+        if discount:
+            breakdown.append(("Campaign discount", discount))
+        breakdown += [("Subtotal excl. VAT", subtotal), ("VAT 8%", vat)]
         card_h = 0.33 * len(breakdown) + 0.60
         self._card(slide, rx, BODY_TOP, right_w, card_h, _C["blue"])
         y = BODY_TOP + 0.24
+
         for label, val in breakdown:
-            self._text(slide, rx + 0.24, y, right_w * 0.55, 0.27, label, 10.5, _C["ink"])
-            self._text(slide, rx + right_w * 0.55, y, right_w * 0.42, 0.27, val, 10.5,
+            self._text(slide, rx + 0.24, y, right_w * 0.55 - 0.24, 0.27, label, 11, _C["ink"])
+            self._text(slide, rx + right_w * 0.55, y, right_w * 0.42, 0.27, val, 11,
                        _C["ink"], align="RIGHT")
             y += 0.33
         self._rect(slide, rx + 0.24, y + 0.04, right_w - 0.48, 0.32, fill_hex=_C["navy"], corner_adj=8000)
-        self._text(slide, rx + 0.30, y + 0.08, right_w * 0.5, 0.24, "TOTAL", 10.5, _C["white"], bold=True)
-        self._text(slide, rx + right_w * 0.50, y + 0.08, right_w * 0.44, 0.24, total, 10.5,
+        self._text(slide, rx + 0.30, y + 0.065, right_w * 0.5 - 0.30, 0.27, "TOTAL", 11, _C["white"], bold=True)
+        self._text(slide, rx + right_w * 0.50, y + 0.065, right_w * 0.44, 0.27, total, 11,
                    _C["white"], bold=True, align="RIGHT")
 
         notes_y = BODY_TOP + card_h + 0.18
@@ -871,27 +800,28 @@ class CorporatePPTXGenerator:
         if items:
             notes_h = SLIDE_H - notes_y - 0.85
             self._card(slide, rx, notes_y, right_w, notes_h, _C["cyan"])
-            self._text(slide, rx + 0.24, notes_y + 0.20, right_w - 0.48, 0.27, label, 10.5,
+            self._text(slide, rx + 0.24, notes_y + 0.20, right_w - 0.48, 0.27, label, 11,
                        _C["gray"], bold=True)
+            # Width must match the render width below (right_w - 0.70).
             kept, heights, more = self._fit_list_height(
-                items, right_w - 0.55, 9.5, notes_h - 0.55, min_item_h=0.30)
+                items, right_w - 0.70, 11, notes_h - 0.55, min_item_h=0.30)
             cy = notes_y + 0.52
             for it, h in zip(kept, heights):
                 self._rect(slide, rx + 0.26, cy + 0.06, 0.07, 0.07, fill_hex=_C["cyan"], corner_adj=50000)
-                self._text(slide, rx + 0.44, cy, right_w - 0.70, h, it, 9.5, _C["ink"])
+                self._text(slide, rx + 0.44, cy, right_w - 0.70, h, it, 11, _C["ink"])
                 cy += h
 
     def _render_quotation(self, slide, sd: dict):
         self._quotation_table_and_card(slide, sd)
         recon = sd.get("reconciliation_note", "")
         if recon:
-            self._text(slide, PAD_X, 5.36, 7.00, 0.60, recon, 10, _C["gray"])
+            self._text(slide, PAD_X, 5.36, 7.00, 0.60, recon, 11, _C["gray"])
 
     def _render_quotation_alternative(self, slide, sd: dict):
         self._quotation_table_and_card(slide, sd, when_to_choose=sd.get("when_to_choose") or [])
         desc = sd.get("description", "")
         if desc:
-            self._text(slide, PAD_X, 3.75, 7.00, 0.60, desc, 10.5, _C["gray"])
+            self._text(slide, PAD_X, 3.75, 7.00, 0.60, desc, 11, _C["gray"])
 
     # ── Case study ────────────────────────────────────────────────────────
 
@@ -917,7 +847,7 @@ class CorporatePPTXGenerator:
             badge_w = 0.90
             self._rect(slide, x + 0.26, BODY_TOP + 0.26, badge_w, 0.27, fill_hex=_C["blue"], corner_adj=100000)
             self._text(slide, x + 0.26, BODY_TOP + 0.26, badge_w, 0.27, case.get("alias", ""),
-                       10, _C["white"], bold=True, align="CENTER")
+                       11, _C["white"], bold=True, align="CENTER")
             self._text(slide, x + 0.26 + badge_w + 0.16, BODY_TOP + 0.22, card_w - badge_w - 0.60,
                        0.30, case.get("name", ""), 12, _C["ink"], bold=True)
 
@@ -926,11 +856,11 @@ class CorporatePPTXGenerator:
                 self._text(slide, x + 0.26, ry, card_w - 0.52, 0.27, label, 11, _C["blue"],
                            bold=True)
                 self._text(slide, x + 0.26, ry + 0.24, card_w - 0.52, 0.36, case.get(key, ""),
-                           10.5, _C["ink"])
+                           11, _C["ink"])
                 ry += 0.69
 
         if disclaimer:
-            self._text(slide, PAD_X, BODY_TOP + card_h + 0.18, CONTENT_W, 0.27, disclaimer, 10,
+            self._text(slide, PAD_X, BODY_TOP + card_h + 0.18, CONTENT_W, 0.27, disclaimer, 11,
                        _C["gray"], italic=True)
 
 
