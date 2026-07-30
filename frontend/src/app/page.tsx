@@ -46,7 +46,7 @@ export default function Home() {
     setCurrentUser(user);
     setSalespersonName(user.full_name || user.username);
     setIsBooting(true);
-    setTimeout(() => setIsBooting(false), 1850);
+    setTimeout(() => setIsBooting(false), 2500);
   };
 
   const handleLogout = useCallback(() => {

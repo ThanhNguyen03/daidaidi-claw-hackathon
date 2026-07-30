@@ -52,7 +52,7 @@ export function AuthModal({ onSuccess }: AuthModalProps) {
     <div className="auth-modal-overlay tf-stage">
       <span className="tf-orb tf-orb--1" />
       <span className="tf-orb tf-orb--2" />
-      <div className="auth-modal-card tf-card">
+      <div className="auth-modal-card tf-card overflow-hidden">
         {/* Header */}
         <div className="auth-modal-header">
           <div className="auth-modal-logo tf-mark">

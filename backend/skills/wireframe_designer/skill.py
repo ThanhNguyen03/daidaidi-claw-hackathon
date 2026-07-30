@@ -3,12 +3,18 @@ WireframeDesignerSkill
 ----------------------
 Auto-triggered after proposal_assembler completes.
 Generates:
-  1. AdtimaBox-branded HTML deck (self-contained, viewable in browser)
-  2. AdtimaBox-branded PPTX file (downloadable)
+  1. AdtimaBox-branded HTML deck (self-contained, viewable in browser) —
+     generation/html_deck.py, 14-type/7-section schema.
+  2. Adtima-corporate-branded PPTX file (downloadable) — generation/pptx_corporate.py,
+     an independent 5-section schema strictly following generation/sample-output.pptx.
+  These are extracted from the same proposal_content by two independent LLM calls
+  (different schemas) run concurrently, so one extraction failing does not sink
+  the other.
 
 Payload keys:
   html_content   — full HTML string
-  pptx_path      — absolute path to saved PPTX (or None on failure)
+  pptx_bytes     — PPTX file bytes, or None if extraction found none of the 5
+                    sections this template covers
   session_id     — for artifact naming
 """
 
@@ -112,9 +118,13 @@ class WireframeDesignerSkill(BaseSkill):
         sid = context.session_id or uuid.uuid4().hex[:10]
 
         from generation.html_deck import HTMLDeckGenerator
-        from generation.pptx_adtimabox import AdtimaBoxPPTXGenerator
+        from generation.pptx_corporate import CorporatePPTXGenerator
+        from generation.pptx_corporate_extract import extract_pptx_slides
 
-        # Extract slides ONCE — share result between HTML + PPTX to ensure consistency
+        # HTML and PPTX extraction are two independent schemas (different slide
+        # types, different section scheme — see PPTX_CORPORATE_SCHEMA.md) run
+        # concurrently against the same proposal_content, each with its own
+        # no-fabrication/skip-if-absent rules.
         extractor = HTMLDeckGenerator()
         # Extraction is told never to invent content and to skip any slide type its input
         # does not cover, so thin input does not produce a thin deck — it produces one
@@ -129,13 +139,22 @@ class WireframeDesignerSkill(BaseSkill):
                 "skipping extraction, reporting degraded"
             )
             slides_data = []
+            pptx_slides_data = []
         else:
-            try:
-                slides_data = await extractor._extract_slides_with_retry(proposal_content, brief_dict)
-            except Exception as e:
-                print(f"[WireframeDesigner] Slide extraction error: {e}")
+            results = await asyncio.gather(
+                extractor._extract_slides_with_retry(proposal_content, brief_dict),
+                extract_pptx_slides(proposal_content, brief_dict),
+                return_exceptions=True,
+            )
+            slides_data, pptx_slides_data = results
+            if isinstance(slides_data, BaseException):
+                print(f"[WireframeDesigner] HTML slide extraction error: {slides_data}")
                 slides_data = extractor._fallback_slides(brief_dict)
+            if isinstance(pptx_slides_data, BaseException):
+                print(f"[WireframeDesigner] PPTX slide extraction error: {pptx_slides_data}")
+                pptx_slides_data = []
         slides_data = extractor._ensure_required_slides(slides_data, brief_dict)
+        pptx_content_slides = [s for s in pptx_slides_data if s.get("type") not in ("cover", "closing")]
 
         # Extraction failing leaves only the scaffold: a cover and a closing slide and
         # nothing between them. That used to be handed over as if it were a finished
@@ -184,27 +203,31 @@ class WireframeDesignerSkill(BaseSkill):
             except Exception as e:
                 print(f"[WireframeDesigner] HTML render error: {e}")
 
-            # 2. PPTX — build only (no extra LLM call)
+            # 2. PPTX — build only (no extra LLM call). Skipped, not degraded, if
+            # extraction found none of the 5 sections this template covers.
             pptx_bytes: bytes | None = None
-            tmp_path = None
-            try:
-                pptx_gen = AdtimaBoxPPTXGenerator()
-                tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pptx")
-                os.close(tmp_fd)
-                prs = pptx_gen._build_pptx(slides_data)
-                prs.save(tmp_path)
-                with open(tmp_path, "rb") as f:
-                    pptx_bytes = f.read()
-            except Exception as e:
-                import traceback
-                print(f"[WireframeDesigner] PPTX build error: {e}")
-                traceback.print_exc()
-            finally:
+            if not pptx_content_slides:
+                print("[WireframeDesigner] PPTX extraction produced no content slides — skipping PPTX build")
+            else:
+                tmp_path = None
                 try:
-                    if tmp_path and os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-                except Exception:
-                    pass
+                    pptx_gen = CorporatePPTXGenerator()
+                    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pptx")
+                    os.close(tmp_fd)
+                    prs = pptx_gen._build_pptx(pptx_slides_data)
+                    prs.save(tmp_path)
+                    with open(tmp_path, "rb") as f:
+                        pptx_bytes = f.read()
+                except Exception as e:
+                    import traceback
+                    print(f"[WireframeDesigner] PPTX build error: {e}")
+                    traceback.print_exc()
+                finally:
+                    try:
+                        if tmp_path and os.path.exists(tmp_path):
+                            os.unlink(tmp_path)
+                    except Exception:
+                        pass
 
             return html_content, pptx_bytes
 
@@ -220,11 +243,22 @@ class WireframeDesignerSkill(BaseSkill):
         for i, s in enumerate(slides_data, 1):
             label = s.get("title") or s.get("brand") or s.get("type", "slide")
             titles.append(f"  {i}. [{s.get('type', '?')}] {str(label)[:70]}")
+        pptx_note = (
+            "The downloadable PPTX uses a different template/section scheme than this "
+            "HTML deck (client requirements, solution, quotation, case study only — no "
+            "executive summary or next-steps slides) and may have a different slide count; "
+            "do not describe the PPTX's contents as identical to the list below.\n"
+            if pptx_bytes else
+            "PPTX build was skipped this turn (no PPTX-template sections found) — only the "
+            "HTML deck is available; do not mention a downloadable PPTX.\n"
+        )
         manifest = (
-            f"DECK BUILT — {len(slides_data)} slides, available as an HTML deck and "
-            f"a downloadable PPTX via the buttons in the chat.\n"
-            "These are the actual slides. If you describe the deck, describe THESE "
-            "and nothing else — never invent a slide that is not on this list.\n"
+            f"DECK BUILT — {len(slides_data)} slides, available as an HTML deck"
+            + (" and a downloadable PPTX" if pptx_bytes else "")
+            + " via the buttons in the chat.\n"
+            + pptx_note +
+            "These are the actual HTML deck slides. If you describe the deck, describe "
+            "THESE and nothing else — never invent a slide that is not on this list.\n"
             + "\n".join(titles)
         )
 

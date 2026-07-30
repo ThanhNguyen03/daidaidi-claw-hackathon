@@ -563,7 +563,7 @@ def _esc(s: str) -> str:
 def _safe_icon(text: str) -> str:
     """Strip Unicode that causes invalid HTML or broken emoji rendering:
     lone surrogates (illegal in HTML5), variation selectors without base,
-    and C0 control chars. Mirrors _safe_text in pptx_adtimabox.py."""
+    and C0 control chars. Mirrors _safe_text in generation/pptx_corporate.py."""
     if not text:
         return ""
     result = []
