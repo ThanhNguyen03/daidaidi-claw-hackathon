@@ -267,6 +267,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     pendingQuestions: Question[];
     activeCheckpoint: Checkpoint | null;
     artifacts: Artifact[];
+    // Travels with the snapshot for the same reason artifacts does: it is per-conversation,
+    // and the pinned deliverables bar reads it.
+    proposalAssets: { deck_url?: string; pptx_url?: string } | null;
     isLoading: boolean;
     isThinking: boolean;
   };
@@ -290,6 +293,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       pendingQuestions,
       activeCheckpoint,
       artifacts,
+      proposalAssets,
       isLoading,
       isThinking,
     };
@@ -303,6 +307,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       setPendingQuestions(saved.pendingQuestions);
       setActiveCheckpoint(saved.activeCheckpoint);
       setArtifacts(saved.artifacts);
+      setProposalAssets(saved.proposalAssets);
       setIsLoading(saved.isLoading);
       setIsThinking(saved.isThinking);
     } else {
@@ -312,6 +317,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       setPendingQuestions([]);
       setActiveCheckpoint(null);
       setArtifacts([]);
+      setProposalAssets(null);
       setIsLoading(false);
       setIsThinking(false);
     }
@@ -364,6 +370,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     setPendingQuestions([]);
     setActiveCheckpoint(null);
     setArtifacts([]);
+    // Was missed here as well as in loadSession: a new conversation starting with the
+    // previous one's deck and PPTX offered on the pinned bar is a cross-client leak, not
+    // just stale UI.
+    setProposalAssets(null);
   }, [mode]);
 
   // Per-mode abort controllers so cancelling one mode's stream never kills another.
@@ -1259,6 +1269,12 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           ? proposalAssetsToArtifacts(data.proposal_assets, lastAssistantTimestamp)
           : []
       );
+      // Same reset-not-merge rule as the artifact list above, and for a sharper reason: this
+      // state drives the deliverables bar pinned above the composer, so leaving the previous
+      // conversation's value in place offers the rep another client's deck and PPTX on this
+      // one. Only the SSE handler used to set it, so a resumed session showed no bar at all
+      // while a session switch showed the wrong one.
+      setProposalAssets(data.proposal_assets ?? null);
       if (data.brief) setBrief(data.brief);
       setPendingQuestions([]);
       setActiveCheckpoint(null);

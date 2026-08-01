@@ -19,11 +19,12 @@ adding to any of them, reconcile rather than adding a fourth story:
 | `docs/workflow.jpg` | A 9-agent A1–A9 pipeline with an AE review step |
 | **the code** | 7 skills, listed below |
 
-The 7 skills registered in `backend/skills/registry.py`:
+The 8 skills registered in `backend/skills/registry.py`:
 
 ```
 market_strategy      product_solution     compliance      client_simulator
 design               proposal_assembler   wireframe_designer
+figma_wireframe      ← on-demand only, never planned
 ```
 
 `central_agent/` is the orchestrator — it is not a skill and is not in the registry.
@@ -127,6 +128,51 @@ The synthesizer's own non-assembled fallback answer (when there is no formal
 `proposal_assembler` output to stream) uses the same 7-section shape for consistency,
 even though it is a different code path and not read by the deck extractor.
 
+**Figma cannot be drawn into from a server, so the Figma feature is pull-based.** Figma
+exposes no REST API for creating nodes, and OAuth grants no Plugin-API access — drawing only
+happens from inside a running Figma session. So `POST /figma/wireframe` builds a spec and
+parks it under a short code (`backend/figma/jobs.py`), and the plugin in `figma-plugin/`
+pulls that code from inside the rep's own file. `GET /figma/job/{code}` is unauthenticated
+by necessity: the request comes from a plugin sandbox that carries none of this app's auth,
+so the code *is* the credential — 40 bits from `secrets`, 24-hour TTL, and it names nothing
+about the session it came from. Do not "improve" this into a connect-Figma-via-OAuth-and-draw
+flow; there is no capability to build it on.
+
+`figma_wireframe` is the one registered skill that may never appear in a plan. Hiding it
+from the planner's catalog is not enough — the planner invents skill names, and this one is
+an easy guess on any message mentioning a wireframe — so `_ON_DEMAND_ONLY` is also
+subtracted from `valid_skill_names` in `_plan`, which is the only place that decides what
+actually dispatches. It runs on-demand because it is a serialised LLM call
+(`LLM_MAX_CONCURRENCY=1`) that most proposal turns never need, and because the spec is
+built from the assembler's finished proposal either way.
+
+The spec is **unmasked on the way out** (`main.py:_unmask_spec`, walked per string rather
+than over the serialised JSON — a restored value containing a quote would break the
+document). The proposal in state is masked, so without this a rep showed a client a
+wireframe with `[CONTACT-1]` drawn into it.
+
+**The block vocabulary is one closed set of 25 kinds, written down in three places that
+cannot drift:** the table in `figma_wireframe_agent/SKILL.md` (what the model may emit),
+`_BLOCK_KINDS` in `skills/figma_wireframe/skill.py` (what survives validation), and the
+`buildBlock()` switch in `figma-plugin/code.js` (what gets drawn). Adding a kind means all
+three. A kind missing from the middle one is dropped silently; missing from the last draws as
+a grey "khối chưa hỗ trợ" box. The per-platform bans (`_ZNS_FORBIDDEN`, `_OA_FORBIDDEN`, and
+the matching filter in `drawZnsScreen`) are duplicated the same way and for the same reason —
+a ZNS is a fixed template with no navigation, no scrolling collection and no input, so a
+`tabbar` drawn into one misrepresents the platform.
+
+It started at 9 kinds and every screen came out as heading + list + button, because 9 generic
+kinds cannot express a real Mini App: no `hero` for the points/tier header, no `voucher`, no
+`qr` for the counter code, no `grid`. **The guidance was pushing the same way** — "aim for 3–6
+screens", "4–7 blocks", and a reference file whose closing line was "three honest screens beat
+six confident ones". That line was written against the risk of *inventing content* and it
+silently suppressed *structure* too. The distinction the knowledge base now turns on:
+**structure is inference, content is quotation.** Drawing the QR screen a redemption journey
+implies is not fabrication; putting an invented code on it is. Targets are 6–12 screens and
+5–9 blocks, and `skill.py` logs a `WARN thin journey` / `WARN flat output` line when the model
+falls back to the old shape — otherwise there is no way to tell from outside whether the
+vocabulary was used.
+
 **Compliance emits one machine-readable token, and everything reads the same one.**
 `compliance/skill.py` requires a `VERDICT: CLEAR|CONDITIONS|BLOCKED` line — exactly
 that word, alone on its line — and regex-extracts it into `payload["verdict"]`. This
@@ -144,6 +190,14 @@ should read as "not fully cleared."
 1. `backend/agents/<name>_agent/SKILL.md` — role, workflow, and a **Reference Skills
    List** table. The loader parses that table; a skill without one gets no knowledge.
    Fill the Purpose column with something real — the selector has nothing else to go on.
+   **The filename column must be a markdown link**: `knowledge/loader.py:_ROW_RE` matches
+   `| [file.md](reference/file.md) | Purpose |` and nothing else, so a row that names the file
+   in backticks or as bare text is not in the catalog. `parse_catalog` returning `[]` is a
+   documented, non-error state meaning "this agent has no retrievable knowledge", so a
+   mis-formatted table produces no warning anywhere — the skill just runs on its SKILL.md
+   alone. `figma_wireframe` shipped that way and nobody noticed until its three reference
+   files were checked against `parse_catalog` directly. Verify with
+   `parse_catalog(open(SKILL.md).read())` after writing the table, not by eye.
 2. `backend/agents/<name>_agent/reference/*.md`
 3. `backend/skills/<name>/skill.py`, subclassing `BaseSkill`
 4. Register in `backend/skills/registry.py`
@@ -468,6 +522,14 @@ supporting constants/prompt — all provably zero-caller before deletion.)
   so it answered a Vietnamese rep in English partway through their own session.
   `_casual_reply` now takes `state` and calls `_is_vietnamese(message, state)` like
   every other language decision in this file.
+- **`figma.createTextNode()` does not exist.** The Figma Plugin API method is
+  `figma.createText()`. The plugin was first written against a hand-rolled mock of the
+  Plugin API — which happily defined whatever the code called, so the mock passed 5/5
+  screens while the real API would have thrown on the first label. A mock cannot tell you a
+  method exists; only the typings can. `figma-plugin/code.js` guards genuinely
+  version-dependent calls (`createAutoLayout`, `createSection`, `resizeWithoutConstraints`)
+  behind `typeof … === 'function'`, and that pattern is easy to mistake for "all API access
+  here is checked" — it is not.
 - **A scope parameter that only one caller ever sets is not a filter, it's a
   constant.** `get_active_rules(scope)` in `database.py` does real filtering —
   `scope IN ('all', ?)` — but both call sites in the codebase (the planner and

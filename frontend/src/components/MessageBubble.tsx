@@ -12,6 +12,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { tryRenderAsciiChart, wrapAsciiBoxes } from './AsciiChartRenderer';
 import { ImageLightbox } from './ImageLightbox';
+import { ProposalActionsBar } from './ProposalActionsBar';
 
 // Render-invariant — a fresh array literal here forces ReactMarkdown to treat
 // the plugin list as changed on every render, which defeats its internal memo.
@@ -744,6 +745,8 @@ interface MessageBubbleProps {
   message: Message;
   isGrouped?: boolean;
   isStreaming?: boolean;
+  /** Needed by the Figma CTA, which asks the backend to build a spec for this conversation. */
+  sessionId?: string | null;
 }
 
 // ── Phone screen wireframe renderer ─────────────────────────────────────────
@@ -972,7 +975,7 @@ function preserveLineBreaks(content: string): string {
   return out.join('\n');
 }
 
-function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }: MessageBubbleProps) {
+function MessageBubbleInner({ message, isGrouped = false, isStreaming = false, sessionId = null }: MessageBubbleProps) {
   const [selectedImageSrc, setSelectedImageSrc] = useState<string | null>(null);
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
@@ -1295,69 +1298,15 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
           })}
         </div>
 
-        {/* Proposal deck assets — shown when wireframe_designer completed */}
-        {message.proposalAssets && (message.proposalAssets.deck_url || message.proposalAssets.pptx_url) && (
-          <div
-            style={{
-              marginTop: '16px',
-              padding: '14px 18px',
-              borderRadius: '10px',
-              border: '1.5px solid rgba(0,104,255,0.35)',
-              background: 'var(--color-surface)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-              flexWrap: 'wrap',
-            }}
-          >
-            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text)', flexShrink: 0 }}>
-              📊 Proposal Deck
-            </span>
-            {message.proposalAssets.deck_url && (
-              <a
-                href={`${typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') : ''}${message.proposalAssets.deck_url}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '7px 16px',
-                  borderRadius: '6px',
-                  background: '#0068ff',
-                  color: '#fff',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  textDecoration: 'none',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                🖥️ View Deck
-              </a>
-            )}
-            {message.proposalAssets.pptx_url && (
-              <a
-                href={`${typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') : ''}${message.proposalAssets.pptx_url}`}
-                download
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '7px 16px',
-                  borderRadius: '6px',
-                  background: 'transparent',
-                  border: '1.5px solid #0068ff',
-                  color: 'var(--color-accent)',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  textDecoration: 'none',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                ⬇️ Download PPTX
-              </a>
-            )}
-          </div>
+        {/* Proposal deck assets — shown when wireframe_designer completed. The pinned copy
+            above the composer (ChatWindow) is the one a rep actually finds; this one marks
+            which turn produced the files. */}
+        {message.proposalAssets && (
+          <ProposalActionsBar
+            assets={message.proposalAssets}
+            sessionId={sessionId}
+            variant="inline"
+          />
         )}
 
         {/* Timestamp */}
@@ -1374,6 +1323,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
         isOpen={!!selectedImageSrc}
         onClose={() => setSelectedImageSrc(null)}
       />
+
     </div>
   );
 }
@@ -1391,6 +1341,7 @@ export const MessageBubble = React.memo(
   (prev, next) =>
     prev.isGrouped === next.isGrouped &&
     prev.isStreaming === next.isStreaming &&
+    prev.sessionId === next.sessionId &&
     (prev.message === next.message ||
       (prev.message.content === next.message.content &&
         prev.message.role === next.message.role &&

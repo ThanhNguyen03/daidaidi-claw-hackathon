@@ -64,6 +64,7 @@ AGENT_DIRS: dict[str, list[str]] = {
     "client_simulator": ["client_simulator_agent"],
     "proposal_assembler": ["proposal_assembler_agent"],
     "wireframe_designer": ["wireframe_designer_agent"],
+    "figma_wireframe": ["figma_wireframe_agent"],
     "design": ["design"],
     "cs_agent": ["cs-agent"],
     "predict_agent": ["predict-agent"],

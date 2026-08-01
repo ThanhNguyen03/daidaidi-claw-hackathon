@@ -10,6 +10,7 @@ import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, Ar
 import { MessageBubble, AgentRichContent } from './MessageBubble';
 import { QuestionCard } from './QuestionCard';
 import { ThinkingTrace } from './ThinkingTrace';
+import { ProposalActionsBar } from './ProposalActionsBar';
 import type { Message, Question, Checkpoint, Brief, ChatMode, ThinkingStep } from '../lib/types';
 
 interface ChatWindowProps {
@@ -34,6 +35,10 @@ interface ChatWindowProps {
   onModeChange?: (mode: ChatMode) => void;
   onNewChat?: () => void;
   thinkingSteps?: ThinkingStep[];
+  /** Passed to MessageBubble for the Figma wireframe CTA on a finished proposal. */
+  sessionId?: string | null;
+  /** Session-level deck/PPTX links, for the pinned actions bar above the composer. */
+  proposalAssets?: { deck_url?: string; pptx_url?: string } | null;
 }
 
 // CS mode is hidden from the switcher (not removed — see Sidebar.tsx's MODES
@@ -527,6 +532,8 @@ export function ChatWindow({
   onModeChange,
   onNewChat,
   thinkingSteps = [],
+  sessionId = null,
+  proposalAssets = null,
 }: ChatWindowProps) {
   const [input, setInput] = useState('');
   const [showScrollButton, setShowScrollButton] = useState(false);
@@ -807,7 +814,7 @@ export function ChatWindow({
               {msg.role === 'assistant' && msg.thinkingSteps && msg.thinkingSteps.length > 0 && (
                 <ThinkingTrace steps={msg.thinkingSteps} isActive={false} />
               )}
-              <MessageBubble message={msg} isGrouped={!!isGrouped} isStreaming={isLastMsg && isLoading && msg.role === 'assistant'} />
+              <MessageBubble message={msg} isGrouped={!!isGrouped} isStreaming={isLastMsg && isLoading && msg.role === 'assistant'} sessionId={sessionId} />
             </React.Fragment>
           );
         })}
@@ -890,6 +897,12 @@ export function ChatWindow({
 
       {/* Input area - refined composer */}
       <div ref={composerRef} className="px-3 sm:px-4 md:px-6 py-2 sm:py-3 bg-bg border-t border-border pb-safe">
+        {/* Pinned deliverables. Session-level, not per-message: the inline copy lives at the
+            end of the assistant turn that built the deck, which on a full 7-section proposal
+            means scrolling the entire document to reach it. */}
+        {proposalAssets && (
+          <ProposalActionsBar assets={proposalAssets} sessionId={sessionId} variant="pinned" />
+        )}
         <div className="flex gap-2 items-center max-w-6xl mx-auto">
           <div className="w-full flex items-center justify-center relative">
             <textarea

@@ -6,6 +6,7 @@ Provides REST API and SSE streaming endpoints.
 """
 
 import asyncio
+import hashlib
 import os
 import json
 import uuid
@@ -30,6 +31,7 @@ load_dotenv()
 from schemas.state import (
     SalesCaseState,
     Brief,
+    AgentOutput,
 )
 
 # Import repositories
@@ -314,6 +316,7 @@ async def _purge_session_everywhere(session_id: str) -> None:
             state = None
 
     artifact_ids: list[str] = []
+    figma_codes: list[str] = []
     if state is not None:
         wf = (state.outputs or {}).get("wireframe_designer")
         payload = getattr(wf, "payload", None) if wf is not None else None
@@ -323,6 +326,12 @@ async def _purge_session_everywhere(session_id: str) -> None:
                 for k in ("deck_artifact_id", "pptx_artifact_id")
                 if payload.get(k)
             ]
+        # A parked wireframe spec carries the client's brand, prices and journey, so it is
+        # part of the conversation and goes with it.
+        fw = (state.outputs or {}).get("figma_wireframe")
+        fw_payload = getattr(fw, "payload", None) if fw is not None else None
+        if isinstance(fw_payload, dict) and fw_payload.get("job_code"):
+            figma_codes = [fw_payload["job_code"]]
 
     await asyncio.to_thread(db_delete_session, session_id)
 
@@ -347,6 +356,10 @@ async def _purge_session_everywhere(session_id: str) -> None:
                     os.remove(path)
             except OSError as e:
                 print(f"[main] could not remove artifact {path}: {e}")
+
+    if figma_codes:
+        from figma.jobs import purge_jobs
+        await asyncio.to_thread(purge_jobs, figma_codes)
 
 
 async def _reclaim_space() -> None:
@@ -2265,6 +2278,176 @@ async def download_artifact(artifact_id: str):
             "Content-Disposition": f'attachment; filename="{entry.get("filename", artifact_id)}"'
         },
     )
+
+
+# =============================================================================
+# Figma wireframe — on-demand, pull-based
+# =============================================================================
+#
+# Figma has no REST API for creating nodes, and OAuth grants no Plugin-API access, so a
+# server cannot draw into a rep's file however many scopes they grant. Drawing only happens
+# inside a running Figma session. Hence: the rep presses the button, this endpoint builds a
+# spec and parks it under a short code, and the AdtimaBox Figma plugin pulls that code from
+# inside their own file. Do not replace this with a "connect Figma via OAuth and draw
+# automatically" flow — the capability does not exist to build it on.
+
+
+class FigmaWireframeRequest(BaseModel):
+    session_id: str
+
+
+def _unmask_spec(masker, value: Any) -> Any:
+    """Restore real values through the spec tree before it leaves for the plugin.
+
+    The proposal in state is masked (pii/masking.py runs before anything reads a message), so
+    the spec the skill wrote off it carries aliases. Drawing "[CONTACT-1]" into a wireframe a
+    rep shows a client is worse than not drawing at all. Walked per-string rather than by
+    unmasking the serialised JSON: a restored value containing a quote or a backslash would
+    break the document if substituted into JSON text.
+    """
+    if isinstance(value, str):
+        return masker.unmask(value)
+    if isinstance(value, list):
+        return [_unmask_spec(masker, v) for v in value]
+    if isinstance(value, dict):
+        return {k: _unmask_spec(masker, v) for k, v in value.items()}
+    return value
+
+
+@app.post("/api/figma/wireframe")
+@app.post("/figma/wireframe")  # Nginx strips /api/ prefix
+async def create_figma_wireframe(
+    body: FigmaWireframeRequest, authorization: Optional[str] = Header(None)
+):
+    """Build a wireframe spec from this session's proposal and park it under a job code."""
+    payload = _get_current_user(authorization)
+    session_id = body.session_id
+
+    from database import db_get_session_owner
+
+    try:
+        owner_id = await asyncio.to_thread(db_get_session_owner, session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại")
+    if owner_id is not None and (not payload or owner_id != payload["user_id"]):
+        raise HTTPException(status_code=403, detail="Không có quyền truy cập hội thoại này")
+
+    state = _session_store.get(session_id)
+    if state is None:
+        try:
+            state = await get_memory_repo().load_session(session_id)
+        except Exception as e:
+            print(f"[figma] state load failed for {session_id}: {e}")
+            state = None
+    if state is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại")
+
+    from figma.jobs import create_job, load_job
+
+    assembler = (state.outputs or {}).get("proposal_assembler")
+    proposal = getattr(assembler, "content", "") if assembler is not None else ""
+    if not proposal:
+        raise HTTPException(
+            status_code=409,
+            detail="Chưa có proposal trong hội thoại này — tạo proposal trước khi vẽ wireframe.",
+        )
+
+    # Re-pressing the button must not spend another LLM call — but only while the proposal is
+    # the same one the spec was built from. A later turn can rebuild proposal_assembler
+    # (`desired_outputs` is sticky), and reusing the code across that would hand the rep a
+    # wireframe of the proposal they just replaced. Fingerprint, not a boolean.
+    proposal_fp = hashlib.sha256(proposal.encode("utf-8")).hexdigest()[:16]
+    existing = (state.outputs or {}).get("figma_wireframe")
+    existing_payload = getattr(existing, "payload", None) if existing is not None else None
+    if isinstance(existing_payload, dict) and existing_payload.get("proposal_fp") == proposal_fp:
+        code = existing_payload.get("job_code")
+        if code and await asyncio.to_thread(load_job, code):
+            return {
+                "job_code": code,
+                "screen_count": existing_payload.get("screen_count", 0),
+                "reused": True,
+            }
+
+    skill = get_skill_registry().get("figma_wireframe")
+    if skill is None:
+        raise HTTPException(status_code=503, detail="Skill figma_wireframe chưa được nạp")
+
+    from skills.base import SkillContext
+
+    context = SkillContext(
+        task=(
+            "Build the low-fidelity Figma wireframe spec for the user-facing screens and "
+            "messaging templates described in this proposal."
+        ),
+        brief=state.brief,
+        messages=[],
+        previous_outputs={"proposal_assembler": {"content": proposal}},
+        constraints=list(state.constraints or []),
+        session_id=session_id,
+    )
+
+    out = await skill.execute(context)
+    if out.status == "FAILED":
+        # The skill's summary already says which failure this was (no proposal detail, no
+        # drawable screens, model truncated) in Vietnamese — pass it through rather than
+        # flattening every cause into one message.
+        raise HTTPException(status_code=422, detail=out.summary)
+
+    spec = out.payload.get("spec") or {}
+    masker = get_masker(session_id)
+    if masker.has_aliases():
+        spec = _unmask_spec(masker, spec)
+
+    code = await asyncio.to_thread(create_job, spec)
+
+    # The superseded spec is now unreachable — nothing holds its code — so it would otherwise
+    # sit on disk until its TTL, carrying the client's brand and prices.
+    if isinstance(existing_payload, dict) and existing_payload.get("job_code"):
+        from figma.jobs import purge_jobs
+        await asyncio.to_thread(purge_jobs, [existing_payload["job_code"]])
+
+    state.outputs["figma_wireframe"] = AgentOutput(
+        agent="figma_wireframe",
+        status=out.status,
+        # The spec itself is deliberately not kept here: it is on disk under the job code,
+        # and SalesCaseState is re-serialised into sqlite on every later turn — the same
+        # shape of waste the deck's html_content used to cause.
+        payload={
+            "job_code": code,
+            "screen_count": out.payload.get("screen_count", 0),
+            "proposal_fp": proposal_fp,
+        },
+        summary=out.summary,
+        content=out.content,
+    )
+    update_session(state)
+    try:
+        await get_memory_repo().save_session(state)
+    except Exception as e:
+        print(f"[figma] state save failed for {session_id} (non-fatal): {e}")
+
+    return {
+        "job_code": code,
+        "screen_count": out.payload.get("screen_count", 0),
+        "reused": False,
+    }
+
+
+@app.get("/api/figma/job/{code}")
+@app.get("/figma/job/{code}")  # Nginx strips /api/ prefix
+async def get_figma_job(code: str):
+    """Serve a parked spec to the Figma plugin.
+
+    Unauthenticated by necessity — the request comes from a plugin sandbox inside Figma,
+    which carries none of this app's auth. The code is the credential: 40 bits from `secrets`,
+    valid for 24 hours, and it names nothing about the session it came from.
+    """
+    from figma.jobs import load_job
+
+    job = await asyncio.to_thread(load_job, code.upper())
+    if not job:
+        raise HTTPException(status_code=404, detail="Mã không hợp lệ hoặc đã hết hạn")
+    return job
 
 
 @app.get("/debug/agents")

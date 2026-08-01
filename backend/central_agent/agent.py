@@ -142,6 +142,12 @@ async def _run_skill(
 # And with LLM_MAX_CONCURRENCY=1 the pair was serialised by the semaphore anyway, so
 # "parallel" was never buying the latency it was justified by.
 _ALWAYS_SEQUENTIAL: set[str] = {"proposal_assembler", "wireframe_designer"}
+# Registered skills that may never appear in a plan group — the rep triggers them directly
+# from the UI, on a proposal that already exists. Hiding one from the planner's catalog is
+# not enough on its own: the planner invents skill names, and "figma_wireframe" is an easy
+# guess on any message mentioning a wireframe. So the name is also subtracted from the
+# validation set in _plan, which is the only place that decides what actually dispatches.
+_ON_DEMAND_ONLY: set[str] = {"figma_wireframe"}
 # The order they run in, one group each. Every code path that arranges the plan must
 # preserve this — the deck is rendered from the assembler's output.
 _SEQUENTIAL_ORDER: list[str] = ["proposal_assembler", "wireframe_designer"]
@@ -1555,7 +1561,7 @@ class CentralAgent:
 
         # Build a live skill catalog from the registry — no hardcoded skill names.
         # Exclude auto-triggered skills from the LLM's planning catalog.
-        _EXCLUDE_FROM_PLAN = {"wireframe_designer"}
+        _EXCLUDE_FROM_PLAN = {"wireframe_designer"} | _ON_DEMAND_ONLY
         registry = get_skill_registry()
         skill_catalog = "\n".join(
             f"  {name}: {desc}"
@@ -1674,7 +1680,7 @@ class CentralAgent:
 
         # Validate that all skill names in the plan exist in the registry.
         # Drop any hallucinated skill names silently.
-        valid_skill_names = set(registry.all_names())
+        valid_skill_names = set(registry.all_names()) - _ON_DEMAND_ONLY
         if result.get("skill_plan"):
             result["skill_plan"] = [
                 [s for s in group if s.get("skill") in valid_skill_names]

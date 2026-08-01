@@ -53,6 +53,7 @@ AGENT_SOURCE_PRIORITY = {
     "compliance": ["compliance_policy_agent"],
     "client_simulator": ["client_simulator_agent"],
     "wireframe_designer": ["wireframe_designer_agent"],
+    "figma_wireframe": ["figma_wireframe_agent"],
     "cs_agent": ["cs-agent"],
     "predict_agent": ["predict-agent"],
 }
