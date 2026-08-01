@@ -2352,11 +2352,17 @@ async def create_figma_wireframe(
             detail="Chưa có proposal trong hội thoại này — tạo proposal trước khi vẽ wireframe.",
         )
 
-    # Re-pressing the button must not spend another LLM call — but only while the proposal is
-    # the same one the spec was built from. A later turn can rebuild proposal_assembler
+    # Re-pressing the button must not spend another LLM call — but only while both the proposal
+    # and the generator are unchanged. A later turn can rebuild proposal_assembler
     # (`desired_outputs` is sticky), and reusing the code across that would hand the rep a
-    # wireframe of the proposal they just replaced. Fingerprint, not a boolean.
-    proposal_fp = hashlib.sha256(proposal.encode("utf-8")).hexdigest()[:16]
+    # wireframe of the proposal they just replaced. SPEC_VERSION covers the other half: a
+    # skill upgrade has to invalidate parked specs too, or every existing session keeps
+    # serving the spec its old vocabulary produced. Fingerprint, not a boolean.
+    from skills.figma_wireframe.skill import SPEC_VERSION
+
+    proposal_fp = hashlib.sha256(
+        f"v{SPEC_VERSION}:{proposal}".encode("utf-8")
+    ).hexdigest()[:16]
     existing = (state.outputs or {}).get("figma_wireframe")
     existing_payload = getattr(existing, "payload", None) if existing is not None else None
     if isinstance(existing_payload, dict) and existing_payload.get("proposal_fp") == proposal_fp:

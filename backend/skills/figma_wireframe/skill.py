@@ -28,6 +28,17 @@ from skills.base import BaseSkill, SkillContext, SkillOutput, extract_json_block
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SKILL_MD = os.path.join(_HERE, "..", "..", "agents", "figma_wireframe_agent", "SKILL.md")
 
+# Bump whenever the block vocabulary, the screen-count guidance or the reference knowledge
+# changes in a way that would produce a different spec from the same proposal.
+#
+# main.py fingerprints the proposal to avoid spending an LLM call when a rep presses the
+# button twice. Keyed on the proposal alone, that cache also survives an upgrade of this
+# skill: after the vocabulary went 9 kinds → 25, every existing session kept serving its
+# parked 9-kind spec, and because the cache short-circuits before the skill runs there was no
+# log line either — the deploy looked like it had done nothing. The version is part of the
+# fingerprint so a skill upgrade invalidates parked specs the same way an edited proposal does.
+SPEC_VERSION = 2
+
 # The renderer in figma-plugin/code.js knows exactly these 25 kinds. A kind outside this set
 # draws as a grey box labelled with the kind name — technically survivable, but it wastes a
 # screen region, so an unknown kind is dropped here instead of shipped to the plugin.
