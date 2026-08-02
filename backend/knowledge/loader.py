@@ -264,6 +264,52 @@ def _fallback_selection(catalog: list[ReferenceEntry], limit: int = 2) -> list[s
     return [e.filename for e in catalog[:limit]]
 
 
+# The task is about money. Deliberately broad: a false positive costs one extra
+# document in the prompt, a false negative costs a quotation invented from memory.
+#
+# The unaccented spellings are not padding — Vietnamese reps type without diacritics
+# constantly, and gate_fields.yaml already carries the same duplication for the same
+# reason ("ko biet" next to "không biết"). Only unambiguous multi-word forms are
+# listed: bare "gia", "goi" and "ty" also spell "gia đình", "gọi" and "tỷ lệ", and
+# matching those would drag the ratecard into every task in the system.
+_PRICING_TASK_RE = re.compile(
+    r"(giá|báo giá|bảng giá|chi phí|ngân sách|báo phí|"
+    r"bao gia|bang gia|chi phi|ngan sach|bao phi|"
+    r"ratecard|rate card|pricing|price|quotation|quote|budget|cost|"
+    r"gói|package|add-?on|vat|"
+    r"triệu|tỷ|tỉ|trieu|vnd|vnđ)",
+    re.IGNORECASE,
+)
+
+# A catalog entry that declares itself the price source. Matched against the
+# PURPOSE column of the agent's own Reference Skills List rather than a filename,
+# so this keeps working if the file is renamed or another agent gains a ratecard —
+# the catalog is already the declared source of truth for what a document is.
+_RATECARD_PURPOSE_RE = re.compile(r"(ratecard|rate card|bảng giá|price list)", re.IGNORECASE)
+
+# Cap on force-injected documents, so a catalog that describes several files as
+# pricing-related cannot swallow the whole character budget on its own.
+_MAX_MANDATORY = 2
+
+
+def _mandatory_refs(task: str, catalog: list[ReferenceEntry]) -> list[str]:
+    """References that must reach the prompt no matter what the selector chose.
+
+    The selector prompt already says "if pricing appears, the ratecard is required",
+    but that is an instruction to a model, and the rule this codebase runs on is that
+    instruction is not enforcement — the planner is told the same kind of thing and
+    ignores it often enough that the plan is post-checked in code. The ratecard is the
+    single document where being ignored is worst: the agent still writes a quotation,
+    it just writes one from memory, and a wrong price reaches a client looking exactly
+    as confident as a right one. So the requirement is enforced here instead.
+    """
+    if not task or not _PRICING_TASK_RE.search(task):
+        return []
+    return [
+        e.filename for e in catalog if e.purpose and _RATECARD_PURPOSE_RE.search(e.purpose)
+    ][:_MAX_MANDATORY]
+
+
 async def select(agent: str, task: str, catalog: list[ReferenceEntry]) -> list[str]:
     """Ask a cheap model which references this task needs.
 
@@ -272,6 +318,20 @@ async def select(agent: str, task: str, catalog: list[ReferenceEntry]) -> list[s
     """
     if not catalog:
         return []
+
+    # Applied to EVERY return path below, including the failure ones. A selector that
+    # errored or answered with garbage on a pricing task is exactly the case where the
+    # ratecard is most likely to be missing and most expensive to miss.
+    mandatory = _mandatory_refs(task, catalog)
+
+    def _with_mandatory(picked: list[str]) -> list[str]:
+        forced = [f for f in mandatory if f not in picked]
+        if forced:
+            print(f"[knowledge] {agent}: forced {forced} — pricing task, ratecard is mandatory")
+        # Prepended, not appended: the character budget drops from the end of the list,
+        # so the ratecard has to be at the front to survive a trim.
+        return forced + picked
+
     # Below this many references, choosing costs more than just taking them all: the
     # selector is itself a model call, and on a rate-limited tier the extra request is
     # more expensive than the extra tokens. Only fan out when there is a real choice.
@@ -308,26 +368,26 @@ async def select(agent: str, task: str, catalog: list[ReferenceEntry]) -> list[s
         raw = (response.choices[0].message.content or "").strip()
     except Exception as exc:
         print(f"[knowledge] {agent}: selector failed ({exc}) — falling back to primary refs")
-        return _fallback_selection(catalog)
+        return _with_mandatory(_fallback_selection(catalog))
 
     # Models like to wrap JSON in prose or fences; take the first array we find.
     match = re.search(r"\[[^\]]*\]", raw, re.DOTALL)
     if not match:
         print(f"[knowledge] {agent}: selector returned no JSON array — falling back")
-        return _fallback_selection(catalog)
+        return _with_mandatory(_fallback_selection(catalog))
 
     try:
         picked = json.loads(match.group(0))
     except json.JSONDecodeError:
         print(f"[knowledge] {agent}: selector JSON invalid — falling back")
-        return _fallback_selection(catalog)
+        return _with_mandatory(_fallback_selection(catalog))
 
     declared = {e.filename for e in catalog}
     valid = [os.path.basename(str(p)) for p in picked if os.path.basename(str(p)) in declared]
 
     if not valid:
         print(f"[knowledge] {agent}: selector picked nothing valid — falling back")
-        return _fallback_selection(catalog)
+        return _with_mandatory(_fallback_selection(catalog))
 
     print(f"[knowledge] {agent}: selected {valid}")
-    return valid
+    return _with_mandatory(valid)
