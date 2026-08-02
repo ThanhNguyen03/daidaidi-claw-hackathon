@@ -45,7 +45,7 @@ against and the compliance-gate behaviour, is in
 - Avoid: technical jargon without explanation, internal agent terminology
 
 ### Step 4 — Output Format
-Output a structured Markdown document. Do NOT generate HTML — the deck (HTML + PPTX) is produced separately by the wireframe_designer skill from this document.
+Output a structured Markdown document. Do NOT generate HTML — the downloadable PPTX is produced separately by the wireframe_designer skill from this document.
 
 ---
 

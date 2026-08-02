@@ -1,10 +1,18 @@
 /**
  * ProposalActionsBar Component
  * ============================
- * View Deck / Download PPTX / Vẽ Wireframe trên Figma, in one place.
+ * Download PPTX / Vẽ Wireframe trên Figma, in one place.
+ *
+ * There used to be a third button, "View Deck", pointing at a self-contained HTML deck
+ * built alongside the PPTX. That artifact was dropped — the PPTX is the whole
+ * deliverable now. Its absence is also why this component no longer early-returns on
+ * "no assets": the deck URL used to be a second chance at rendering the bar, and
+ * without it a turn whose PPTX build failed would have taken the Figma button down
+ * with it. `assets.has_proposal` (set by the backend off proposal_assembler, which is
+ * what POST /figma/wireframe actually needs) is what keeps Figma reachable on its own.
  *
  * Rendered twice per session, deliberately: once inline at the end of the assistant turn
- * that built the deck (`variant="inline"`), and once pinned above the composer
+ * that built the file (`variant="inline"`), and once pinned above the composer
  * (`variant="pinned"`). The inline copy alone sat at the bottom of a 7-section proposal —
  * finding it meant scrolling past the whole document, so in practice the deliverables the
  * turn produced were invisible. The pinned copy is driven by session-level state, so it
@@ -21,9 +29,10 @@
 
 import React, { useState } from 'react';
 import { FigmaWireframeModal } from './FigmaWireframeModal';
+import type { ProposalAssets } from '../lib/types';
 
 interface ProposalActionsBarProps {
-  assets: { deck_url?: string; pptx_url?: string };
+  assets: ProposalAssets;
   sessionId?: string | null;
   variant?: 'inline' | 'pinned';
 }
@@ -42,7 +51,7 @@ export function ProposalActionsBar({
 }: ProposalActionsBarProps) {
   const [figmaOpen, setFigmaOpen] = useState(false);
 
-  if (!assets.deck_url && !assets.pptx_url) return null;
+  if (!assets.pptx_url && !assets.has_proposal) return null;
 
   const pinned = variant === 'pinned';
 
@@ -94,36 +103,20 @@ export function ProposalActionsBar({
             flexShrink: 0,
           }}
         >
-          📊 Proposal Deck
+          📄 Proposal
         </span>
-
-        {assets.deck_url && (
-          <a
-            href={`${apiBase()}${assets.deck_url}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ ...base, background: '#0068ff', color: '#fff' }}
-          >
-            🖥️ View Deck
-          </a>
-        )}
 
         {assets.pptx_url && (
           <a
             href={`${apiBase()}${assets.pptx_url}`}
             download
-            style={{
-              ...base,
-              background: 'transparent',
-              border: '1.5px solid #0068ff',
-              color: 'var(--color-accent)',
-            }}
+            style={{ ...base, background: '#0068ff', color: '#fff' }}
           >
             {pinned ? '⬇️ PPTX' : '⬇️ Download PPTX'}
           </a>
         )}
 
-        {/* The wireframe spec is built on demand, not with the deck — most proposal turns
+        {/* The wireframe spec is built on demand, not with the PPTX — most proposal turns
             never ask for one, and it is a serialised LLM call (LLM_MAX_CONCURRENCY=1). */}
         <button
           onClick={() => setFigmaOpen(true)}

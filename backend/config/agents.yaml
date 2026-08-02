@@ -65,7 +65,7 @@ agents:
   wireframe_designer:
     name: "Wireframe Designer"
     model: MODEL_WIREFRAME_DESIGNER
-    role: "Generates AdtimaBox-branded HTML deck and PPTX from proposal — auto-triggered after proposal_assembler"
+    role: "Generates the Adtima-branded downloadable PPTX from the proposal — auto-triggered after proposal_assembler"
     enabled: true
     kind: generator
     critical: false

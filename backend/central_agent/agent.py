@@ -156,8 +156,13 @@ _AUTO_AFTER: dict[str, str] = {"proposal_assembler": "wireframe_designer"}
 # The deck group, injected on its own after proposal_assembler.
 _DECK_STEP: dict[str, str] = {
     "skill": "wireframe_designer",
-    "task": "Generate HTML deck + PPTX from the assembled proposal",
+    "task": "Generate the downloadable PPTX from the assembled proposal",
 }
+
+# Characters per SSE frame when replaying an already-finished proposal (see
+# _synthesize). Small enough that the frontend paints it progressively, large enough
+# that a 30KB proposal is ~75 frames rather than ~30,000.
+_PROPOSAL_STREAM_CHUNK = 400
 
 
 def _insert_deck_after_assembler(
@@ -616,13 +621,22 @@ def _build_solution_checkpoint(state, outputs):
         action=CheckpointAction(
             type="confirm_solution",
             description=(
-                "Đây là hướng giải pháp và phán quyết khả thi. Duyệt thì mình dựng "
-                "proposal đầy đủ; muốn đổi hướng thì nói, phần chiến lược và pháp lý "
-                "vẫn giữ nguyên."
+                "Toàn bộ phương án nằm ngay bên trên. Duyệt để mình dựng proposal đầy đủ "
+                "và file PPTX. Muốn đổi hướng thì bấm Đổi hướng rồi nói rõ cần sửa gì — "
+                "phần chiến lược và pháp lý vẫn giữ nguyên."
             ),
             parameters={},
-            preview=preview_data,
+            # Deliberately NOT preview_data. `action.preview` is what the card renders,
+            # and every word of it is already on screen: the turn streams the full
+            # analysis as "Tóm tắt đề xuất" immediately above this card, so putting
+            # truncated copies of strategy/solution/compliance in the card made the rep
+            # read the same three blocks twice, the second time cut off mid-sentence at
+            # 1000 characters. The card's job here is the decision, not the content.
+            preview=None,
         ),
+        # The server-side copy stays: the caller uses it to decide whether there is
+        # anything worth confirming at all (an empty card above three blank rows is
+        # worse than no card), and that check has to see the real text.
         preview=preview_data,
     )
 
@@ -1403,7 +1417,7 @@ class CentralAgent:
                         for k, v in all_outputs.items()
                     })
                     auto_ctx = SkillContext(
-                        task="Generate proposal deck assets (HTML deck + PPTX)",
+                        task="Generate the proposal file (downloadable PPTX)",
                         brief=state.brief,
                         messages=state.messages[-_RECENT_HISTORY_WINDOW:],
                         previous_outputs=merged_auto,
@@ -1461,7 +1475,7 @@ class CentralAgent:
                         for k, v in all_outputs.items()
                     })
                     deck_ctx = SkillContext(
-                        task="Generate proposal deck assets (HTML deck + PPTX)",
+                        task="Generate the proposal file (downloadable PPTX)",
                         brief=state.brief,
                         messages=state.messages[-_RECENT_HISTORY_WINDOW:],
                         previous_outputs=merged_deck,
@@ -1897,7 +1911,16 @@ class CentralAgent:
         if proposal_out and proposal_out.content:
             # proposal_assembler ran and produced content → stream it as the full response.
             content = _fix_gantt(proposal_out.content)
-            yield {"type": "content", "content": content}
+            # In chunks, not one frame. The whole 7-section proposal is already in hand
+            # here, so a single event was the obvious thing to send — but the browser
+            # then has to transform and markdown-parse tens of KB in one synchronous
+            # commit, which reads to the rep as the answer freezing and then snapping
+            # into place. Chunked, the frontend's per-frame token buffer reveals it
+            # progressively at the same total cost. The sleep(0) yields the event loop
+            # so the chunks actually leave as separate SSE frames.
+            for i in range(0, len(content), _PROPOSAL_STREAM_CHUNK):
+                yield {"type": "content", "content": content[i:i + _PROPOSAL_STREAM_CHUNK]}
+                await asyncio.sleep(0)
             state.messages.append({
                 "role": "assistant", "content": content,
                 "agent": "central_agent", "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -2020,8 +2043,8 @@ Format rules:
 - Use ## for section headers, ### for sub-sections
 - Be specific to this brief/brand — no generic filler
 - Do NOT mention "skill", "agent", "module", or internal pipeline names
-- This system produces a branded HTML deck and a downloadable PPTX. Never claim it
-  cannot generate files; the only honest limits are Word, Excel and email.
+- This system produces a branded, downloadable PPTX. Never claim it cannot generate
+  files; the only honest limits are Word, Excel and email.
 
 OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
 
@@ -2095,17 +2118,18 @@ Your job: respond ONLY to what they asked about in the Current Request.
 - Language: match the user's language (Vietnamese if they wrote in Vietnamese).
 - Do NOT mention "skill", "agent", "module", or internal pipeline names.
 
-NEVER INVENT SLIDE CONTENTS. If a deck was built, its real slide list is in the
-context under the deck output — describe those slides and no others. If it says DECK
-NOT BUILT, say the deck could not be built yet and to retry shortly; never list slides
-or offer a download for a file that does not exist.
+NEVER INVENT SLIDE CONTENTS. If the proposal file was built, its real slide list is in
+the context under that output — describe those slides and no others. If it says
+PROPOSAL FILE NOT BUILT, say the file could not be built yet and to retry shortly;
+never list slides or offer a download for a file that does not exist.
 
-YOU PRODUCE REAL FILES. This system generates an AdtimaBox-branded HTML deck and a
-downloadable PPTX, delivered as "View Deck" and "Download PPTX" buttons in the chat.
-Claiming "mình là AI chạy trên nền tảng chat nên không xuất được file" is FALSE and a
-rep may repeat it to a client. If asked to export or download in any wording, say you
-build it — and if it does not exist yet, say what triggers it:
-  "**Tiếp theo:** nói *làm proposal* là mình dựng bản đầy đủ kèm deck HTML và file PPTX."
+YOU PRODUCE A REAL FILE. This system generates an Adtima-branded PPTX proposal,
+delivered as a "Download PPTX" button in the chat. There is NO HTML deck and no "View
+Deck" link — never offer one. Claiming "mình là AI chạy trên nền tảng chat nên không
+xuất được file" is FALSE and a rep may repeat it to a client. If asked to export or
+download in any wording, say you build it — and if it does not exist yet, say what
+triggers it:
+  "**Tiếp theo:** nói *làm proposal* là mình dựng bản đầy đủ kèm file PPTX."
 The only honest limits: no Word (.docx), no Excel, no email.
 
 ALWAYS CLOSE WITH WHAT HAPPENS NEXT. Never end on an explanation and leave the rep
@@ -2113,7 +2137,7 @@ guessing whether it is their turn. Finish with a short `**Tiếp theo:**` line t
 either what you need from them to continue, or what you can produce next and how to
 ask for it. One or two sentences — concrete, not "let me know if you need anything".
   Good:  **Tiếp theo:** cho mình ngân sách dự kiến là mình ra được báo giá chi tiết.
-  Good:  **Tiếp theo:** nói "làm proposal" là mình dựng bản đầy đủ kèm deck PPTX.
+  Good:  **Tiếp theo:** nói "làm proposal" là mình dựng bản đầy đủ kèm file PPTX.
   Bad:   Hy vọng thông tin trên hữu ích cho bạn!
 
 OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
@@ -2138,9 +2162,9 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                     history_lines.append(f"Assistant: {content}")
             history_block = "\n\n".join(history_lines)
 
-            # "Deck có mấy slide?" usually arrives on a turn that runs no skills, so the
-            # only deck facts in the prompt would be whatever the transcript happens to
-            # mention — and the model filled the gap by inventing a table of contents.
+            # "File có mấy slide?" usually arrives on a turn that runs no skills, so the
+            # only facts about it in the prompt would be whatever the transcript happens
+            # to mention — and the model filled the gap by inventing a table of contents.
             # The manifest wireframe_designer wrote is on the session; put it back in.
             deck_block = ""
             if "wireframe_designer" not in skill_outputs:
@@ -2151,7 +2175,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                     else getattr(prior_deck, "content", "")
                 ) or ""
                 if prior_content:
-                    deck_block = f"\n\n## Deck Built Earlier This Session\n{prior_content}"
+                    deck_block = f"\n\n## Proposal File Built Earlier This Session\n{prior_content}"
 
             user_msg = (
                 f"## Conversation So Far\n{history_block}\n\n"

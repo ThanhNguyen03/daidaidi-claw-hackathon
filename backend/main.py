@@ -271,25 +271,39 @@ async def get_session_detail(session_id: str, authorization: Optional[str] = Hea
     if session["user_id"] and payload and session["user_id"] != payload["user_id"]:
         raise HTTPException(status_code=403, detail="Không có quyền truy cập")
 
-    # The deck/PPTX links only ever came down as a one-off SSE event on the turn
-    # that built them (main.py's chat_stream, "proposal_assets") — nothing wrote
-    # them into the transcript this endpoint reads (app.db). So opening a past
-    # conversation from the sidebar, without sending a new message, showed no way
-    # to re-download a deck that was very much still sitting in ARTIFACTS_DIR. The
-    # artifact ids live in the wireframe_designer payload, which is only in the
-    # *other* database (sales_assistant.db, via memory_repo) — so fetch that too.
+    # The PPTX link only ever came down as a one-off SSE event on the turn that
+    # built it (main.py's chat_stream, "proposal_assets") — nothing wrote it into
+    # the transcript this endpoint reads (app.db). So opening a past conversation
+    # from the sidebar, without sending a new message, showed no way to re-download
+    # a file that was very much still sitting in ARTIFACTS_DIR. The artifact id
+    # lives in the wireframe_designer payload, which is only in the *other* database
+    # (sales_assistant.db, via memory_repo) — so fetch that too.
+    #
+    # deck_artifact_id is deliberately not read: the HTML deck is no longer built or
+    # offered. A session from before that change still has the id and the file, and
+    # /artifact/{id} still serves it — it just is not advertised any more.
     try:
         state = await get_memory_repo().load_session(session_id)
-        wf = (state.outputs or {}).get("wireframe_designer") if state else None
+        outputs = (state.outputs or {}) if state else {}
+        wf = outputs.get("wireframe_designer")
         wp = wf.payload if wf is not None and isinstance(wf.payload, dict) else None
-        if wp:
-            assets: dict = {}
-            if _artifact_available(wp.get("deck_artifact_id")):
-                assets["deck_url"] = f"/artifact/{wp['deck_artifact_id']}"
-            if _artifact_available(wp.get("pptx_artifact_id")):
-                assets["pptx_url"] = f"/artifact/{wp['pptx_artifact_id']}"
-            if assets:
-                session["proposal_assets"] = assets
+        assets: dict = {}
+        if wp and _artifact_available(wp.get("pptx_artifact_id")):
+            assets["pptx_url"] = f"/artifact/{wp['pptx_artifact_id']}"
+        # Same reason as the live emit in chat_stream: the Figma button rides on this
+        # object, and it needs the assembler's proposal, not the PPTX. Outputs come back
+        # from memory_repo either as SkillOutput objects or as plain dicts depending on
+        # how the row was written, so read both shapes.
+        assembler = outputs.get("proposal_assembler")
+        assembler_content = (
+            assembler.get("content", "")
+            if isinstance(assembler, dict)
+            else getattr(assembler, "content", "")
+        ) if assembler is not None else ""
+        if assembler_content:
+            assets["has_proposal"] = True
+        if assets:
+            session["proposal_assets"] = assets
     except Exception as e:
         print(f"[main] proposal_assets lookup failed for {session_id} (non-fatal): {e}")
 
@@ -1215,57 +1229,24 @@ async def chat_stream(request: Request, payload: ChatRequest):
 
             # Checkpoint/approval flow disabled — diagrams are generated inline by skills
 
-            # Emit proposal assets (HTML deck + PPTX) if wireframe_designer ran
+            # Emit proposal assets (the downloadable PPTX) if wireframe_designer ran
+            assets: dict = {}
             wireframe_out = state.outputs.get("wireframe_designer")
             if wireframe_out and getattr(wireframe_out, "status", "") == "COMPLETE":
                 wp = wireframe_out.payload if isinstance(wireframe_out.payload, dict) else {}
-                assets: dict = {}
 
-                # Re-emit artifacts produced on an earlier turn. Without this, the
-                # buttons only ever appeared on the turn that built the deck — and
-                # since the PPTX bytes are dropped from state right after being stored
-                # (they break JSON persistence), a later "tải file" produced a deck
-                # link and no PPTX at all. Remembering the ids costs nothing.
-                if _artifact_available(wp.get("deck_artifact_id")):
-                    assets["deck_url"] = f"/artifact/{wp['deck_artifact_id']}"
+                # Re-emit an artifact produced on an earlier turn. Without this, the
+                # download button only ever appeared on the turn that built the file —
+                # the PPTX bytes are dropped from state right after being stored (they
+                # break JSON persistence), so a later "tải file" had nothing to offer.
+                # Remembering the id costs nothing.
+                #
+                # No deck_url any more: wireframe_designer builds only the PPTX. Old
+                # sessions may still carry a deck_artifact_id and the file may still be
+                # on disk — /artifact/{id} keeps serving it so shared links do not 404,
+                # but nothing offers it in the UI.
                 if _artifact_available(wp.get("pptx_artifact_id")):
                     assets["pptx_url"] = f"/artifact/{wp['pptx_artifact_id']}"
-
-                html_content = "" if assets.get("deck_url") else wp.get("html_content", "")
-                if html_content:
-                    deck_id = f"deck_{uuid.uuid4().hex[:10]}"
-                    # To disk, like the PPTX beside it. Held in memory the deck was
-                    # lost on every restart, and the copy left behind in the payload
-                    # was re-serialised into the state row on every subsequent turn —
-                    # a few hundred KB of HTML rewritten per message, for a string
-                    # nothing reads again.
-                    try:
-                        os.makedirs(ARTIFACTS_DIR, exist_ok=True)
-                        deck_path = os.path.join(ARTIFACTS_DIR, f"{deck_id}.html")
-                        with open(deck_path, "w", encoding="utf-8") as _f:
-                            _f.write(html_content)
-                        _artifact_store[deck_id] = {
-                            "storage": "file",
-                            "path": deck_path,
-                            "filename": "proposal_deck.html",
-                            "media_type": "text/html",
-                            "type": "deck",
-                            "title": "Proposal Deck (HTML)",
-                        }
-                        # Only safe to drop once the file is actually on disk.
-                        wp.pop("html_content", None)
-                    except Exception as _e:
-                        print(f"[main] deck disk save failed, using in-memory: {_e}")
-                        _artifact_store[deck_id] = {
-                            "storage": "memory",
-                            "content": html_content.encode("utf-8"),
-                            "filename": "proposal_deck.html",
-                            "media_type": "text/html",
-                            "type": "deck",
-                            "title": "Proposal Deck (HTML)",
-                        }
-                    wp["deck_artifact_id"] = deck_id
-                    assets["deck_url"] = f"/artifact/{deck_id}"
 
                 pptx_bytes = None if assets.get("pptx_url") else wp.get("pptx_bytes")
                 if pptx_bytes:
@@ -1298,15 +1279,24 @@ async def chat_stream(request: Request, payload: ChatRequest):
                     wp["pptx_artifact_id"] = pptx_id
                     assets["pptx_url"] = f"/artifact/{pptx_id}"
 
-                if assets:
-                    yield _sse_data({"type": "proposal_assets", **assets})
-
                 # The raw PPTX has been copied into the artifact store; drop it from
                 # session state. It is binary, and SalesCaseState is serialised to JSON
                 # on every save — leaving it there failed persistence outright with
                 # "invalid utf-8 sequence", so any session that produced a deck silently
                 # stopped being saved from that point on.
                 wp.pop("pptx_bytes", None)
+
+            # `has_proposal` is what keeps the Figma button reachable. The deliverables
+            # bar is the only place that button lives, and the bar only renders when this
+            # event has been seen — so while there were two artifacts, a failed PPTX still
+            # left a deck_url to carry the event. Now there is only one, and POST
+            # /figma/wireframe needs the assembler's proposal, not the PPTX. Emit on the
+            # assembler so a PPTX that could not be built never takes Figma down with it.
+            _assembler_out = state.outputs.get("proposal_assembler")
+            if _assembler_out and getattr(_assembler_out, "content", ""):
+                assets["has_proposal"] = True
+            if assets:
+                yield _sse_data({"type": "proposal_assets", **assets})
 
             # Save final state to in-memory store — unless the rep deleted this
             # conversation while the turn was running, in which case every write

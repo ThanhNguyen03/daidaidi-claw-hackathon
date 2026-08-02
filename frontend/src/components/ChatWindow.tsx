@@ -5,13 +5,42 @@
  * Uses Tailwind CSS for styling.
  */
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, MessageCircle, Plus, PanelRightOpen } from 'lucide-react';
 import { MessageBubble, AgentRichContent } from './MessageBubble';
 import { QuestionCard } from './QuestionCard';
 import { ThinkingTrace } from './ThinkingTrace';
 import { ProposalActionsBar } from './ProposalActionsBar';
-import type { Message, Question, Checkpoint, Brief, ChatMode, ThinkingStep } from '../lib/types';
+import type { Message, Question, Checkpoint, Brief, ChatMode, ThinkingStep, ProposalAssets } from '../lib/types';
+
+// This file is a client component, but Next.js still server-renders it for the initial
+// HTML, and React warns about useLayoutEffect during a server render. The pin below has
+// to run before paint (otherwise the new question is visibly drawn at the bottom and
+// then jumps), so take the layout effect in the browser and the no-op on the server.
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
+/** Index of the newest message the rep sent, or -1. Loop rather than map+lastIndexOf:
+ *  this runs on every render, and a streaming reply re-renders once per frame. */
+function findLastUserIndex(messages: Message[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return i;
+  }
+  return -1;
+}
+
+/** Distance from the top of the scroll container to `el`, in scroll coordinates.
+ *  Module scope, not a closure in the component: the layout effects below use it and
+ *  a per-render identity would have to go in their dep arrays. */
+function offsetWithin(c: HTMLElement, el: HTMLElement): number {
+  return el.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
+}
+
+// Asymmetric thresholds for "is the reader at the bottom". Leaving the bottom is easy —
+// any real scroll up hands control back to the reader. Re-engaging needs them to come
+// all the way down. With one 150px threshold, scrolling down through a streaming answer
+// crossed back into "at bottom" early and the auto-scroll yanked them to the end.
+const LEAVE_BOTTOM_PX = 220;
+const ENTER_BOTTOM_PX = 32;
 
 interface ChatWindowProps {
   messages: Message[];
@@ -37,8 +66,8 @@ interface ChatWindowProps {
   thinkingSteps?: ThinkingStep[];
   /** Passed to MessageBubble for the Figma wireframe CTA on a finished proposal. */
   sessionId?: string | null;
-  /** Session-level deck/PPTX links, for the pinned actions bar above the composer. */
-  proposalAssets?: { deck_url?: string; pptx_url?: string } | null;
+  /** Session-level PPTX link + has_proposal, for the pinned actions bar above the composer. */
+  proposalAssets?: ProposalAssets | null;
 }
 
 // CS mode is hidden from the switcher (not removed — see Sidebar.tsx's MODES
@@ -52,6 +81,19 @@ const HEADER_MODES: { id: ChatMode; label: string; icon: React.ReactNode }[] = [
 // a proposal request, which is why every first message used to build a full
 // pptx whether that's what they needed or not. `prompt` is what actually gets
 // sent; `description` is the friendlier one-line gloss shown next to it.
+//
+// A `prompt` STATES THE REP'S INTENT AND NOTHING ABOUT THE CLIENT. Two of these
+// used to open with "khách FMCG" (one also naming an on-pack QR mechanic), and
+// that is worse than it looks: industry and goal are the two fields
+// config/gate_fields.yaml marks `required`, so a starter that fills them in
+// satisfies gate.py and the whole pipeline runs — designing a journey, quoting
+// case studies, reading compliance — for a client that does not exist. The rep
+// never got asked what the real brief was, which is the one thing the gate is
+// there to guarantee. Asserting nothing is what makes the gate fire and hand the
+// rep pickable chips for the fields it needs.
+//
+// Naming a competitor in a roleplay starter is a different thing and is fine:
+// that is the scenario the rep is choosing to rehearse, not a fact about a client.
 const SALES_STARTERS = [
   {
     icon: '💰',
@@ -63,15 +105,19 @@ const SALES_STARTERS = [
     icon: '📖',
     label: 'Vẽ user flow',
     description: 'Thiết kế hành trình người dùng trên Zalo MiniApp theo brief của khách.',
-    prompt:
-      'Vẽ giúp mình user flow cho chương trình tích điểm trên Zalo Mini App — khách FMCG, cơ chế quét mã trên bao bì để tích điểm.',
+    // "Mình đang làm cho một khách" is load-bearing, not padding: the planner's
+    // deciding rule is that anything answerable without knowing a particular client
+    // is `lookup`, and lookup bypasses the gate entirely. A bare "vẽ user flow trên
+    // Mini App" reads as a generic how-does-it-work question and would be answered
+    // with an invented flow instead of a question about the real brief.
+    prompt: 'Mình đang làm cho một khách — vẽ giúp mình user flow cho chương trình của họ trên Zalo Mini App.',
   },
   {
     icon: '📊',
     label: 'Phân tích chiến lược',
     description: 'Tại sao khách cần loyalty? Insight ngành + đề xuất giải pháp tổng thể.',
     prompt:
-      'Khách FMCG muốn triển khai loyalty trên Zalo nhưng chưa rõ vì sao cần. Phân tích giúp mình insight ngành và định hướng giải pháp.',
+      'Khách đang cân nhắc triển khai loyalty trên Zalo nhưng chưa rõ vì sao cần. Phân tích giúp mình insight ngành và định hướng giải pháp.',
   },
   {
     icon: '🛡️',
@@ -338,6 +384,17 @@ function CheckpointCard({
     ? ['said', 'inferred', 'assumed'].flatMap((k) => briefGroups[k] ?? [])
     : [];
 
+  // The edit form is built entirely from `preview.groups`, which only Chốt 1's
+  // checkpoint has — Chốt 2's preview is three prose blocks (strategy / solution /
+  // compliance) with no fields in it. So on Chốt 2 the Edit button opened a panel
+  // whose only content was "Không có trường nào để sửa ở bước này", with a "Lưu &
+  // Xem lại" button that submitted an empty object. A control that can only fail is
+  // worse than no control; the way to change direction at Chốt 2 is to say so, which
+  // is what the reject path is for and what this card's own text already tells the
+  // rep to do.
+  const canEdit = editableFields.length > 0;
+  const isSolutionStage = checkpoint.action.type === 'confirm_solution';
+
   const [edits, setEdits] = useState<Record<string, string>>({});
 
   const startEditing = () => {
@@ -401,8 +458,8 @@ function CheckpointCard({
           <h3 className="font-semibold text-accent-text mb-2">
             {checkpoint.action.type === 'confirm_brief'
               ? 'Chốt 1 — Xác nhận cách hiểu brief'
-              : checkpoint.action.type === 'confirm_solution'
-                ? 'Chốt 2 — Duyệt hướng giải pháp'
+              : isSolutionStage
+                ? 'Xác nhận phương án'
                 : 'Action Requires Approval'}
           </h3>
           <p className="text-[12px] text-accent-text mb-3">{checkpoint.action.description}</p>
@@ -410,43 +467,43 @@ function CheckpointCard({
           {/* Preview */}
           {checkpoint.action.preview && !isEditing && <div className="mb-4">{formatPreview(checkpoint.action.preview)}</div>}
 
-          {/* Edit mode */}
+          {/* Edit mode. Reachable only when `canEdit`, so there is no empty-state
+              branch here any more — that branch was the "Không có trường nào để sửa"
+              dead end Chốt 2 used to land on. */}
           {isEditing && (
             <div className="mb-4 rounded-lg bg-surface p-3">
-              {editableFields.length > 0 ? (
-                <>
-                  <p className="mb-3 text-[12px] text-text-muted">
-                    Sửa dòng nào sai, để trống nghĩa là bỏ trường đó.
-                  </p>
-                  <div className="flex flex-col gap-2.5">
-                    {editableFields.map((f) => (
-                      <label key={f.field} className="flex flex-col gap-1">
-                        <span className="text-[11px] font-medium text-text-muted">{f.label}</span>
-                        <input
-                          type="text"
-                          value={edits[f.field] ?? ''}
-                          onChange={(e) =>
-                            setEdits((prev) => ({ ...prev, [f.field]: e.target.value }))
-                          }
-                          placeholder={
-                            f.field === 'budget_vnd'
-                              ? 'vd: 300 triệu, 200 - 500 triệu, 1.5 tỷ'
-                              : 'Để trống nếu chưa có'
-                          }
-                          className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[13px] text-text outline-hidden transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <p className="text-xs text-text-muted">Không có trường nào để sửa ở bước này.</p>
-              )}
+              <p className="mb-3 text-[12px] text-text-muted">
+                Sửa dòng nào sai, để trống nghĩa là bỏ trường đó.
+              </p>
+              <div className="flex flex-col gap-2.5">
+                {editableFields.map((f) => (
+                  <label key={f.field} className="flex flex-col gap-1">
+                    <span className="text-[11px] font-medium text-text-muted">{f.label}</span>
+                    <input
+                      type="text"
+                      value={edits[f.field] ?? ''}
+                      onChange={(e) =>
+                        setEdits((prev) => ({ ...prev, [f.field]: e.target.value }))
+                      }
+                      placeholder={
+                        f.field === 'budget_vnd'
+                          ? 'vd: 300 triệu, 200 - 500 triệu, 1.5 tỷ'
+                          : 'Để trống nếu chưa có'
+                      }
+                      className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[13px] text-text outline-hidden transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
+                    />
+                  </label>
+                ))}
+              </div>
             </div>
           )}
 
-          {/* Auto-approve checkbox */}
-          {checkpoint.action.type !== 'send_external' && !isEditing && (
+          {/* Auto-approve checkbox. Hidden on the solution stage: that stop is raised
+              at most once per session (`confirmed_stages`), so "tự động duyệt các lần
+              tiếp theo" describes a next time that never comes. NOTE: this control is
+              currently inert everywhere — `autoApprove` is never sent with the approve
+              request, so the backend's `auto_approve` always arrives false. */}
+          {checkpoint.action.type !== 'send_external' && !isSolutionStage && !isEditing && (
             <label className="flex items-center gap-2 mb-3 text-xs text-text-muted cursor-pointer hover:text-text transition-colors">
               <input
                 type="checkbox"
@@ -486,19 +543,27 @@ function CheckpointCard({
                       : 'bg-accent text-white hover:opacity-90'
                   }`}
                 >
-                  <Check size={16} /> Approve
+                  <Check size={16} /> Duyệt
                 </button>
-                <button
-                  onClick={startEditing}
-                  className="flex items-center gap-1 px-4 py-2 border border-border text-text-muted rounded-md text-[12px] hover:bg-surface-hover"
-                >
-                  <Edit size={16} /> Edit
-                </button>
+                {canEdit && (
+                  <button
+                    onClick={startEditing}
+                    className="flex items-center gap-1 px-4 py-2 border border-border text-text-muted rounded-md text-[12px] hover:bg-surface-hover"
+                  >
+                    <Edit size={16} /> Sửa
+                  </button>
+                )}
+                {/* Same handler either way — what differs is what the rep is being
+                    offered. At Chốt 1 rejecting means "cách hiểu này sai"; at Chốt 2 it
+                    means "đổi hướng giải pháp", which is the wording the card's own
+                    description already uses. Labelling both "Reject" left the only
+                    working way to change direction looking like a way to abandon the
+                    turn. */}
                 <button
                   onClick={onReject}
                   className="flex items-center gap-1 px-4 py-2 border border-border text-text-muted rounded-md text-[12px] hover:bg-surface-hover"
                 >
-                  <X size={16} /> Reject
+                  <X size={16} /> {isSolutionStage ? 'Đổi hướng' : 'Từ chối'}
                 </button>
               </>
             )}
@@ -557,6 +622,113 @@ export function ChatWindow({
     return () => ro.disconnect();
   }, []);
 
+  // --- Read-from-the-top turn anchoring ---------------------------------------
+  //
+  // This used to glue the viewport to the BOTTOM of the answer for the whole stream.
+  // On anything longer than a screen that means the rep watches the tail of a reply
+  // scroll past and then has to scroll back up hunting for where it started — and
+  // for where their own question was, which by then is several screens up. A BA
+  // testing it flagged exactly that: you cannot tell old answer from new, and no
+  // other AI chat behaves this way.
+  //
+  // What every one of them does instead, and what this does now: on send, pin the
+  // rep's new message to the TOP of the viewport and leave it there. The answer fills
+  // the space underneath, so reading is top-down and the question stays visible as
+  // the header of its own turn. Following the bottom becomes opt-in — scrolling down
+  // to the end (or pressing the scroll-to-bottom button) sets isAtBottomRef and the
+  // effect below resumes chasing, which is the "follow along" mode a rep can choose.
+  const turnAnchorRef = useRef<HTMLDivElement>(null);
+  const bottomSpacerRef = useRef<HTMLDivElement>(null);
+  // The user message that currently owns the viewport, held BY IDENTITY rather than by
+  // index. useChat appends one message object per send and never mutates it, so the
+  // reference is a stable per-turn key — where an index is not: "New Chat" after a
+  // one-question conversation gives the next question index 0 again, and an
+  // index-based guard would read that as the same turn and skip the pin.
+  const pinnedUserMsgRef = useRef<Message | null>(null);
+
+  /** Drop the reserved room under the newest turn. The spacer exists only so the
+   *  question can reach the top; the moment the rep asks to sit at the END of the
+   *  answer instead, that room is a screenful of blank they would be staring at. */
+  const collapseSpacer = useCallback(() => {
+    const spacer = bottomSpacerRef.current;
+    if (spacer && spacer.offsetHeight > 0) spacer.style.height = '0px';
+  }, []);
+
+  /** Re-derive follow-mode and the scroll-button from the container's current geometry.
+   *  Only refs and setState are captured, so this needs no effect dependency. */
+  const syncScrollState = useCallback(
+    (c: HTMLDivElement) => {
+      const distance = c.scrollHeight - c.scrollTop - c.clientHeight;
+      isAtBottomRef.current = isAtBottomRef.current
+        ? distance < LEAVE_BOTTOM_PX
+        : distance < ENTER_BOTTOM_PX;
+      setShowScrollButton(distance > LEAVE_BOTTOM_PX);
+      // Scrolling all the way down is the rep opting into follow mode, so give them the
+      // end of the text rather than the end of the padding. Collapsing shortens the
+      // page under them, scrollTop clamps, and the view lands on the last line — which
+      // is what "scroll to the bottom" was asking for.
+      if (isAtBottomRef.current) collapseSpacer();
+    },
+    [collapseSpacer]
+  );
+
+  useIsomorphicLayoutEffect(() => {
+    const idx = findLastUserIndex(messages);
+    // Only a message the rep just sent starts a turn — it is necessarily the last
+    // entry in the array. Restoring a past conversation from the sidebar also swaps
+    // the whole array, but there the last entry is an assistant message, and that
+    // view should open at the end of the transcript rather than at the last question.
+    const isFreshTurn =
+      idx !== -1 && idx === messages.length - 1 && messages[idx] !== pinnedUserMsgRef.current;
+    if (!isFreshTurn) return;
+    pinnedUserMsgRef.current = messages[idx];
+
+    const c = messagesContainerRef.current;
+    const anchor = turnAnchorRef.current;
+    const spacer = bottomSpacerRef.current;
+    if (!c || !anchor) return;
+
+    // The answer does not exist yet, so there is nothing below the question to scroll
+    // through — without room underneath it, the browser clamps and the question stops
+    // somewhere mid-screen. One viewport of spacer is always enough; it is measured
+    // back down when the turn finishes.
+    if (spacer) spacer.style.height = `${c.clientHeight}px`;
+
+    c.scrollTop = offsetWithin(c, anchor);
+    // We are deliberately not at the bottom now. Say so rather than waiting for the
+    // scroll event this write triggers, so no frame sees stale "following" state.
+    isAtBottomRef.current = false;
+    setShowScrollButton(true);
+  }, [messages]);
+
+  // Reclaim the spacer once the turn is done. Leaving a full viewport of blank space
+  // under every finished answer makes the transcript feel broken when scrolling back.
+  // Layout effects run before passive ones, so this settles the height before the
+  // follow-mode scroll below reads scrollHeight.
+  useIsomorphicLayoutEffect(() => {
+    if (isLoading) return;
+    const c = messagesContainerRef.current;
+    const spacer = bottomSpacerRef.current;
+    const anchor = turnAnchorRef.current;
+    if (!c || !spacer) return;
+
+    const current = spacer.offsetHeight;
+    if (current === 0) return;
+    const contentHeight = c.scrollHeight - current;
+    const anchorTop = anchor ? offsetWithin(c, anchor) : 0;
+    // Keep just enough for the question to still reach the top; usually the answer is
+    // taller than a viewport by now and this is 0.
+    spacer.style.height = `${Math.max(0, c.clientHeight - (contentHeight - anchorTop))}px`;
+
+    // Removing scrollable space does not fire a scroll event unless scrollTop happens
+    // to clamp, so without this a short answer left the scroll-to-bottom button
+    // floating over a page that has nothing below it any more.
+    syncScrollState(c);
+  }, [isLoading, syncScrollState]);
+
+  // Follow mode. Only runs when the rep has chosen to sit at the bottom — the pin
+  // above clears that flag at the start of every turn, so this is off by default.
+  //
   // Streaming rewrites the last message on every token, so this effect fires dozens
   // of times a second. `behavior: 'smooth'` starts a new animation on each of those
   // and each one cancels the last mid-flight — that is the jitter at the end of a
@@ -598,32 +770,44 @@ export function ChatWindow({
     wasLoading.current = isLoading;
   }, [isLoading]);
 
-  // Handle scroll to show/hide scroll button
+  // Handle scroll to show/hide scroll button.
+  //
+  // Throttled to one measurement per frame. The auto-scroll above writes `scrollTop`
+  // every frame while streaming, and each of those writes fires a `scroll` event —
+  // so this handler was reading three layout properties (a second forced synchronous
+  // layout of the whole message tree, on top of the one the writer already causes)
+  // and calling setShowScrollButton, every frame, on top of the token renders.
+  const scrollMeasureRaf = useRef<number | null>(null);
   const handleScroll = () => {
-    const container = messagesContainerRef.current;
-    if (!container) return;
-
-    const { scrollTop, scrollHeight, clientHeight } = container;
-    const distance = scrollHeight - scrollTop - clientHeight;
-
-    // Asymmetric thresholds. Leaving the bottom is easy — any real scroll up hands
-    // control back to the reader. Re-engaging needs them to come all the way down.
-    // With one 150px threshold, scrolling down through a streaming answer crossed
-    // back into "at bottom" early and the auto-scroll yanked them to the end.
-    isAtBottomRef.current = isAtBottomRef.current ? distance < 220 : distance < 32;
-    setShowScrollButton(distance > 220);
+    if (scrollMeasureRaf.current !== null) return;
+    scrollMeasureRaf.current = requestAnimationFrame(() => {
+      scrollMeasureRaf.current = null;
+      const container = messagesContainerRef.current;
+      if (container) syncScrollState(container);
+    });
   };
+
+  useEffect(
+    () => () => {
+      if (scrollMeasureRaf.current !== null) cancelAnimationFrame(scrollMeasureRaf.current);
+    },
+    []
+  );
 
   const scrollToBottom = () => {
     isAtBottomRef.current = true;
     setShowScrollButton(false);
+    // Before scrolling, not after: with the turn spacer still inflated the "bottom" is
+    // a screenful of blank space below the answer, and that is where this would land.
+    collapseSpacer();
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (input.trim() && !isLoading) {
-      isAtBottomRef.current = true;
+      // Deliberately does NOT set isAtBottomRef — the turn-anchoring effect pins the
+      // new question to the top of the viewport instead of following the answer down.
       onSendMessage(input);
       setInput('');
       if (textareaRef.current) {
@@ -634,6 +818,11 @@ export function ChatWindow({
       }
     }
   };
+
+  // Which message the turn anchor is attached to this render. Kept in sync with what
+  // the pinning effect looks for, so the ref points at the newest question.
+  const lastUserIndex = findLastUserIndex(messages);
+
   return (
     <div className="flex-1 flex flex-col h-full bg-bg overflow-hidden relative">
       {/* Header - compact */}
@@ -732,10 +921,18 @@ export function ChatWindow({
       {/* Messages area */}
       {/* overflow-anchor lets the browser hold the reader's position when content
           above them changes height — which is exactly what happens when a streamed
-          block finishes and re-renders into a diagram or a table. */}
+          block finishes and re-renders into a diagram or a table.
+
+          It is switched off for the one case where it is not help but interference:
+          while a reply streams AND the reader is parked at the bottom (no scroll
+          button), the effect above is already writing `scrollTop` every frame. Scroll
+          anchoring corrects `scrollTop` in the same frames, against a growing element,
+          and the two adjustments visibly fight — that is the residual judder that
+          survived making the write instant instead of smooth. A reader who has scrolled
+          up gets anchoring back immediately, which is when it actually matters. */}
       <div
         className="flex-1 overflow-y-auto min-h-0 relative"
-        style={{ overflowAnchor: 'auto' }}
+        style={{ overflowAnchor: isLoading && !showScrollButton ? 'none' : 'auto' }}
         ref={messagesContainerRef}
         onScroll={handleScroll}
       >
@@ -795,6 +992,11 @@ export function ChatWindow({
 
         {messages.map((msg, index) => {
           const prevMsg = index > 0 ? messages[index - 1] : null;
+          // Marker for the top of the current turn. Zero-height and rendered *before*
+          // the bubble rather than wrapped around it, so it costs no layout and the
+          // bubble's own top margin becomes the breathing room above the pinned
+          // question. Only the newest user message carries it.
+          const isTurnAnchor = index === lastUserIndex;
           // An action-summary message (checkpoint approval, question-card
           // answers) never groups with what's before or after it — a whole
           // approve/answer interaction happened in between, even though the
@@ -810,6 +1012,9 @@ export function ChatWindow({
           const isLastMsg = index === messages.length - 1;
           return (
             <React.Fragment key={index}>
+              {isTurnAnchor && (
+                <div ref={turnAnchorRef} style={{ height: 0, overflowAnchor: 'none' }} />
+              )}
               {/* Render attached thinking trace above each assistant message that has steps */}
               {msg.role === 'assistant' && msg.thinkingSteps && msg.thinkingSteps.length > 0 && (
                 <ThinkingTrace steps={msg.thinkingSteps} isActive={false} />
@@ -865,6 +1070,13 @@ export function ChatWindow({
           />
         )}
 
+        {/* Room below the newest turn so its question can actually sit at the top of
+            the viewport while the answer is still short. Sized in the pinning effect
+            and measured back down when the turn ends — see the comments there.
+            `height` is deliberately absent from this style object: those effects write
+            it directly, and listing it here would let a later render reset it to 0. */}
+        <div ref={bottomSpacerRef} style={{ overflowAnchor: 'none' }} aria-hidden />
+
         {/* The sentinel must opt out of scroll anchoring, or the browser picks this
             zero-height element at the very bottom as its anchor and cancels out the
             auto-scroll we do want while streaming. */}
@@ -898,7 +1110,7 @@ export function ChatWindow({
       {/* Input area - refined composer */}
       <div ref={composerRef} className="px-3 sm:px-4 md:px-6 py-2 sm:py-3 bg-bg border-t border-border pb-safe">
         {/* Pinned deliverables. Session-level, not per-message: the inline copy lives at the
-            end of the assistant turn that built the deck, which on a full 7-section proposal
+            end of the assistant turn that built the file, which on a full 7-section proposal
             means scrolling the entire document to reach it. */}
         {proposalAssets && (
           <ProposalActionsBar assets={proposalAssets} sessionId={sessionId} variant="pinned" />
