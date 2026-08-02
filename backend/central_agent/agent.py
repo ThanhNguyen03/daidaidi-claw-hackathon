@@ -482,8 +482,16 @@ def _build_brief_checkpoint(state, verdict):
     )
 
 
-def _build_solution_checkpoint(state, outputs):
-    """Chốt 2 card: the direction and feasibility verdict, before anything is rendered."""
+def _build_solution_checkpoint(state, outputs, summary_above: bool = True):
+    """Chốt 2 card: the direction and feasibility verdict, before anything is rendered.
+
+    `summary_above` says whether this turn is also streaming the analysis as prose just
+    before the card. It usually is — but not when the plan contained nothing except the
+    render group, which happens on the turn right after the rep approves Chốt 1: the
+    analysis already ran in earlier turns, so the planner goes straight to assembly and
+    this card is the only thing the turn emits. In that case the card has to carry the
+    content, or the rep is asked to approve a direction they cannot see.
+    """
     import uuid as _uuid
 
     from schemas.state import Checkpoint, CheckpointAction
@@ -621,18 +629,23 @@ def _build_solution_checkpoint(state, outputs):
         action=CheckpointAction(
             type="confirm_solution",
             description=(
-                "Toàn bộ phương án nằm ngay bên trên. Duyệt để mình dựng proposal đầy đủ "
-                "và file PPTX. Muốn đổi hướng thì bấm Đổi hướng rồi nói rõ cần sửa gì — "
-                "phần chiến lược và pháp lý vẫn giữ nguyên."
+                (
+                    "Toàn bộ phương án nằm ngay bên trên. "
+                    if summary_above
+                    else "Đây là hướng giải pháp mình đã chốt từ phần phân tích trước đó. "
+                )
+                + "Duyệt để mình dựng proposal đầy đủ và file PPTX. Muốn đổi hướng thì "
+                "bấm Đổi hướng rồi nói rõ cần sửa gì — phần chiến lược và pháp lý vẫn "
+                "giữ nguyên."
             ),
             parameters={},
-            # Deliberately NOT preview_data. `action.preview` is what the card renders,
-            # and every word of it is already on screen: the turn streams the full
-            # analysis as "Tóm tắt đề xuất" immediately above this card, so putting
-            # truncated copies of strategy/solution/compliance in the card made the rep
-            # read the same three blocks twice, the second time cut off mid-sentence at
-            # 1000 characters. The card's job here is the decision, not the content.
-            preview=None,
+            # Only when the turn is NOT also streaming the analysis. Normally it is, and
+            # every word of this preview is already on screen as "Tóm tắt đề xuất" right
+            # above the card — repeating it there made the rep read the same three blocks
+            # twice, the second time cut off mid-sentence at 1000 characters. When the
+            # turn emits nothing but this card, the duplication argument disappears and
+            # the opposite problem takes over: an approval request with nothing to read.
+            preview=None if summary_above else preview_data,
         ),
         # The server-side copy stays: the caller uses it to decide whether there is
         # anything worth confirming at all (an empty card above three blank rows is
@@ -1152,6 +1165,14 @@ class CentralAgent:
 
         skill_registry = get_skill_registry()
         all_outputs: dict[str, SkillOutput] = {}
+        # Set when Chốt 2 stops the turn. A confirmation stop IS the turn's output —
+        # the same rule main.py already applies when deciding whether an assistant
+        # message was emitted. Without this the "no skill returned anything" branch
+        # below fires whenever the stop happens before any skill ran this turn, which
+        # is the normal shape of the turn right after Chốt 1 is approved: the analysis
+        # is already on the session, so the plan is render-only. The rep approved the
+        # brief and got "Xin lỗi, các skill không trả về kết quả" for it.
+        stopped_for_checkpoint = False
 
         # One ledger for the whole turn: a reference read for the strategy agent is not
         # read again for the product agent, and the §14 log can account for the total.
@@ -1203,7 +1224,11 @@ class CentralAgent:
             if is_render_group and not conversational and "confirm_solution" not in state.confirmed_stages:
                 merged_now = dict(state.outputs)
                 merged_now.update(all_outputs)
-                checkpoint = _build_solution_checkpoint(state, merged_now)
+                # `all_outputs` empty means no skill ran this turn, so nothing will be
+                # streamed above the card — see _build_solution_checkpoint.
+                checkpoint = _build_solution_checkpoint(
+                    state, merged_now, summary_above=bool(all_outputs)
+                )
 
                 # Nothing to approve if the analysis produced nothing — which happens
                 # when the skills were rate-limited. An empty card asking "duyệt hướng
@@ -1216,6 +1241,7 @@ class CentralAgent:
                 preview = checkpoint.preview or {}
                 if any((preview.get(k) or "").strip() for k in ("strategy", "solution", "compliance")):
                     state.checkpoint = checkpoint
+                    stopped_for_checkpoint = True
                     print("[checkpoint] CHOT 2 raised — awaiting solution confirmation")
                     yield {"type": "checkpoint", "checkpoint": checkpoint.model_dump(mode="json")}
                     break
@@ -1513,7 +1539,7 @@ class CentralAgent:
             }
             async for event in self._synthesize(state, message, all_outputs, prior_skill_names):
                 yield event
-        else:
+        elif not stopped_for_checkpoint:
             yield {"type": "content", "content": "Xin lỗi, các skill không trả về kết quả. Vui lòng thử lại."}
 
         yield {"type": "done"}
