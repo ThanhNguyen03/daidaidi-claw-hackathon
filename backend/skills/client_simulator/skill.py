@@ -31,7 +31,8 @@ class ClientSimulatorSkill(BaseSkill):
         # Retrieve buyer persona and objection bank knowledge
         ref_context = await self.retrieve_reference_context(context, top_k=4)
 
-        system = self._build_system_prompt(context.constraints)
+        org_rules = await self._fetch_org_rules()
+        system = self._build_system_prompt(context.constraints, org_rules)
         if ref_context:
             system = system + ref_context
 
@@ -39,7 +40,7 @@ class ClientSimulatorSkill(BaseSkill):
         user_msg = f"{context.task}\n\n{context_block}" if context_block else context.task
 
         try:
-            content = await self._call_llm(
+            content, truncated = await self._call_llm(
                 system=system,
                 user_msg=user_msg,
                 history=context.messages,
@@ -56,8 +57,8 @@ class ClientSimulatorSkill(BaseSkill):
 
         return SkillOutput(
             skill=self.name,
-            status="COMPLETE",
+            status="PARTIAL" if truncated else "COMPLETE",
             payload={"objections": [], "content": content},
-            summary=content[:200],
+            summary=(content[:200] + " [Bị cắt do giới hạn độ dài]") if truncated else content[:200],
             content=content,
         )

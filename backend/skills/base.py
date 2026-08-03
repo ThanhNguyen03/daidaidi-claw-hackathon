@@ -32,6 +32,66 @@ def strip_think_blocks(text: str) -> str:
     return result
 
 
+class ThinkFilter:
+    """Streaming filter that strips <think>...</think> blocks from LLM output.
+
+    Emits (type, content) tuples:
+      ("think_start", "")  -- first <think> tag encountered
+      ("think", content)   -- text inside a <think> block (caller may discard)
+      ("think_end", "")    -- closing </think> tag
+      ("content", content) -- regular response text to stream to the client
+    """
+
+    OPEN = "<think>"
+    CLOSE = "</think>"
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._in_think = False
+
+    def push(self, token: str) -> list[tuple[str, str]]:
+        self._buf += token
+        events: list[tuple[str, str]] = []
+        while True:
+            if self._in_think:
+                pos = self._buf.find(self.CLOSE)
+                if pos >= 0:
+                    if pos > 0:
+                        events.append(("think", self._buf[:pos]))
+                    events.append(("think_end", ""))
+                    self._buf = self._buf[pos + len(self.CLOSE):]
+                    self._in_think = False
+                else:
+                    safe = max(0, len(self._buf) - len(self.CLOSE))
+                    if safe > 0:
+                        events.append(("think", self._buf[:safe]))
+                        self._buf = self._buf[safe:]
+                    break
+            else:
+                pos = self._buf.find(self.OPEN)
+                if pos >= 0:
+                    if pos > 0:
+                        events.append(("content", self._buf[:pos]))
+                    events.append(("think_start", ""))
+                    self._buf = self._buf[pos + len(self.OPEN):]
+                    self._in_think = True
+                else:
+                    safe = max(0, len(self._buf) - len(self.OPEN))
+                    if safe > 0:
+                        events.append(("content", self._buf[:safe]))
+                        self._buf = self._buf[safe:]
+                    break
+        return events
+
+    def flush(self) -> list[tuple[str, str]]:
+        if not self._buf:
+            return []
+        kind = "think" if self._in_think else "content"
+        result = [(kind, self._buf)]
+        self._buf = ""
+        return result
+
+
 def extract_json_block(text: str) -> str:
     """Extract JSON from markdown code block if present, or return text as-is."""
     match = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
@@ -92,7 +152,7 @@ class SkillOutput(BaseModel):
     """Standardized output from any skill execution."""
 
     skill: str
-    status: str = "COMPLETE"  # COMPLETE | FAILED
+    status: str = "COMPLETE"  # COMPLETE | PARTIAL (truncated by max_tokens) | FAILED
     payload: dict[str, Any] = Field(default_factory=dict)
     summary: str = ""
     content: str = ""
@@ -167,7 +227,7 @@ BAR CHARTS (budget breakdown, allocation, share by %):
   ╠═════════════════════════════════════════╣
   │  35%  MiniApp Development               │
   │  25%  Voucher System                    │
-  │  15%  ZNS / Ads                         │
+  │  15%  ZNS Campaign                      │
   └─────────────────────────────────────────┘
   ```
   NEVER use █ block characters. NEVER put % at end of line. NEVER nest a box inside another box.
@@ -175,11 +235,12 @@ BAR CHARTS (budget breakdown, allocation, share by %):
 
 INFO BOXES (game mechanics, form wireframes, step-by-step flows, feature descriptions):
   Each box = its OWN separate ``` code block. NEVER put 2+ boxes inside one fence.
+  Use ├──┤ (not ╠══╣) for the header separator — one level of box only, never nested.
   CORRECT — two separate fences:
   ```
   ┌─────────────────────────────────────────┐
   │  SCREEN 1 TITLE                         │
-  ╠═════════════════════════════════════════╣
+  ├─────────────────────────────────────────┤
   │  🎮 Section heading:                    │
   │  • Bullet item                          │
   └─────────────────────────────────────────┘
@@ -188,7 +249,7 @@ INFO BOXES (game mechanics, form wireframes, step-by-step flows, feature descrip
   ```
   ┌─────────────────────────────────────────┐
   │  SCREEN 2 TITLE                         │
-  ╠═════════════════════════════════════════╣
+  ├─────────────────────────────────────────┤
   │  □ Checkbox item                        │
   │  • Another item                         │
   └─────────────────────────────────────────┘
@@ -250,8 +311,38 @@ TIMELINES:
   - If gantt would be complex, use a Markdown pipe table instead: Phase | Duration | Deliverable
 """
 
-    def _build_system_prompt(self, constraints: list[FeedbackRule]) -> str:
+    async def _fetch_org_rules(self) -> list[str]:
+        """Admin-Panel-authored org rules scoped to this skill.
+
+        `get_active_rules(scope)` already does real scope filtering — `scope IN
+        ('all', ?)` — but the only two callers in the codebase (central_agent's
+        planner and its final synthesizer) always passed the literal string
+        "all", which the function treats as "no filter, return every active rule
+        regardless of scope." So the per-skill scope picker in the Admin Panel
+        ("Compliance", "Product Solution", ...) never actually narrowed anything,
+        and worse: neither of those two callers is the skill that writes the
+        content a scoped rule is meant to constrain. A rule scoped to
+        "Compliance" never reached compliance/skill.py at all. Passing self.name
+        here is what makes the scope picker real, and calling it from the skill
+        itself is what makes the rule reach the prompt that matters.
+        """
+        try:
+            from database import get_active_rules
+            rules = await asyncio.to_thread(get_active_rules, self.name)
+            if rules:
+                print(f"[org_rules] {self.name}: {len(rules)} active rule(s) injected")
+            return rules
+        except Exception as e:
+            print(f"[org_rules] {self.name}: lookup failed, non-fatal ({e})")
+            return []
+
+    def _build_system_prompt(
+        self, constraints: list[FeedbackRule], org_rules: Optional[list[str]] = None
+    ) -> str:
         prompt = self._skill_content
+        if org_rules:
+            rules_block = "\n".join(f"- {r}" for r in org_rules)
+            prompt = f"## Quy tắc tổ chức bắt buộc tuân thủ\n{rules_block}\n\n---\n\n" + prompt
         if constraints:
             scoped = [c for c in constraints if not c.scope or self.name in c.scope]
             if scoped:
@@ -347,8 +438,18 @@ TIMELINES:
         history: list[dict],
         max_tokens: int = 3500,
         temperature: float = 0.4,
-    ) -> str:
-        """Call LLM (non-streaming) and return stripped response text."""
+    ) -> tuple[str, bool]:
+        """Call LLM (non-streaming). Returns (text, truncated).
+
+        `truncated` is True when the provider stopped on `finish_reason ==
+        "length"` rather than finishing on its own — nothing checked this
+        before, so a reply cut off mid-sentence by max_tokens was wrapped as
+        `status="COMPLETE"` same as a whole one, and got assembled into the
+        proposal as if it were. Returned rather than stored on `self`: skill
+        instances are shared singletons (skills/registry.py) serving
+        concurrent turns, so per-call state cannot live on the instance
+        without one turn's flag being clobbered by another's.
+        """
         from llm.client import get_llm_client
 
         client = get_llm_client(self.name)
@@ -363,11 +464,15 @@ TIMELINES:
         call_kwargs = dict(messages=messages, temperature=temperature, stream=False)
         if max_tokens is not None:
             call_kwargs["max_tokens"] = max_tokens
-        # Run the synchronous OpenAI call in a thread pool so the event loop stays free
+        # Run the synchronous OpenAI call in a thread pool so the event loop stays free.
+        # The dedicated LLM_POOL, not the default executor — see llm/pool.py.
+        from llm.pool import LLM_POOL
         loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(None, partial(client.create_completion, **call_kwargs))
-        raw = response.choices[0].message.content or ""
-        return strip_think_blocks(raw)
+        response = await loop.run_in_executor(LLM_POOL, partial(client.create_completion, **call_kwargs))
+        choice = response.choices[0]
+        truncated = getattr(choice, "finish_reason", None) == "length"
+        raw = choice.message.content or ""
+        return strip_think_blocks(raw), truncated
 
     @abstractmethod
     async def execute(self, context: SkillContext) -> SkillOutput:

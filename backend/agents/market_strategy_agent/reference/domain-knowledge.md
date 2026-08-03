@@ -50,16 +50,19 @@ PG at store approaches customer
 * Note: Depends on PG behavior change — training required
 * Works well when PG has incentive to enroll customers
 
-**Option C — Media-driven (Zalo Ads / OA message)**
+**Option C — OA broadcast-driven**
 
 ```
-Customer sees Zalo Ad or OA message
+Customer sees OA broadcast message
     → Clicks → Opens MiniApp
     → Onboarding → Reward
 ```
 
-* Required: Any CShub package + Zalo Ads budget (separate media spend)
-* Best for: Brands with existing OA followers or running Zalo media campaigns
+* Required: Any CShub package (uses the brand's existing OA follower base — no separate media spend)
+* Best for: Brands with an established OA follower count
+* Note: Zalo Ads (paid display/CPC/CPM) is not part of the Adtima portfolio — never
+  quote Ads pricing or budget in a proposal. If the client wants paid reach on top of
+  this journey, that is arranged directly with Zalo through a separate channel.
 
 **Key constraints:**
 

@@ -495,7 +495,7 @@ function splitMultiBoxFence(fenceContent: string): string {
   let current: string[] = [];
 
   for (const line of lines) {
-    if (/^\s*┌/.test(line) && current.length > 0 && current.some(l => /^\s*└/.test(l))) {
+    if (/^\s*[┌╔]/.test(line) && current.length > 0 && current.some(l => /^\s*[└╚]/.test(l))) {
       // Previous box closed — start fresh segment
       segments.push(current);
       current = [];
@@ -531,8 +531,8 @@ export function wrapAsciiBoxes(text: string): string {
         inFence = false;
         inBox = false;
         if (fenceHasBox) {
-          // Count how many complete ┌...└ pairs exist inside
-          const boxStarts = fenceLines.filter(l => /^\s*┌/.test(l)).length;
+          // Count how many complete ┌...└ (or ╔...╚) pairs exist inside
+          const boxStarts = fenceLines.filter(l => /^\s*[┌╔]/.test(l)).length;
           if (boxStarts > 1) {
             out.push(splitMultiBoxFence(fenceLines.join('\n')));
           } else {
@@ -554,20 +554,21 @@ export function wrapAsciiBoxes(text: string): string {
 
     if (inFence) {
       fenceLines.push(line);
-      if (/^\s*[┌└]/.test(line)) fenceHasBox = true;
+      if (/^\s*[┌└╔╚]/.test(line)) fenceHasBox = true;
       continue;
     }
 
-    // Box start: line begins with ┌ (optionally preceded by spaces)
-    if (!inBox && /^\s*┌/.test(line)) {
+    // Box start: line begins with ┌ or ╔ (light or double-line box-drawing —
+    // e.g. an ASCII banner title card), optionally preceded by spaces.
+    if (!inBox && /^\s*[┌╔]/.test(line)) {
       out.push('```');
       inBox = true;
     }
 
     out.push(line);
 
-    // Box end: line begins with └
-    if (inBox && /^\s*└/.test(line)) {
+    // Box end: line begins with └ or ╚
+    if (inBox && /^\s*[└╚]/.test(line)) {
       out.push('```');
       inBox = false;
     }

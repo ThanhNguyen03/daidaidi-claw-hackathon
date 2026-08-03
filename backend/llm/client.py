@@ -136,6 +136,19 @@ MODEL_MAPPING = {
     # it was missing here, so the skill silently rode on sales_orchestrator's model
     # and the env var had no effect.
     "wireframe_designer": os.getenv("MODEL_WIREFRAME_DESIGNER", "minimax/minimax-m2.5"),
+    # Figma wireframe spec generation. Emits JSON, like deck_extractor — but deliberately not
+    # pinned to the same light model: deck extraction is transcription and runs on every
+    # proposal turn, whereas this one runs only when a rep presses the button and has to
+    # *decide* which journey steps deserve a screen and which archetype each one is. Low
+    # volume means the quota argument for flash-lite does not apply here.
+    # Falls back to MODEL_WIREFRAME_DESIGNER rather than the bare literal: the literal in
+    # every other entry here is a leftover provider name (`minimax/...`) that Gemini answers
+    # with a 404, so a skill whose own env var is missing from .env.production dies on its
+    # first call instead of degrading. This one is new, so .env.production did not have its
+    # var — which is exactly how that was found.
+    "figma_wireframe": os.getenv(
+        "MODEL_FIGMA_WIREFRAME", os.getenv("MODEL_WIREFRAME_DESIGNER", "gemini-3.6-flash")
+    ),
     # CS mode skills (default to minimax; override via env if needed)
     "cs_agent": os.getenv("MODEL_CS_AGENT", "minimax/minimax-m2.5"),
     "predict_agent": os.getenv("MODEL_PREDICT_AGENT", "minimax/minimax-m2.5"),
@@ -471,9 +484,10 @@ class GreenNodeClient:
         """Non-blocking wrapper: runs the synchronous create_completion in a thread-pool executor."""
         import asyncio
         from functools import partial
+        from llm.pool import LLM_POOL
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None,
+            LLM_POOL,
             partial(self.create_completion, messages=messages, **kwargs),
         )
 

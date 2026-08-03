@@ -7,13 +7,11 @@
 
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { ChatWindow } from '../components/ChatWindow';
 import { ContextPanel } from '../components/ContextPanel';
 import { ModelPanel } from '../components/ModelPanel';
-import { MobileNav } from '../components/MobileNav';
-import { AttentionField } from '../components/AttentionField';
 import { AuthModal } from '../components/AuthModal';
 import { AdminPanel } from '../components/AdminPanel';
 import { useChat } from '../hooks/useChat';
@@ -48,16 +46,16 @@ export default function Home() {
     setCurrentUser(user);
     setSalespersonName(user.full_name || user.username);
     setIsBooting(true);
-    setTimeout(() => setIsBooting(false), 950);
+    setTimeout(() => setIsBooting(false), 2500);
   };
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     localStorage.removeItem('auth_token');
     localStorage.removeItem('auth_user');
     setCurrentUser(null);
     setSalespersonName('');
     window.location.reload();
-  };
+  }, []);
 
   // Mode state
   const [mode, setMode] = useState<ChatMode>('chat');
@@ -71,8 +69,65 @@ export default function Home() {
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [modelPanelOpen, setModelPanelOpen] = useState(false);
 
-  // Sidebar state for responsive
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Sidebar drawer state — closed by default on mobile so the drawer does not
+  // cover the chat on first paint. Desktop shows the sidebar unconditionally
+  // via `md:translate-x-0`, so this only ever matters below the md breakpoint.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Stable toggle/open/close callbacks — every content event re-renders this
+  // component (messages lives in useChat, called from here), and an inline
+  // `() => setX(!x)` arrow gets a fresh identity on every one of those
+  // renders, which defeats React.memo on every child it's passed to
+  // (Sidebar, ContextPanel). The functional-update form also means these
+  // never need the current state value as a dependency.
+  const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), []);
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+  const toggleContextPanel = useCallback(() => setContextPanelOpen((v) => !v), []);
+  const openModelPanel = useCallback(() => setModelPanelOpen(true), []);
+  const closeModelPanel = useCallback(() => setModelPanelOpen(false), []);
+  const openAdminPanel = useCallback(() => setAdminPanelOpen(true), []);
+  const closeAdminPanel = useCallback(() => setAdminPanelOpen(false), []);
+
+  // Reads no component state — only the stable getApiBaseUrl import — so it
+  // never needs to change identity across renders either.
+  const handleDownloadArtifact = useCallback(
+    (artifact: { download_url?: string; type?: string; data?: string; id?: string }) => {
+      const backendUrl = getApiBaseUrl();
+
+      // Binary artifacts served directly by the backend (PPTX, quote, etc.)
+      if (artifact.download_url) {
+        const a = document.createElement('a');
+        a.href = `${backendUrl}${artifact.download_url}`;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        // Let the browser use the Content-Disposition filename from the server
+        a.click();
+        return;
+      }
+
+      // Text artifacts stored in-browser (fallback / Mermaid / HTML)
+      if (artifact.type === 'userflow' && artifact.data) {
+        const blob = new Blob([artifact.data], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${artifact.id || 'userflow'}.mmd`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else if (artifact.type === 'wireframe' && artifact.data) {
+        const blob = new Blob([artifact.data], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${artifact.id || 'wireframe'}.html`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else if (artifact.type === 'pptx') {
+        alert('PPTX file not available — please approve the checkpoint to generate it.');
+      }
+    },
+    []
+  );
 
   // KB connection status
   const [isConnected, setIsConnected] = useState(false);
@@ -88,24 +143,16 @@ export default function Home() {
     document.documentElement.classList.toggle('dark', dark);
   }, []);
 
-  // Open context panel by default on large screens only
-  useEffect(() => {
-    if (window.innerWidth >= 1024) {
-      setContextPanelOpen(true);
-    }
-  }, []);
 
   // Toggle theme function
-  const toggleTheme = () => {
-    const newTheme = !isDarkMode;
-    setIsDarkMode(newTheme);
-    localStorage.setItem('theme', newTheme ? 'dark' : 'light');
-    if (newTheme) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  };
+  const toggleTheme = useCallback(() => {
+    setIsDarkMode((prev) => {
+      const newTheme = !prev;
+      localStorage.setItem('theme', newTheme ? 'dark' : 'light');
+      document.documentElement.classList.toggle('dark', newTheme);
+      return newTheme;
+    });
+  }, []);
 
   // Apply mode to data attribute
   useEffect(() => {
@@ -114,6 +161,7 @@ export default function Home() {
 
   // Chat hook
   const {
+    sessionId,
     messages,
     isLoading,
     isThinking,
@@ -124,6 +172,7 @@ export default function Home() {
     constraints,
     brief,
     artifacts,
+    proposalAssets,
     sendMessage,
     answerAllQuestions,
     skipQuestion,
@@ -136,6 +185,7 @@ export default function Home() {
     editCheckpoint,
     clearError,
     resetSession,
+    loadSession,
     thinkingSteps,
   } = useChat({
     salespersonId: salespersonName || 'demo_user',
@@ -172,7 +222,7 @@ export default function Home() {
 
 
   // Handle new chat — clears all session data (both modes) and reloads
-  const handleNewChat = () => {
+  const handleNewChat = useCallback(() => {
     if (typeof window !== 'undefined') {
       Object.keys(sessionStorage)
         .filter((k) => k.startsWith('chat_session_'))
@@ -181,7 +231,15 @@ export default function Home() {
     }
     resetSession();
     window.location.reload();
-  };
+  }, [resetSession]);
+
+  // A deleted conversation must not stay on screen: the transcript is gone
+  // server-side, so any further message would be answered against no history.
+  const handleSessionDeleted = useCallback((deletedId: string) => {
+    if (deletedId === sessionId) {
+      resetSession();
+    }
+  }, [sessionId, resetSession]);
 
   // If auth not checked yet, show nothing (avoid flash)
   if (!authChecked) return null;
@@ -204,8 +262,8 @@ export default function Home() {
         <span className="tf-ring" />
         <span className="tf-wipe" />
         <div className="tf-card p-8 rounded-2xl text-center">
-          <p className="tf-boot-line text-xs text-accent-text font-mono tracking-wide">
-            ▸ 7 agents online · knowledge base linked
+          <p className="tf-boot-line text-sm text-accent-text font-mono tracking-wide">
+            ▸ 7 Agents đã sẵn sàng · kho tri thức đã kết nối
           </p>
         </div>
       </div>
@@ -213,49 +271,47 @@ export default function Home() {
   }
   // Main app layout
   return (
-    <div className="flex h-dvh overflow-hidden">
-      {/* Mobile Navigation - visible on mobile only */}
-      <MobileNav
+    <div className="flex flex-col md:flex-row h-dvh overflow-hidden">
+      <Sidebar
         currentMode={mode}
         onModeChange={setMode}
         onNewChat={handleNewChat}
+        sessionCount={sessionCount}
+        isConnected={isConnected}
+        activeAgents={activeAgents}
         isOpen={sidebarOpen}
-        onToggle={() => setSidebarOpen(!sidebarOpen)}
-        onToggleContextPanel={() => setContextPanelOpen(!contextPanelOpen)}
+        onToggle={toggleSidebar}
+        isDarkMode={isDarkMode}
+        onToggleTheme={toggleTheme}
+        onOpenModelPanel={openModelPanel}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        onOpenAdminPanel={openAdminPanel}
+        onLoadSession={loadSession}
+        onSessionDeleted={handleSessionDeleted}
+        isBusy={isLoading}
       />
 
-      {/* Sidebar - hidden on mobile, shown on desktop */}
-      <div className="hidden md:block h-full overflow-y-auto">
-        <Sidebar
-          currentMode={mode}
-          onModeChange={setMode}
-          onNewChat={handleNewChat}
-          sessionCount={sessionCount}
-          isConnected={isConnected}
-          activeAgents={activeAgents}
-          isOpen={sidebarOpen}
-          onToggle={() => setSidebarOpen(!sidebarOpen)}
-          isDarkMode={isDarkMode}
-          onToggleTheme={toggleTheme}
-          onOpenModelPanel={() => setModelPanelOpen(true)}
-          currentUser={currentUser}
-          onLogout={handleLogout}
-          onOpenAdminPanel={() => setAdminPanelOpen(true)}
+      {sidebarOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-40 bg-black/50"
+          onClick={closeSidebar}
+          aria-hidden="true"
         />
-      </div>
+      )}
 
-      <ModelPanel isOpen={modelPanelOpen} onClose={() => setModelPanelOpen(false)} />
+      <ModelPanel isOpen={modelPanelOpen} onClose={closeModelPanel} />
 
       {currentUser && (
         <AdminPanel
           isOpen={adminPanelOpen}
-          onClose={() => setAdminPanelOpen(false)}
+          onClose={closeAdminPanel}
           currentUser={currentUser}
         />
       )}
 
       {/* Main chat area */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden pt-14 md:pt-0 pb-16 md:pb-0">
+      <main className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
         <ChatWindow
           key={mode}
           messages={messages}
@@ -273,56 +329,26 @@ export default function Home() {
           onRejectCheckpoint={rejectCheckpoint}
           onEditCheckpoint={editCheckpoint}
           onClearError={clearError}
-          onToggleContextPanel={() => setContextPanelOpen(!contextPanelOpen)}
-          onToggleMobileSidebar={() => setSidebarOpen(!sidebarOpen)}
+          onToggleContextPanel={toggleContextPanel}
+          isContextPanelOpen={contextPanelOpen}
+          onToggleMobileSidebar={toggleSidebar}
+          onModeChange={setMode}
+          onNewChat={handleNewChat}
           thinkingSteps={thinkingSteps}
+          sessionId={sessionId}
+          proposalAssets={proposalAssets}
         />
       </main>
 
       {/* Context Panel */}
       <ContextPanel
         isOpen={contextPanelOpen}
-        onToggle={() => setContextPanelOpen(!contextPanelOpen)}
+        onToggle={toggleContextPanel}
         brief={brief}
         constraints={constraints}
         onRevokeConstraint={revokeConstraint}
         artifacts={artifacts}
-        onDownloadArtifact={(artifact) => {
-          const backendUrl =
-            getApiBaseUrl();
-
-          // Binary artifacts served directly by the backend (PPTX, quote, etc.)
-          if (artifact.download_url) {
-            const a = document.createElement('a');
-            a.href = `${backendUrl}${artifact.download_url}`;
-            a.target = '_blank';
-            a.rel = 'noopener noreferrer';
-            // Let the browser use the Content-Disposition filename from the server
-            a.click();
-            return;
-          }
-
-          // Text artifacts stored in-browser (fallback / Mermaid / HTML)
-          if (artifact.type === 'userflow' && artifact.data) {
-            const blob = new Blob([artifact.data], { type: 'text/plain' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${artifact.id || 'userflow'}.mmd`;
-            a.click();
-            URL.revokeObjectURL(url);
-          } else if (artifact.type === 'wireframe' && artifact.data) {
-            const blob = new Blob([artifact.data], { type: 'text/html' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${artifact.id || 'wireframe'}.html`;
-            a.click();
-            URL.revokeObjectURL(url);
-          } else if (artifact.type === 'pptx') {
-            alert('PPTX file not available — please approve the checkpoint to generate it.');
-          }
-        }}
+        onDownloadArtifact={handleDownloadArtifact}
       />
     </div>
   );

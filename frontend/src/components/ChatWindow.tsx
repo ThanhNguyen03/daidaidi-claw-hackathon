@@ -5,12 +5,42 @@
  * Uses Tailwind CSS for styling.
  */
 
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot } from 'lucide-react';
-import { MessageBubble } from './MessageBubble';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { Send, Loader2, PanelRightClose, Menu, AlertTriangle, Check, X, Edit, ArrowDown, Bot, MessageCircle, Plus, PanelRightOpen } from 'lucide-react';
+import { MessageBubble, AgentRichContent } from './MessageBubble';
 import { QuestionCard } from './QuestionCard';
 import { ThinkingTrace } from './ThinkingTrace';
-import type { Message, Question, Checkpoint, Brief, ChatMode, ThinkingStep } from '../lib/types';
+import { ProposalActionsBar } from './ProposalActionsBar';
+import type { Message, Question, Checkpoint, Brief, ChatMode, ThinkingStep, ProposalAssets } from '../lib/types';
+
+// This file is a client component, but Next.js still server-renders it for the initial
+// HTML, and React warns about useLayoutEffect during a server render. The pin below has
+// to run before paint (otherwise the new question is visibly drawn at the bottom and
+// then jumps), so take the layout effect in the browser and the no-op on the server.
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
+/** Index of the newest message the rep sent, or -1. Loop rather than map+lastIndexOf:
+ *  this runs on every render, and a streaming reply re-renders once per frame. */
+function findLastUserIndex(messages: Message[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return i;
+  }
+  return -1;
+}
+
+/** Distance from the top of the scroll container to `el`, in scroll coordinates.
+ *  Module scope, not a closure in the component: the layout effects below use it and
+ *  a per-render identity would have to go in their dep arrays. */
+function offsetWithin(c: HTMLElement, el: HTMLElement): number {
+  return el.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
+}
+
+// Asymmetric thresholds for "is the reader at the bottom". Leaving the bottom is easy —
+// any real scroll up hands control back to the reader. Re-engaging needs them to come
+// all the way down. With one 150px threshold, scrolling down through a streaming answer
+// crossed back into "at bottom" early and the auto-scroll yanked them to the end.
+const LEAVE_BOTTOM_PX = 220;
+const ENTER_BOTTOM_PX = 32;
 
 interface ChatWindowProps {
   messages: Message[];
@@ -29,36 +59,72 @@ interface ChatWindowProps {
   onEditCheckpoint: (params: Record<string, unknown>) => void;
   onClearError: () => void;
   onToggleContextPanel?: () => void;
+  isContextPanelOpen?: boolean;
   onToggleMobileSidebar?: () => void;
+  onModeChange?: (mode: ChatMode) => void;
+  onNewChat?: () => void;
   thinkingSteps?: ThinkingStep[];
+  /** Passed to MessageBubble for the Figma wireframe CTA on a finished proposal. */
+  sessionId?: string | null;
+  /** Session-level PPTX link + has_proposal, for the pinned actions bar above the composer. */
+  proposalAssets?: ProposalAssets | null;
 }
 
-// Openers for an empty chat. Written as briefs a rep would actually paste, not as
-// feature names — "làm proposal" teaches nothing about what to put in one, whereas
-// a filled-in example shows the shape of a brief that gets a good answer first try.
+// CS mode is hidden from the switcher (not removed — see Sidebar.tsx's MODES
+// for the matching desktop change; 'cs' stays a valid ChatMode elsewhere).
+const HEADER_MODES: { id: ChatMode; label: string; icon: React.ReactNode }[] = [
+  { id: 'chat', label: 'Chat', icon: <MessageCircle size={16} /> },
+];
+
+// Openers for an empty chat, each scoped to ONE specialist rather than a full
+// brief — "làm proposal" as the only entry point taught every rep to open with
+// a proposal request, which is why every first message used to build a full
+// pptx whether that's what they needed or not. `prompt` is what actually gets
+// sent; `description` is the friendlier one-line gloss shown next to it.
+//
+// A `prompt` STATES THE REP'S INTENT AND NOTHING ABOUT THE CLIENT. Two of these
+// used to open with "khách FMCG" (one also naming an on-pack QR mechanic), and
+// that is worse than it looks: industry and goal are the two fields
+// config/gate_fields.yaml marks `required`, so a starter that fills them in
+// satisfies gate.py and the whole pipeline runs — designing a journey, quoting
+// case studies, reading compliance — for a client that does not exist. The rep
+// never got asked what the real brief was, which is the one thing the gate is
+// there to guarantee. Asserting nothing is what makes the gate fire and hand the
+// rep pickable chips for the fields it needs.
+//
+// Naming a competitor in a roleplay starter is a different thing and is fine:
+// that is the scenario the rep is choosing to rehearse, not a fact about a client.
 const SALES_STARTERS = [
   {
-    icon: '🥤',
-    label: 'Brief FMCG đầy đủ',
-    prompt:
-      'Brand nước giải khát FMCG, muốn tăng mua lại qua loyalty trên Zalo. Ngân sách 300 triệu, chạy Q4. Làm proposal giúp mình.',
-  },
-  {
-    icon: '💊',
-    label: 'Ngành dược, cần soát pháp lý',
-    prompt:
-      'Khách dược phẩm muốn làm chương trình tích điểm cho nhà thuốc. Kiểm giúp mình phần pháp lý và đề xuất giải pháp.',
-  },
-  {
     icon: '💰',
-    label: 'Hỏi nhanh giá gói',
-    prompt: 'Gói CShub Base 3 và Pro 1 khác nhau gì, giá 12 tháng bao nhiêu?',
+    label: 'Giá gói bao nhiêu?',
+    description: 'So sánh tính năng và giá các gói CShub theo nhu cầu cụ thể.',
+    prompt: 'Cho mình xem tổng quan các gói CShub (tính năng, giá theo từng gói) để so sánh và chọn gói phù hợp nhu cầu khách.',
+  },
+  {
+    icon: '📖',
+    label: 'Vẽ user flow',
+    description: 'Thiết kế hành trình người dùng trên Zalo MiniApp theo brief của khách.',
+    // "Mình đang làm cho một khách" is load-bearing, not padding: the planner's
+    // deciding rule is that anything answerable without knowing a particular client
+    // is `lookup`, and lookup bypasses the gate entirely. A bare "vẽ user flow trên
+    // Mini App" reads as a generic how-does-it-work question and would be answered
+    // with an invented flow instead of a question about the real brief.
+    prompt: 'Mình đang làm cho một khách — vẽ giúp mình user flow cho chương trình của họ trên Zalo Mini App.',
+  },
+  {
+    icon: '📊',
+    label: 'Phân tích chiến lược',
+    description: 'Tại sao khách cần loyalty? Insight ngành + đề xuất giải pháp tổng thể.',
+    prompt:
+      'Khách đang cân nhắc triển khai loyalty trên Zalo nhưng chưa rõ vì sao cần. Phân tích giúp mình insight ngành và định hướng giải pháp.',
   },
   {
     icon: '🛡️',
-    label: 'Tập phản biện trước khi pitch',
+    label: 'Đối thủ hỏi khó',
+    description: 'Khách đang so sánh với CNV / Pango / Mmenu — giúp mình trả lời.',
     prompt:
-      'Mai mình pitch cho khách FMCG đang so sánh với CNV Loyalty. Đóng vai khách và phản biện giúp mình.',
+      'Khách đang so sánh AdtimaBox với CNV Loyalty. Đóng vai khách và đưa ra phản biện giúp mình luyện tập trả lời.',
   },
 ];
 
@@ -66,11 +132,13 @@ const CS_STARTERS = [
   {
     icon: '📖',
     label: 'Tra hướng dẫn',
+    description: 'Tìm câu trả lời trong tài liệu hướng dẫn sử dụng CSHub.',
     prompt: 'Khách hỏi tại sao không export được data thành viên, giải thích giúp mình.',
   },
   {
     icon: '🐞',
     label: 'Báo lỗi để tạo ticket',
+    description: 'Ghi nhận lỗi khách báo và tạo Jira ticket.',
     prompt: 'Khách báo voucher đã phát nhưng không thấy trong ví, mình cần tạo ticket.',
   },
 ];
@@ -92,52 +160,163 @@ function CheckpointCard({
 
   const hasBlocking = checkpoint.compliance_findings?.some(f => f.severity === 'block');
 
-  // Chốt 1 sends the brief split by where each item came from. Showing that split is
-  // the whole value of the stop: a rep skims "inferred" and "assumed" for the one line
-  // that is wrong, which is much faster than re-reading a brief they already wrote.
   const SOURCE_GROUPS: { key: string; label: string; hint: string; tone: string }[] = [
     { key: 'said', label: 'Bạn đã nói', hint: 'lấy nguyên từ tin nhắn của bạn', tone: 'text-text' },
     { key: 'inferred', label: 'Mình tự suy ra', hint: 'suy từ ngữ cảnh — kiểm giúp', tone: 'text-accent-text' },
     { key: 'assumed', label: 'Đang phỏng đoán', hint: 'chưa có dữ liệu, mình sẽ giả định', tone: 'text-amber-600' },
   ];
 
-  function cleanArrowSymbols(text: string): string {
-    if (!text) return text;
-    return text
+  function cleanAndTranslateCheckpointText(text: string): string {
+    if (!text) return '';
+    let s = text
       .replace(/\$*\\+rightarrow\$*/gi, ' → ')
       .replace(/\$*\\+Rightarrow\$*/gi, ' ⇒ ')
       .replace(/\$*\\+leftarrow\$*/gi, ' ← ')
       .replace(/\$*\\+Leftarrow\$*/gi, ' ⇐ ');
+
+    // Strip ASCII banners & double horizontal lines
+    s = s.replace(/^[-=]{3,}\s*[A-Z0-9_\s—\-]*\s*[-=]*$/gm, '');
+    s = s.replace(/^([=]{3,}|-{3,})$/gm, '');
+
+    // Translate common English headers & jargon to clean Vietnamese
+    s = s
+      .replace(/OVERALL VERDICT:\s*⚠️?\s*PROCEED WITH CONDITIONS/gi, '📌 Kết luận: ĐƯỢC TRIỂN KHAI CÓ ĐIỀU KIỆN ⚠️')
+      .replace(/OVERALL VERDICT:\s*PROCEED/gi, '📌 Kết luận: ĐƯỢC PHÉP TRIỂN KHAI 🟢')
+      .replace(/OVERALL VERDICT:\s*BLOCK/gi, '📌 Kết luận: CẦN TẠM DỪNG / CHẶN 🔴')
+      .replace(/Risk summary:\s*(\d+)\s*High\s*\|\s*(\d+)\s*Medium\s*\|\s*(\d+)\s*Note/gi, '📊 Mức độ rủi ro: $1 Cao | $2 Vừa | $3 Lưu ý')
+      .replace(/EXPLICIT ASSUMPTIONS/gi, 'Giả định triển khai chính')
+      .replace(/\(Provisional\s*[\-–—]\s*pending client confirmation\)/gi, '(Tạm thời — chờ khách hàng xác nhận)')
+      .replace(/ASSUMPTIONS STATEMENT/gi, 'Giả định triển khai')
+      .replace(/RUNNING WITH ASSUMPTIONS/gi, 'Giả định thực thi')
+      .replace(/A4 COMPLIANCE REPORT/gi, 'Báo cáo tuân thủ & Pháp lý')
+      .replace(/PROPOSAL:\s*/gi, 'Đề xuất: ')
+      .replace(/SOLUTION ARCHITECTURE & PACKAGE MAPPING/gi, 'Kiến trúc giải pháp & Gói dịch vụ')
+      .replace(/SPECIFIC REQUIREMENTS:/gi, 'Yêu cầu cụ thể:')
+      .replace(/CONSTRAINTS:/gi, 'Ràng buộc & Hạn chế:')
+      .replace(/STRATEGIC DIAGNOSIS/gi, 'Chẩn đoán chiến lược')
+      .replace(/Campaign Scale:/gi, 'Quy mô chiến dịch:')
+      .replace(/Database Scale:/gi, 'Quy mô cơ sở dữ liệu:')
+      .replace(/Database Size:/gi, 'Dung lượng dữ liệu:')
+      .replace(/Acquisition & Loyalty Mechanic:/gi, 'Cơ chế Thu hút & Tích điểm Loyalty:')
+      .replace(/Timeline Duration:/gi, 'Thời gian chiến dịch:')
+      .replace(/Primary Objective:/gi, 'Mục tiêu chính:')
+      .replace(/Objective:/gi, 'Mục tiêu:')
+      .replace(/Total Provisional Budget:/gi, 'Tổng ngân sách dự kiến:')
+      .replace(/Total Budget:/gi, 'Tổng ngân sách:')
+      .replace(/Timeline:/gi, 'Thời gian triển khai:')
+      .replace(/Client:/gi, 'Khách hàng:')
+      .replace(/Industry:/gi, 'Ngành hàng:')
+      .replace(/Assumption (\d+)/gi, 'Giả định $1')
+      .replace(/Assumptions made:/gi, 'Giả định được đưa ra:')
+      .replace(/High reliance on mass media/gi, 'Phụ thuộc lớn vào truyền thông đại chúng');
+
+    return s.trim();
+  }
+
+  // Parse raw JSON objects/strings into clean human-readable Vietnamese text
+  function formatValueHumanReadable(val: unknown): string {
+    if (!val) return '';
+    let obj: Record<string, unknown> | null = null;
+
+    if (typeof val === 'object' && val !== null) {
+      obj = val as Record<string, unknown>;
+    } else if (typeof val === 'string') {
+      let rawStr = val.trim();
+      // Strip markdown code fences if present e.g. ```json { ... } ```
+      if (rawStr.startsWith('```')) {
+        rawStr = rawStr.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+      }
+      // If contains a JSON object pattern
+      const jsonMatch = rawStr.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          obj = JSON.parse(jsonMatch[0]);
+        } catch {
+          obj = null;
+        }
+      }
+    }
+
+    if (obj) {
+      const lines: string[] = [];
+      // Extract key fields into friendly format
+      if (obj.problem_statement) lines.push(`**Mục tiêu bài toán:** ${cleanAndTranslateCheckpointText(String(obj.problem_statement))}`);
+      if (obj.confidence_notes) lines.push(`**Ghi chú giả định:** ${cleanAndTranslateCheckpointText(String(obj.confidence_notes))}`);
+      if (obj.summary) lines.push(`**Tóm tắt:** ${cleanAndTranslateCheckpointText(String(obj.summary))}`);
+      if (obj.verdict) lines.push(`**Kết luận:** ${cleanAndTranslateCheckpointText(String(obj.verdict))}`);
+
+      // Handle gap analysis if present
+      if (obj.gap_analysis && typeof obj.gap_analysis === 'object') {
+        const gap = obj.gap_analysis as Record<string, unknown>;
+        if (gap.current_state) lines.push(`**Hiện trạng:** ${cleanAndTranslateCheckpointText(String(gap.current_state))}`);
+        if (gap.desired_state) lines.push(`**Mục tiêu hướng tới:** ${cleanAndTranslateCheckpointText(String(gap.desired_state))}`);
+      }
+
+      // Fallback for other keys if no standard field matched
+      if (lines.length === 0) {
+        Object.entries(obj).forEach(([k, v]) => {
+          if (['skill', 'status', 'agent', 'model'].includes(k)) return; // Skip internal dev fields
+          const label = k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+          const displayVal = typeof v === 'object' ? JSON.stringify(v) : String(v);
+          lines.push(`**${label}:** ${cleanAndTranslateCheckpointText(displayVal)}`);
+        });
+      }
+
+      return lines.join('\n\n');
+    }
+
+    let finalStr = cleanAndTranslateCheckpointText(String(val));
+    // If text still contains raw JSON snippet (e.g. {"skill": ...}), clean it completely
+    if (finalStr.includes('"skill":') || finalStr.includes('"status":')) {
+      finalStr = finalStr.replace(/\{[\s\S]*?\}/g, (match) => {
+        try {
+          const parsed = JSON.parse(match);
+          const parts = [];
+          if (parsed.problem_statement) parts.push(`**Bài toán:** ${parsed.problem_statement}`);
+          if (parsed.confidence_notes) parts.push(`**Ghi chú:** ${parsed.confidence_notes}`);
+          return parts.join('\n\n');
+        } catch {
+          return '';
+        }
+      });
+    }
+
+    return finalStr.trim();
   }
 
   const formatBriefGroups = (groups: Record<string, Array<Record<string, string>>>) => (
-    <div className="space-y-3">
+    <div className="space-y-3 max-w-full overflow-hidden">
       {SOURCE_GROUPS.map(({ key, label, hint, tone }) => {
         const items = groups[key] || [];
         if (items.length === 0) return null;
         return (
-          <div key={key} className="bg-surface rounded overflow-hidden">
-            <div className="px-3 py-1.5 border-b border-border flex items-baseline gap-2">
+          <div key={key} className="bg-surface rounded-xl border border-border overflow-hidden shadow-xs">
+            <div className="px-3 py-2 bg-surface-2 border-b border-border flex items-baseline gap-2">
               <span className={`text-[12px] font-semibold ${tone}`}>{label}</span>
               <span className="text-[11px] text-text-muted">{hint}</span>
             </div>
-            <table className="w-full border-collapse text-xs">
-              <tbody>
-                {items.map((item) => (
-                  <tr key={item.field} className="border-b border-border last:border-0">
-                    <td className="py-2 px-3 font-medium text-text-muted w-2/5">{item.label}</td>
-                    <td className="py-2 px-3 text-text">{cleanArrowSymbols(item.value)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="divide-y divide-border/50 text-xs">
+              {items.map((item) => (
+                <div key={item.field} className="p-3 flex flex-col sm:flex-row gap-1 sm:gap-4">
+                  <span className="font-medium text-text-muted shrink-0 sm:w-1/3">{item.label}</span>
+                  <span className="text-text wrap-break-word flex-1 min-w-0">{formatValueHumanReadable(item.value)}</span>
+                </div>
+              ))}
+            </div>
           </div>
         );
       })}
     </div>
   );
 
-  // Format preview as a table
+  // Friendly Vietnamese Section Labels
+  const SECTION_LABELS: Record<string, { label: string; bg: string; border: string }> = {
+    compliance: { label: '⚖️ Đánh giá Pháp lý & Tuân thủ (Compliance)', bg: 'bg-amber-500/10 dark:bg-amber-900/20', border: 'border-amber-500/30' },
+    strategy: { label: '🎯 Định hình Chiến lược (Market Strategy)', bg: 'bg-blue-500/10 dark:bg-blue-900/20', border: 'border-blue-500/30' },
+    solution: { label: '💡 Đề xuất Giải pháp & Gói sản phẩm (Product Solution)', bg: 'bg-purple-500/10 dark:bg-purple-900/20', border: 'border-purple-500/30' },
+  };
+
+  // Format preview with clear cards and Vietnamese labels
   const formatPreview = (preview: unknown): React.ReactNode => {
     if (!preview) return null;
 
@@ -152,37 +331,69 @@ function CheckpointCard({
       const entries = Object.entries(asRecord);
       if (entries.length === 0) return null;
 
+      // Re-order entries so compliance/verdict is ALWAYS ON TOP!
+      const sortedEntries = [...entries].sort(([a], [b]) => {
+        if (a === 'compliance') return -1;
+        if (b === 'compliance') return 1;
+        if (a === 'strategy') return -1;
+        if (b === 'strategy') return 1;
+        return 0;
+      });
+
       return (
-        <div className="bg-surface rounded overflow-hidden text-xs">
-          <table className="w-full border-collapse">
-            <tbody>
-              {entries.map(([key, value]) => (
-                <tr key={key} className="border-b border-border">
-                  <td className="py-2 px-3 font-medium text-text-muted w-2/5">
-                    {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
-                  </td>
-                  <td className="py-2 px-3 text-text">
-                    {cleanArrowSymbols(typeof value === 'object' ? JSON.stringify(value) : String(value))}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-3 my-2 max-w-full overflow-hidden">
+          {sortedEntries.map(([key, value]) => {
+            const secInfo = SECTION_LABELS[key] || {
+              label: key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+              bg: 'bg-surface-2',
+              border: 'border-border',
+            };
+
+            const cleanedText = formatValueHumanReadable(value);
+
+            return (
+              <div
+                key={key}
+                className={`rounded-xl border ${secInfo.border} ${secInfo.bg} p-3.5 shadow-xs transition-all max-w-full`}
+              >
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/40">
+                  <span className="text-[13px] font-bold text-text flex items-center gap-1.5 truncate">
+                    {secInfo.label}
+                  </span>
+                </div>
+                <div className="text-sm text-text leading-relaxed max-w-full wrap-break-word">
+                  <AgentRichContent content={cleanedText} />
+                </div>
+              </div>
+            );
+          })}
         </div>
       );
     }
 
-    return <pre className="whitespace-pre-wrap m-0">{String(preview)}</pre>;
+    return (
+      <div className="p-3 bg-surface-2 rounded-xl text-xs text-text leading-relaxed wrap-break-word overflow-hidden">
+        <AgentRichContent content={formatValueHumanReadable(preview)} />
+      </div>
+    );
   };
 
-  // Chốt 1 exists so the rep can correct what we misread, which means Edit has to
-  // actually edit. It used to open a panel reading "Edit functionality available"
-  // and submit an empty object.
   const briefGroups = (checkpoint.action.preview as { groups?: Record<string, Array<Record<string, string>>> } | undefined)
     ?.groups;
   const editableFields = briefGroups
     ? ['said', 'inferred', 'assumed'].flatMap((k) => briefGroups[k] ?? [])
     : [];
+
+  // The edit form is built entirely from `preview.groups`, which only Chốt 1's
+  // checkpoint has — Chốt 2's preview is three prose blocks (strategy / solution /
+  // compliance) with no fields in it. So on Chốt 2 the Edit button opened a panel
+  // whose only content was "Không có trường nào để sửa ở bước này", with a "Lưu &
+  // Xem lại" button that submitted an empty object. A control that can only fail is
+  // worse than no control; the way to change direction at Chốt 2 is to say so, which
+  // is what the reject path is for and what this card's own text already tells the
+  // rep to do.
+  const canEdit = editableFields.length > 0;
+  const isSolutionStage = checkpoint.action.type === 'confirm_solution';
 
   const [edits, setEdits] = useState<Record<string, string>>({});
 
@@ -209,26 +420,30 @@ function CheckpointCard({
   };
 
   return (
-    <div className="border-2 border-accent bg-accent-soft rounded-lg p-4 mb-4">
+    <div className="flex gap-2 sm:gap-3 mt-3 sm:mt-4 mb-4 animate-fade-in-up">
+      <div className="shrink-0 aspect-square p-2 size-fit rounded-full flex items-center justify-center text-white bg-accent glow-border" style={{ boxShadow: '0 0 12px rgba(0, 104, 255, 0.5)' }}>
+        <Bot size={16} className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+      </div>
+      <div className="flex-1 min-w-0 border-2 border-accent bg-accent-soft rounded-2xl p-4 max-w-full overflow-hidden shadow-md">
       {/* Compliance Findings */}
       {checkpoint.compliance_findings && checkpoint.compliance_findings.length > 0 && (
-        <div className="mb-4">
+        <div className="mb-4 max-w-full overflow-hidden">
           {checkpoint.compliance_findings.map((finding, idx) => (
             <div
               key={idx}
               className={`
-                p-3 rounded mb-2
-                ${finding.severity === 'block' ? 'bg-red-50 border border-red-200' : ''}
-                ${finding.severity === 'warn' ? 'bg-yellow-50 border border-yellow-200' : ''}
-                ${finding.severity === 'info' ? 'bg-blue-50 border border-blue-200' : ''}
+                p-3 rounded-xl mb-2 max-w-full overflow-hidden
+                ${finding.severity === 'block' ? 'bg-red-500/10 border border-red-500/25 text-red-600 dark:text-red-400' : ''}
+                ${finding.severity === 'warn' ? 'bg-amber-500/10 border border-amber-500/25 text-amber-600 dark:text-amber-400' : ''}
+                ${finding.severity === 'info' ? 'bg-blue-500/10 border border-blue-500/25 text-blue-600 dark:text-blue-400' : ''}
               `}
             >
               <div className="flex items-start gap-2">
                 <span>{finding.severity === 'block' ? '🔴' : finding.severity === 'warn' ? '⚠️' : 'ℹ️'}</span>
-                <div className="flex-1">
-                  <p className="text-[12px] font-medium">{finding.message}</p>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[12px] font-medium wrap-break-word">{finding.message}</p>
                   {finding.suggestion && (
-                    <p className="text-xs opacity-80 mt-1">Suggestion: {finding.suggestion}</p>
+                    <p className="text-xs opacity-80 mt-1 wrap-break-word">Gợi ý: {finding.suggestion}</p>
                   )}
                 </div>
               </div>
@@ -237,14 +452,14 @@ function CheckpointCard({
         </div>
       )}
 
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-3 max-w-full overflow-hidden">
         <AlertTriangle size={24} className="text-accent shrink-0 mt-0.5" />
-        <div className="flex-1">
+        <div className="flex-1 min-w-0 max-w-full overflow-hidden">
           <h3 className="font-semibold text-accent-text mb-2">
             {checkpoint.action.type === 'confirm_brief'
               ? 'Chốt 1 — Xác nhận cách hiểu brief'
-              : checkpoint.action.type === 'confirm_solution'
-                ? 'Chốt 2 — Duyệt hướng giải pháp'
+              : isSolutionStage
+                ? 'Xác nhận phương án'
                 : 'Action Requires Approval'}
           </h3>
           <p className="text-[12px] text-accent-text mb-3">{checkpoint.action.description}</p>
@@ -252,51 +467,51 @@ function CheckpointCard({
           {/* Preview */}
           {checkpoint.action.preview && !isEditing && <div className="mb-4">{formatPreview(checkpoint.action.preview)}</div>}
 
-          {/* Edit mode */}
+          {/* Edit mode. Reachable only when `canEdit`, so there is no empty-state
+              branch here any more — that branch was the "Không có trường nào để sửa"
+              dead end Chốt 2 used to land on. */}
           {isEditing && (
             <div className="mb-4 rounded-lg bg-surface p-3">
-              {editableFields.length > 0 ? (
-                <>
-                  <p className="mb-3 text-[12px] text-text-muted">
-                    Sửa dòng nào sai, để trống nghĩa là bỏ trường đó.
-                  </p>
-                  <div className="flex flex-col gap-2.5">
-                    {editableFields.map((f) => (
-                      <label key={f.field} className="flex flex-col gap-1">
-                        <span className="text-[11px] font-medium text-text-muted">{f.label}</span>
-                        <input
-                          type="text"
-                          value={edits[f.field] ?? ''}
-                          onChange={(e) =>
-                            setEdits((prev) => ({ ...prev, [f.field]: e.target.value }))
-                          }
-                          placeholder={
-                            f.field === 'budget_vnd'
-                              ? 'vd: 300 triệu, 200 - 500 triệu, 1.5 tỷ'
-                              : 'Để trống nếu chưa có'
-                          }
-                          className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[13px] text-text outline-none transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <p className="text-xs text-text-muted">Không có trường nào để sửa ở bước này.</p>
-              )}
+              <p className="mb-3 text-[12px] text-text-muted">
+                Sửa dòng nào sai, để trống nghĩa là bỏ trường đó.
+              </p>
+              <div className="flex flex-col gap-2.5">
+                {editableFields.map((f) => (
+                  <label key={f.field} className="flex flex-col gap-1">
+                    <span className="text-[11px] font-medium text-text-muted">{f.label}</span>
+                    <input
+                      type="text"
+                      value={edits[f.field] ?? ''}
+                      onChange={(e) =>
+                        setEdits((prev) => ({ ...prev, [f.field]: e.target.value }))
+                      }
+                      placeholder={
+                        f.field === 'budget_vnd'
+                          ? 'vd: 300 triệu, 200 - 500 triệu, 1.5 tỷ'
+                          : 'Để trống nếu chưa có'
+                      }
+                      className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[13px] text-text outline-hidden transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
+                    />
+                  </label>
+                ))}
+              </div>
             </div>
           )}
 
-          {/* Auto-approve checkbox */}
-          {checkpoint.action.type !== 'send_external' && !isEditing && (
-            <label className="flex items-center gap-2 mb-3 text-xs text-text-muted cursor-pointer">
+          {/* Auto-approve checkbox. Hidden on the solution stage: that stop is raised
+              at most once per session (`confirmed_stages`), so "tự động duyệt các lần
+              tiếp theo" describes a next time that never comes. NOTE: this control is
+              currently inert everywhere — `autoApprove` is never sent with the approve
+              request, so the backend's `auto_approve` always arrives false. */}
+          {checkpoint.action.type !== 'send_external' && !isSolutionStage && !isEditing && (
+            <label className="flex items-center gap-2 mb-3 text-xs text-text-muted cursor-pointer hover:text-text transition-colors">
               <input
                 type="checkbox"
                 checked={autoApprove}
                 onChange={(e) => setAutoApprove(e.target.checked)}
-                className="rounded"
+                className="rounded-sm border-border text-accent focus:ring-accent"
               />
-              Don't ask again for {checkpoint.action.type} this session
+              Tự động duyệt bước này trong các lần tiếp theo của phiên
             </label>
           )}
 
@@ -306,15 +521,15 @@ function CheckpointCard({
               <>
                 <button
                   onClick={handleEditSubmit}
-                  className="flex items-center gap-1 px-4 py-2 bg-accent text-white rounded-md text-[12px] font-medium hover:opacity-90"
+                  className="flex items-center gap-1.5 px-4 py-2 bg-accent text-white rounded-xl text-xs font-semibold hover:opacity-90 transition-all shadow-xs active:scale-95"
                 >
-                  <Check size={16} /> Lưu & xem lại
+                  <Check size={16} /> Lưu & Xem lại
                 </button>
                 <button
                   onClick={() => setIsEditing(false)}
-                  className="flex items-center gap-1 px-4 py-2 border border-border text-text-muted rounded-md text-[12px] hover:bg-surface-hover"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-surface-2 text-text-muted rounded-xl text-xs font-medium hover:text-text hover:bg-surface-hover transition-all"
                 >
-                  <X size={16} /> Cancel
+                  Hủy
                 </button>
               </>
             ) : (
@@ -322,30 +537,39 @@ function CheckpointCard({
                 <button
                   onClick={onApprove}
                   disabled={hasBlocking}
-                  className={`flex items-center gap-1 px-4 py-2 rounded-md text-[12px] font-medium ${
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all shadow-xs active:scale-95 ${
                     hasBlocking
-                      ? 'bg-text-muted text-white cursor-not-allowed'
+                      ? 'bg-red-500/20 text-red-600 dark:text-red-400 cursor-not-allowed'
                       : 'bg-accent text-white hover:opacity-90'
                   }`}
                 >
-                  <Check size={16} /> Approve
+                  <Check size={16} /> Duyệt
                 </button>
-                <button
-                  onClick={startEditing}
-                  className="flex items-center gap-1 px-4 py-2 border border-border text-text-muted rounded-md text-[12px] hover:bg-surface-hover"
-                >
-                  <Edit size={16} /> Edit
-                </button>
+                {canEdit && (
+                  <button
+                    onClick={startEditing}
+                    className="flex items-center gap-1 px-4 py-2 border border-border text-text-muted rounded-md text-[12px] hover:bg-surface-hover"
+                  >
+                    <Edit size={16} /> Sửa
+                  </button>
+                )}
+                {/* Same handler either way — what differs is what the rep is being
+                    offered. At Chốt 1 rejecting means "cách hiểu này sai"; at Chốt 2 it
+                    means "đổi hướng giải pháp", which is the wording the card's own
+                    description already uses. Labelling both "Reject" left the only
+                    working way to change direction looking like a way to abandon the
+                    turn. */}
                 <button
                   onClick={onReject}
                   className="flex items-center gap-1 px-4 py-2 border border-border text-text-muted rounded-md text-[12px] hover:bg-surface-hover"
                 >
-                  <X size={16} /> Reject
+                  <X size={16} /> {isSolutionStage ? 'Đổi hướng' : 'Từ chối'}
                 </button>
               </>
             )}
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -368,17 +592,143 @@ export function ChatWindow({
   onEditCheckpoint,
   onClearError,
   onToggleContextPanel,
+  isContextPanelOpen = false,
   onToggleMobileSidebar,
+  onModeChange,
+  onNewChat,
   thinkingSteps = [],
+  sessionId = null,
+  proposalAssets = null,
 }: ChatWindowProps) {
   const [input, setInput] = useState('');
   const [showScrollButton, setShowScrollButton] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  // Track whether user is at the bottom so we only auto-scroll when appropriate
   const isAtBottomRef = useRef(true);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const [composerHeight, setComposerHeight] = useState(0);
 
+  // The composer grows up to 120px as the textarea wraps to multiple lines —
+  // the scroll-to-bottom button anchors above it by this measured height, not
+  // a guessed constant, so it never sits over the input or leaves a gap.
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    const update = () => setComposerHeight(el.offsetHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // --- Read-from-the-top turn anchoring ---------------------------------------
+  //
+  // This used to glue the viewport to the BOTTOM of the answer for the whole stream.
+  // On anything longer than a screen that means the rep watches the tail of a reply
+  // scroll past and then has to scroll back up hunting for where it started — and
+  // for where their own question was, which by then is several screens up. A BA
+  // testing it flagged exactly that: you cannot tell old answer from new, and no
+  // other AI chat behaves this way.
+  //
+  // What every one of them does instead, and what this does now: on send, pin the
+  // rep's new message to the TOP of the viewport and leave it there. The answer fills
+  // the space underneath, so reading is top-down and the question stays visible as
+  // the header of its own turn. Following the bottom becomes opt-in — scrolling down
+  // to the end (or pressing the scroll-to-bottom button) sets isAtBottomRef and the
+  // effect below resumes chasing, which is the "follow along" mode a rep can choose.
+  const turnAnchorRef = useRef<HTMLDivElement>(null);
+  const bottomSpacerRef = useRef<HTMLDivElement>(null);
+  // The user message that currently owns the viewport, held BY IDENTITY rather than by
+  // index. useChat appends one message object per send and never mutates it, so the
+  // reference is a stable per-turn key — where an index is not: "New Chat" after a
+  // one-question conversation gives the next question index 0 again, and an
+  // index-based guard would read that as the same turn and skip the pin.
+  const pinnedUserMsgRef = useRef<Message | null>(null);
+
+  /** Drop the reserved room under the newest turn. The spacer exists only so the
+   *  question can reach the top; the moment the rep asks to sit at the END of the
+   *  answer instead, that room is a screenful of blank they would be staring at. */
+  const collapseSpacer = useCallback(() => {
+    const spacer = bottomSpacerRef.current;
+    if (spacer && spacer.offsetHeight > 0) spacer.style.height = '0px';
+  }, []);
+
+  /** Re-derive follow-mode and the scroll-button from the container's current geometry.
+   *  Only refs and setState are captured, so this needs no effect dependency. */
+  const syncScrollState = useCallback(
+    (c: HTMLDivElement) => {
+      const distance = c.scrollHeight - c.scrollTop - c.clientHeight;
+      isAtBottomRef.current = isAtBottomRef.current
+        ? distance < LEAVE_BOTTOM_PX
+        : distance < ENTER_BOTTOM_PX;
+      setShowScrollButton(distance > LEAVE_BOTTOM_PX);
+      // Scrolling all the way down is the rep opting into follow mode, so give them the
+      // end of the text rather than the end of the padding. Collapsing shortens the
+      // page under them, scrollTop clamps, and the view lands on the last line — which
+      // is what "scroll to the bottom" was asking for.
+      if (isAtBottomRef.current) collapseSpacer();
+    },
+    [collapseSpacer]
+  );
+
+  useIsomorphicLayoutEffect(() => {
+    const idx = findLastUserIndex(messages);
+    // Only a message the rep just sent starts a turn — it is necessarily the last
+    // entry in the array. Restoring a past conversation from the sidebar also swaps
+    // the whole array, but there the last entry is an assistant message, and that
+    // view should open at the end of the transcript rather than at the last question.
+    const isFreshTurn =
+      idx !== -1 && idx === messages.length - 1 && messages[idx] !== pinnedUserMsgRef.current;
+    if (!isFreshTurn) return;
+    pinnedUserMsgRef.current = messages[idx];
+
+    const c = messagesContainerRef.current;
+    const anchor = turnAnchorRef.current;
+    const spacer = bottomSpacerRef.current;
+    if (!c || !anchor) return;
+
+    // The answer does not exist yet, so there is nothing below the question to scroll
+    // through — without room underneath it, the browser clamps and the question stops
+    // somewhere mid-screen. One viewport of spacer is always enough; it is measured
+    // back down when the turn finishes.
+    if (spacer) spacer.style.height = `${c.clientHeight}px`;
+
+    c.scrollTop = offsetWithin(c, anchor);
+    // We are deliberately not at the bottom now. Say so rather than waiting for the
+    // scroll event this write triggers, so no frame sees stale "following" state.
+    isAtBottomRef.current = false;
+    setShowScrollButton(true);
+  }, [messages]);
+
+  // Reclaim the spacer once the turn is done. Leaving a full viewport of blank space
+  // under every finished answer makes the transcript feel broken when scrolling back.
+  // Layout effects run before passive ones, so this settles the height before the
+  // follow-mode scroll below reads scrollHeight.
+  useIsomorphicLayoutEffect(() => {
+    if (isLoading) return;
+    const c = messagesContainerRef.current;
+    const spacer = bottomSpacerRef.current;
+    const anchor = turnAnchorRef.current;
+    if (!c || !spacer) return;
+
+    const current = spacer.offsetHeight;
+    if (current === 0) return;
+    const contentHeight = c.scrollHeight - current;
+    const anchorTop = anchor ? offsetWithin(c, anchor) : 0;
+    // Keep just enough for the question to still reach the top; usually the answer is
+    // taller than a viewport by now and this is 0.
+    spacer.style.height = `${Math.max(0, c.clientHeight - (contentHeight - anchorTop))}px`;
+
+    // Removing scrollable space does not fire a scroll event unless scrollTop happens
+    // to clamp, so without this a short answer left the scroll-to-bottom button
+    // floating over a page that has nothing below it any more.
+    syncScrollState(c);
+  }, [isLoading, syncScrollState]);
+
+  // Follow mode. Only runs when the rep has chosen to sit at the bottom — the pin
+  // above clears that flag at the start of every turn, so this is off by default.
+  //
   // Streaming rewrites the last message on every token, so this effect fires dozens
   // of times a second. `behavior: 'smooth'` starts a new animation on each of those
   // and each one cancels the last mid-flight — that is the jitter at the end of a
@@ -420,32 +770,44 @@ export function ChatWindow({
     wasLoading.current = isLoading;
   }, [isLoading]);
 
-  // Handle scroll to show/hide scroll button
+  // Handle scroll to show/hide scroll button.
+  //
+  // Throttled to one measurement per frame. The auto-scroll above writes `scrollTop`
+  // every frame while streaming, and each of those writes fires a `scroll` event —
+  // so this handler was reading three layout properties (a second forced synchronous
+  // layout of the whole message tree, on top of the one the writer already causes)
+  // and calling setShowScrollButton, every frame, on top of the token renders.
+  const scrollMeasureRaf = useRef<number | null>(null);
   const handleScroll = () => {
-    const container = messagesContainerRef.current;
-    if (!container) return;
-
-    const { scrollTop, scrollHeight, clientHeight } = container;
-    const distance = scrollHeight - scrollTop - clientHeight;
-
-    // Asymmetric thresholds. Leaving the bottom is easy — any real scroll up hands
-    // control back to the reader. Re-engaging needs them to come all the way down.
-    // With one 150px threshold, scrolling down through a streaming answer crossed
-    // back into "at bottom" early and the auto-scroll yanked them to the end.
-    isAtBottomRef.current = isAtBottomRef.current ? distance < 220 : distance < 32;
-    setShowScrollButton(distance > 220);
+    if (scrollMeasureRaf.current !== null) return;
+    scrollMeasureRaf.current = requestAnimationFrame(() => {
+      scrollMeasureRaf.current = null;
+      const container = messagesContainerRef.current;
+      if (container) syncScrollState(container);
+    });
   };
+
+  useEffect(
+    () => () => {
+      if (scrollMeasureRaf.current !== null) cancelAnimationFrame(scrollMeasureRaf.current);
+    },
+    []
+  );
 
   const scrollToBottom = () => {
     isAtBottomRef.current = true;
     setShowScrollButton(false);
+    // Before scrolling, not after: with the turn spacer still inflated the "bottom" is
+    // a screenful of blank space below the answer, and that is where this would land.
+    collapseSpacer();
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (input.trim() && !isLoading) {
-      isAtBottomRef.current = true;
+      // Deliberately does NOT set isAtBottomRef — the turn-anchoring effect pins the
+      // new question to the top of the viewport instead of following the answer down.
       onSendMessage(input);
       setInput('');
       if (textareaRef.current) {
@@ -456,29 +818,58 @@ export function ChatWindow({
       }
     }
   };
+
+  // Which message the turn anchor is attached to this render. Kept in sync with what
+  // the pinning effect looks for, so the ref points at the newest question.
+  const lastUserIndex = findLastUserIndex(messages);
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-bg overflow-hidden">
+    <div className="flex-1 flex flex-col h-full bg-bg overflow-hidden relative">
       {/* Header - compact */}
-      <header className="shrink-0 sticky top-0 z-30 px-3 sm:px-4 md:px-6 py-2.5 sm:py-3 bg-surface border-b border-border flex items-center justify-between">
-        <div className="flex items-center gap-2 sm:gap-3">
-          {/* Mobile sidebar toggle */}
+      <header className="app-chrome shrink-0 sticky top-0 z-20 safe-area-inset-top min-h-14 px-3 sm:px-4 md:px-6 bg-surface border-b border-border flex items-center justify-between">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          {/* Mobile sidebar toggle — the only hamburger now that the drawer lives
+              directly on the Sidebar component, off-canvas. */}
           <button
             onClick={onToggleMobileSidebar}
-            className="md:hidden p-1.5 sm:p-2 border border-border rounded-lg hover:bg-surface-hover transition-all"
+            className="md:hidden p-1.5 sm:p-2 border border-border rounded-lg hover:bg-surface-hover transition-all flex items-center justify-center"
+            aria-label="Mở menu"
           >
             <Menu size={18} className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
           </button>
 
-          {/* Mode indicator with per-mode accent underline */}
-          <div className="relative">
+          {/* Mobile: a compact mode switcher — the bottom nav that used to hold
+              this is gone, so this is the only mode control left once the
+              drawer is closed. Hidden entirely while CS mode is hidden and
+              HEADER_MODES has only one entry — a single always-active pill
+              isn't a switcher, it's clutter. Reappears on its own once a
+              second mode is added back to HEADER_MODES. */}
+          {onModeChange && HEADER_MODES.length > 1 && (
+            <div className="md:hidden flex items-center gap-0.5 p-0.5 rounded-lg bg-surface-2 border border-border">
+              {HEADER_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => onModeChange(m.id)}
+                  aria-pressed={mode === m.id}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                    mode === m.id ? 'bg-accent text-white' : 'text-text-muted'
+                  }`}
+                >
+                  {m.icon}
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Desktop: the mode indicator with per-mode accent underline. Reads
+              `mode` now — it used to hardcode "Chat Mode" even while in CS mode. */}
+          <div className="relative hidden md:block">
             <h2 className="text-sm sm:text-base font-semibold text-text flex items-center gap-1.5 sm:gap-2">
-              <span className="text-accent text-base sm:text-lg">💬</span>
-              <span className="hidden sm:inline">Chat</span>
-              <span className="sm:hidden">Chat</span>
-              <span className="hidden sm:inline">Mode</span>
+              <span className="text-accent text-base sm:text-lg">{mode === 'cs' ? '🎧' : '💬'}</span>
+              <span>{mode === 'cs' ? 'CS Mode' : 'PreSales Mode'}</span>
             </h2>
-            {/* Per-mode accent underline */}
-            <span className="absolute -bottom-1 left-0 right-0 h-0.5 bg-accent rounded" />
+            <span className="absolute -bottom-1 left-0 right-0 h-0.5 bg-accent rounded-sm" />
           </div>
         </div>
 
@@ -490,13 +881,28 @@ export function ChatWindow({
             </div>
           )}
 
+          {onNewChat && (
+            <button
+              onClick={onNewChat}
+              className="md:hidden p-1.5 sm:p-2 text-accent hover:bg-accent/10 rounded-lg transition-all"
+              title="Cuộc trò chuyện mới"
+              aria-label="Cuộc trò chuyện mới"
+            >
+              <Plus size={20} />
+            </button>
+          )}
+
           {onToggleContextPanel && (
             <button
               onClick={onToggleContextPanel}
-              className="hidden md:flex p-2 border border-border rounded-lg hover:bg-surface-hover transition-all"
-              title="Toggle Context Panel"
+              className="flex p-1.5 sm:p-2 border border-border rounded-lg hover:bg-surface-hover transition-all items-center justify-center"
+              title={isContextPanelOpen ? 'Close Context Panel' : 'Open Context Panel'}
             >
-              <PanelRightClose size={18} className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+              {isContextPanelOpen ? (
+                <PanelRightClose size={18} className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+              ) : (
+                <PanelRightOpen size={18} className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+              )}
             </button>
           )}
         </div>
@@ -504,8 +910,8 @@ export function ChatWindow({
 
       {/* Error display */}
       {error && (
-        <div className="shrink-0 px-3 md:px-6 py-3 bg-red-50 border-b border-red-200 flex items-center justify-between">
-          <span className="text-red-600 text-[12px]">{error}</span>
+        <div className="shrink-0 px-3 md:px-6 py-3 bg-red-500/10 border-b border-red-500/25 flex items-center justify-between">
+          <span className="text-red-600 dark:text-red-400 text-[12px]">{error}</span>
           <button onClick={onClearError} className="text-text-muted hover:text-text">
             <X size={16} />
           </button>
@@ -515,10 +921,18 @@ export function ChatWindow({
       {/* Messages area */}
       {/* overflow-anchor lets the browser hold the reader's position when content
           above them changes height — which is exactly what happens when a streamed
-          block finishes and re-renders into a diagram or a table. */}
+          block finishes and re-renders into a diagram or a table.
+
+          It is switched off for the one case where it is not help but interference:
+          while a reply streams AND the reader is parked at the bottom (no scroll
+          button), the effect above is already writing `scrollTop` every frame. Scroll
+          anchoring corrects `scrollTop` in the same frames, against a growing element,
+          and the two adjustments visibly fight — that is the residual judder that
+          survived making the write instant instead of smooth. A reader who has scrolled
+          up gets anchoring back immediately, which is when it actually matters. */}
       <div
         className="flex-1 overflow-y-auto min-h-0 relative"
-        style={{ overflowAnchor: 'auto' }}
+        style={{ overflowAnchor: isLoading && !showScrollButton ? 'none' : 'auto' }}
         ref={messagesContainerRef}
         onScroll={handleScroll}
       >
@@ -536,7 +950,7 @@ export function ChatWindow({
               ) : (
                 <>
                   <p className="mb-1.5 text-base text-text sm:text-[16px]">
-                    Chào bạn 👋 Mình là AdtimaBox Sales Agent
+                    Chào bạn 👋 Mình là Z-PreSales Agent
                   </p>
                   <p className="text-xs sm:text-[12px]">
                     Mô tả brief của khách, mình lo phần chiến lược, giải pháp, pháp lý và báo giá.
@@ -546,24 +960,26 @@ export function ChatWindow({
             </div>
 
             {/* An empty box with a blinking cursor tells a rep nothing about what this
-                thing can do. These are real openers: one click sends, and the shape of
-                the list doubles as the answer to "what am I supposed to type here". */}
-            <div className="mx-auto grid max-w-3xl gap-2 sm:grid-cols-2">
+                thing can do. These are real openers, laid out as a two-column table
+                (name | suggested description) rather than cards — one click sends the
+                underlying `prompt`, and each row is scoped to one specialist so the
+                list itself demonstrates that this isn't "type a brief, get a pptx". */}
+            <div className="mx-auto max-w-2xl overflow-hidden rounded-xl border border-border divide-y divide-border">
               {(mode === 'cs' ? CS_STARTERS : SALES_STARTERS).map((s) => (
                 <button
                   key={s.prompt}
                   type="button"
                   disabled={isLoading}
                   onClick={() => onSendMessage(s.prompt)}
-                  className="group rounded-xl border border-border bg-surface/60 p-3.5 text-left transition-all hover:border-accent hover:bg-accent-soft/40 active:scale-[0.99] disabled:opacity-50"
+                  className="group flex w-full flex-col gap-1 bg-surface/60 p-3.5 text-left transition-colors hover:bg-accent-soft/40 disabled:opacity-50 sm:flex-row sm:items-center sm:gap-4"
                 >
-                  <div className="mb-1 flex items-center gap-2">
+                  <span className="flex shrink-0 items-center gap-2 sm:w-47.5">
                     <span className="text-base">{s.icon}</span>
                     <span className="text-[13px] font-semibold text-text group-hover:text-accent-text">
                       {s.label}
                     </span>
-                  </div>
-                  <p className="text-[12px] leading-snug text-text-muted">{s.prompt}</p>
+                  </span>
+                  <span className="text-[12px] leading-snug text-text-muted">{s.description}</span>
                 </button>
               ))}
             </div>
@@ -576,15 +992,34 @@ export function ChatWindow({
 
         {messages.map((msg, index) => {
           const prevMsg = index > 0 ? messages[index - 1] : null;
-          const isGrouped = prevMsg && prevMsg.role === msg.role && prevMsg.agent === msg.agent;
+          // Marker for the top of the current turn. Zero-height and rendered *before*
+          // the bubble rather than wrapped around it, so it costs no layout and the
+          // bubble's own top margin becomes the breathing room above the pinned
+          // question. Only the newest user message carries it.
+          const isTurnAnchor = index === lastUserIndex;
+          // An action-summary message (checkpoint approval, question-card
+          // answers) never groups with what's before or after it — a whole
+          // approve/answer interaction happened in between, even though the
+          // checkpoint/question card itself isn't a `messages` array entry,
+          // so to the array these look like two adjacent same-role messages.
+          // Grouping them read as one continuous thought.
+          const isGrouped =
+            prevMsg &&
+            prevMsg.role === msg.role &&
+            prevMsg.agent === msg.agent &&
+            !msg.isActionSummary &&
+            !prevMsg.isActionSummary;
           const isLastMsg = index === messages.length - 1;
           return (
             <React.Fragment key={index}>
+              {isTurnAnchor && (
+                <div ref={turnAnchorRef} style={{ height: 0, overflowAnchor: 'none' }} />
+              )}
               {/* Render attached thinking trace above each assistant message that has steps */}
               {msg.role === 'assistant' && msg.thinkingSteps && msg.thinkingSteps.length > 0 && (
                 <ThinkingTrace steps={msg.thinkingSteps} isActive={false} />
               )}
-              <MessageBubble message={msg} isGrouped={!!isGrouped} isStreaming={isLastMsg && isLoading && msg.role === 'assistant'} />
+              <MessageBubble message={msg} isGrouped={!!isGrouped} isStreaming={isLastMsg && isLoading && msg.role === 'assistant'} sessionId={sessionId} />
             </React.Fragment>
           );
         })}
@@ -601,13 +1036,15 @@ export function ChatWindow({
           isThinking ||
           (messages.length > 0 && messages[messages.length - 1].role === 'user')
         ) && (
-          <div className="flex gap-3 mt-4">
-            <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-accent">
+          <div className="flex gap-3 mt-4 animate-fade-in-up">
+            <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-accent animate-pulse-glow glow-border">
               <Bot size={16} className="text-white" />
             </div>
-            <div className="flex items-center gap-2 text-text-muted bg-surface border border-border rounded-xl px-3 py-2">
-              <Loader2 size={14} className="animate-spin" />
-              <span className="text-[12px]">{isThinking ? 'Reasoning...' : 'Thinking...'}</span>
+            <div className="flex items-center gap-2 text-text-muted glass-panel border border-border rounded-xl px-4 py-2" style={{boxShadow: '0 4px 10px rgba(0,0,0,0.1)'}}>
+              <Loader2 size={14} className="animate-spin text-accent" />
+              <span className="text-[12px] font-medium bg-clip-text text-transparent bg-linear-to-r from-accent to-[#38bdf8] animate-pulse">
+                {isThinking ? 'Analyzing data...' : 'Processing...'}
+              </span>
             </div>
           </div>
         )}
@@ -633,30 +1070,56 @@ export function ChatWindow({
           />
         )}
 
+        {/* Room below the newest turn so its question can actually sit at the top of
+            the viewport while the answer is still short. Sized in the pinning effect
+            and measured back down when the turn ends — see the comments there.
+            `height` is deliberately absent from this style object: those effects write
+            it directly, and listing it here would let a later render reset it to 0. */}
+        <div ref={bottomSpacerRef} style={{ overflowAnchor: 'none' }} aria-hidden />
+
         {/* The sentinel must opt out of scroll anchoring, or the browser picks this
             zero-height element at the very bottom as its anchor and cancels out the
             auto-scroll we do want while streaming. */}
         <div ref={messagesEndRef} style={{ overflowAnchor: 'none' }} />
         </div>
-
-        {/* Scroll to bottom button */}
-        {showScrollButton && (
-          <button
-            onClick={scrollToBottom}
-            className="absolute bottom-36 sm:bottom-32 md:bottom-4 right-3 sm:right-4 md:right-8 p-2.5 sm:p-2 bg-accent text-white rounded-full shadow-lg hover:opacity-90 transition-opacity z-10"
-            title="Scroll to bottom"
-          >
-            <ArrowDown size={16} className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
-          </button>
-        )}
       </div>
 
+      {/* Scroll to bottom button — anchored to the outer (non-scrolling) flex
+          column, not the messages viewport it used to live inside. That div's
+          own content grows every time a reply streams in, so an absolutely
+          positioned child there sits relative to the *full scrolled height*,
+          not the visible bottom — it drifted up the page mid-stream instead of
+          staying pinned. Bottom offset tracks the composer's real height so it
+          always sits just above the input, never over it.
+          Always mounted (not conditionally rendered) so the opacity/translate
+          transition can actually play on the way out, not just the way in. */}
+      <button
+        onClick={scrollToBottom}
+        style={{ bottom: composerHeight + 12 }}
+        className={`absolute right-3 sm:right-4 md:right-8 z-10 p-2.5 sm:p-2 bg-accent-gradient text-white rounded-full shadow-lg hover:opacity-90 hover:shadow-xl transition-all duration-300 ease-out ${
+          showScrollButton
+            ? 'opacity-100 translate-y-0 pointer-events-auto'
+            : 'opacity-0 translate-y-3 pointer-events-none'
+        }`}
+        title="Scroll to bottom"
+        aria-hidden={!showScrollButton}
+      >
+        <ArrowDown size={16} className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+      </button>
+
       {/* Input area - refined composer */}
-      <div className="px-3 sm:px-4 md:px-6 py-2 sm:py-3 bg-bg border-t border-border pb-safe">
-        <div className="flex gap-2 items-end max-w-6xl mx-auto">
-          <div className="flex-1 relative">
+      <div ref={composerRef} className="px-3 sm:px-4 md:px-6 py-2 sm:py-3 bg-bg border-t border-border pb-safe">
+        {/* Pinned deliverables. Session-level, not per-message: the inline copy lives at the
+            end of the assistant turn that built the file, which on a full 7-section proposal
+            means scrolling the entire document to reach it. */}
+        {proposalAssets && (
+          <ProposalActionsBar assets={proposalAssets} sessionId={sessionId} variant="pinned" />
+        )}
+        <div className="flex gap-2 items-center max-w-6xl mx-auto">
+          <div className="w-full flex items-center justify-center relative">
             <textarea
               ref={textareaRef}
+              id='promt'
               value={input}
               onChange={(e) => {
                 setInput(e.target.value);
@@ -664,7 +1127,7 @@ export function ChatWindow({
                 t.style.height = 'auto';
                 t.style.height = Math.min(t.scrollHeight, 120) + 'px';
               }}
-              placeholder={mode === 'cs' ? 'Hỏi về CSHub, hoặc mô tả bug...' : 'Message AdtimaBox Sales Agent...'}
+              placeholder={mode === 'cs' ? 'Hỏi về CSHub, hoặc mô tả bug...' : 'Message Z-PreSales Agent...'}
               disabled={isLoading}
               rows={1}
               onKeyDown={(e) => {
@@ -673,7 +1136,7 @@ export function ChatWindow({
                   handleSubmit(e);
                 }
               }}
-              className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-border rounded-2xl text-sm sm:text-[13px] resize-none min-h-[44px] sm:min-h-[48px] bg-surface-2 text-text placeholder:text-text-muted/60 focus:border-accent focus:ring-2 focus:ring-accent/20 outline-none transition-all"
+              className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-border rounded-2xl text-sm sm:text-[13px] resize-none min-h-11 sm:min-h-12 bg-surface-2 text-text placeholder:text-text-muted/60 placeholder:truncate focus:border-accent focus:ring-2 focus:ring-accent/20 outline-hidden transition-all"
               style={{ lineHeight: '1.5' }}
             />
           </div>
@@ -681,10 +1144,10 @@ export function ChatWindow({
             type="button"
             onClick={handleSubmit}
             disabled={!input.trim() || isLoading}
-            className={`shrink-0 p-2.5 sm:p-3 rounded-2xl transition-all ${
+            className={`shrink-0 flex items-center justify-center h-11 w-11 sm:h-12 sm:w-12 rounded-2xl border transition-all ${
               input.trim() && !isLoading
-                ? 'bg-accent text-white hover:opacity-90 active:scale-95'
-                : 'bg-surface-2 text-text-muted cursor-not-allowed'
+                ? 'bg-accent border-accent text-white hover:opacity-90 active:scale-95'
+                : 'bg-surface-2 border-border text-text-muted cursor-not-allowed'
             }`}
           >
             <Send size={16} className="w-4 h-4 sm:w-4.5 sm:h-4.5" />

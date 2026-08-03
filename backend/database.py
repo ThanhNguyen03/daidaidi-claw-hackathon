@@ -61,6 +61,20 @@ def init_db() -> None:
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 );
             """)
+            # The history list reads (session_id, title, updated_at) ordered by
+            # updated_at. Without an index that is a full scan, and `updated_at` is
+            # the *last* column of a row whose messages_json routinely spills to
+            # overflow pages — so reaching it meant walking the overflow chain of
+            # every session on every poll. Keeping updated_at in the index avoids
+            # the row read entirely.
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_sessions_user_updated
+                ON sessions(user_id, updated_at DESC);
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_sessions_updated
+                ON sessions(updated_at DESC);
+            """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS org_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -305,17 +319,108 @@ def db_load_session(session_id: str) -> Optional[dict[str, Any]]:
         conn.close()
 
 
-def db_list_user_sessions(user_id: int, limit: int = 30) -> list[dict[str, Any]]:
+def db_list_user_sessions(user_id: Optional[int], limit: int = 30) -> list[dict[str, Any]]:
     conn = get_db_connection()
     try:
-        rows = conn.execute(
-            """
-            SELECT session_id, title, updated_at FROM sessions
-            WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?
-            """,
-            (user_id, limit),
-        ).fetchall()
+        if user_id:
+            rows = conn.execute(
+                """
+                SELECT session_id, title, updated_at FROM sessions
+                WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT session_id, title, updated_at FROM sessions
+                ORDER BY updated_at DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def db_get_session_owner(session_id: str) -> Optional[int]:
+    """Return the owning user_id, or None for a guest session.
+
+    Raises KeyError when the session does not exist, so a caller can tell
+    "nobody owns it" apart from "it is not there" — the delete endpoints answer
+    403 and 404 respectively.
+    """
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT user_id FROM sessions WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(session_id)
+        return row["user_id"]
+    finally:
+        conn.close()
+
+
+def db_delete_session(session_id: str) -> bool:
+    """Delete one conversation. Returns False if there was nothing to delete."""
+    conn = get_db_connection()
+    try:
+        with conn:
+            cur = conn.execute(
+                "DELETE FROM sessions WHERE session_id = ?", (session_id,)
+            )
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def db_delete_user_sessions(user_id: Optional[int]) -> list[str]:
+    """Delete every conversation belonging to one user.
+
+    Returns the ids that were removed so the caller can clean up the matching
+    in-memory state, alias tables and artifact files. A guest (user_id None)
+    only ever clears the unowned rows — never another rep's history.
+    """
+    conn = get_db_connection()
+    try:
+        if user_id:
+            rows = conn.execute(
+                "SELECT session_id FROM sessions WHERE user_id = ?", (user_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT session_id FROM sessions WHERE user_id IS NULL"
+            ).fetchall()
+        ids = [r["session_id"] for r in rows]
+        if not ids:
+            return []
+        with conn:
+            if user_id:
+                conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            else:
+                conn.execute("DELETE FROM sessions WHERE user_id IS NULL")
+        return ids
+    finally:
+        conn.close()
+
+
+def db_vacuum() -> None:
+    """Return freed pages to the filesystem.
+
+    A DELETE only marks pages reusable; the file keeps its size. Since the point
+    of the delete button is to reclaim disk, the VACUUM is part of it. Best
+    effort: it takes a write lock, and failing to shrink the file is not a reason
+    to fail the delete the user already saw succeed.
+    """
+    conn = get_db_connection()
+    try:
+        # VACUUM cannot run inside a transaction, and sqlite3 opens one
+        # implicitly for DML unless isolation_level is cleared first.
+        conn.isolation_level = None
+        conn.execute("VACUUM")
+    except Exception as e:
+        print(f"[database] VACUUM skipped: {e}")
     finally:
         conn.close()
 

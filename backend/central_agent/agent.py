@@ -1,4 +1,4 @@
-﻿"""
+"""
 Central Agent
 =============
 Single entry point that:
@@ -20,13 +20,14 @@ import asyncio
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 import random
 from typing import Any, AsyncGenerator, Optional
 
 import gate
 from knowledge.loader import RequestLedger
+from llm.pool import LLM_POOL
 from llm.usage import get_tracker
 from schemas.state import (
     AgentOutput,
@@ -38,6 +39,7 @@ from schemas.state import (
 from skills.base import (
     SkillContext,
     SkillOutput,
+    ThinkFilter,
     extract_json_block,
     loads_lenient,
     strip_think_blocks,
@@ -62,6 +64,72 @@ _CENTRAL_SKILL = _load_central_skill()
 _SKILL_TIMEOUT_S = 270  # per-skill wall-clock timeout; increased to give slow GreenNode MAAS room
 _RECENT_HISTORY_WINDOW = 20
 _SYNTHESIS_HISTORY_WINDOW = 12
+
+# How many skills may be *in flight* at once. Mirrors the cap in llm/client.py, and
+# exists so the two agree about what "running" means.
+#
+# Without a gate here, a group of five skills all started their _SKILL_TIMEOUT_S clock
+# the moment their task was created, while llm/client.py's semaphore let exactly one of
+# them talk to the provider. The skills at the back of that queue spent their entire
+# 270s budget waiting for a slot and then timed out having issued no request at all —
+# so a turn cost 270s per queued skill and reported the ones it never ran as failures.
+# Rate-limit retries make it certain rather than likely: one skill waiting out a 429 is
+# enough to push the rest past their deadline.
+#
+# Holding the slot for the whole skill, not per call, is deliberate: a skill makes two
+# calls (its knowledge selector, then its own completion) and re-queueing between them
+# is what produced the unfair interleaving in the first place.
+_ADMISSION_LIMIT = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "3")))
+_admission: Optional[asyncio.Semaphore] = None
+
+# Ceiling on the whole skill phase of one turn.
+#
+# Serialising admission fixes the spurious timeouts but removes the accidental bound
+# that came with them: seven skills at up to 270s each, queued one at a time, is a
+# turn the rep watches for half an hour. Past this point the remaining skills are
+# skipped and the answer is synthesised from what did finish — which is worth far
+# more than a complete set of results nobody stayed to read. The skip is announced,
+# per the rule that a degraded artifact says so.
+_TURN_BUDGET_S = float(os.getenv("TURN_BUDGET_S", "600"))
+# Below this there is no point admitting a skill: it cannot finish, and starting it
+# only delays the synthesis it would be cut off for.
+_MIN_SKILL_S = 20.0
+
+
+class _TurnBudgetExhausted(Exception):
+    """Raised instead of running a skill the turn no longer has time for."""
+
+
+def _admission_gate() -> asyncio.Semaphore:
+    """The process-wide skill admission gate, created on first use.
+
+    Lazily, because a module-level asyncio.Semaphore is constructed before there is
+    a running loop.
+    """
+    global _admission
+    if _admission is None:
+        _admission = asyncio.Semaphore(_ADMISSION_LIMIT)
+    return _admission
+
+
+async def _run_skill(
+    skill, ctx: SkillContext, deadline: Optional[float] = None
+) -> SkillOutput:
+    """Run one skill, starting its timeout only once it has a slot.
+
+    `deadline` is a loop clock reading, not a duration — the point is that time spent
+    queueing counts against the turn, and does not count against this skill.
+    """
+    async with _admission_gate():
+        timeout = float(_SKILL_TIMEOUT_S)
+        if deadline is not None:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining < _MIN_SKILL_S:
+                raise _TurnBudgetExhausted()
+            timeout = min(timeout, remaining)
+        return await asyncio.wait_for(skill.execute(ctx), timeout=timeout)
+
+
 # Skills that must run after all analysis skills complete, each in its own group and
 # in this order: the deck is built from the assembler's finished proposal.
 #
@@ -74,6 +142,12 @@ _SYNTHESIS_HISTORY_WINDOW = 12
 # And with LLM_MAX_CONCURRENCY=1 the pair was serialised by the semaphore anyway, so
 # "parallel" was never buying the latency it was justified by.
 _ALWAYS_SEQUENTIAL: set[str] = {"proposal_assembler", "wireframe_designer"}
+# Registered skills that may never appear in a plan group — the rep triggers them directly
+# from the UI, on a proposal that already exists. Hiding one from the planner's catalog is
+# not enough on its own: the planner invents skill names, and "figma_wireframe" is an easy
+# guess on any message mentioning a wireframe. So the name is also subtracted from the
+# validation set in _plan, which is the only place that decides what actually dispatches.
+_ON_DEMAND_ONLY: set[str] = {"figma_wireframe"}
 # The order they run in, one group each. Every code path that arranges the plan must
 # preserve this — the deck is rendered from the assembler's output.
 _SEQUENTIAL_ORDER: list[str] = ["proposal_assembler", "wireframe_designer"]
@@ -82,8 +156,13 @@ _AUTO_AFTER: dict[str, str] = {"proposal_assembler": "wireframe_designer"}
 # The deck group, injected on its own after proposal_assembler.
 _DECK_STEP: dict[str, str] = {
     "skill": "wireframe_designer",
-    "task": "Generate HTML deck + PPTX from the assembled proposal",
+    "task": "Generate the downloadable PPTX from the assembled proposal",
 }
+
+# Characters per SSE frame when replaying an already-finished proposal (see
+# _synthesize). Small enough that the frontend paints it progressively, large enough
+# that a 30KB proposal is ~75 frames rather than ~30,000.
+_PROPOSAL_STREAM_CHUNK = 400
 
 
 def _insert_deck_after_assembler(
@@ -295,6 +374,13 @@ def _build_contextual_skill_plan(
         return [[{"skill": "client_simulator", "task": task_short}]]
     if intent == "lookup":
         return [[{"skill": "product_solution", "task": task_short}]]
+    if intent == "casual":
+        # No specialist owns small talk / an ambiguous "what now" — running the
+        # default-branch "all core skills" below for "tôi muốn làm việc khác" is
+        # exactly the sticky-desired_outputs bug this intent was added to stop.
+        # An empty plan means no skill runs; _synthesize answers from
+        # conversation history alone (its "no new analysis" fallback path).
+        return []
     # Sequential skills are excluded from the analysis group and injected
     # as their own final parallel group (assembler + wireframe run together).
     _SEQUENTIAL = {"proposal_assembler", "wireframe_designer"}
@@ -396,38 +482,175 @@ def _build_brief_checkpoint(state, verdict):
     )
 
 
-def _build_solution_checkpoint(state, outputs):
-    """Chốt 2 card: the direction and feasibility verdict, before anything is rendered."""
+def _build_solution_checkpoint(state, outputs, summary_above: bool = True):
+    """Chốt 2 card: the direction and feasibility verdict, before anything is rendered.
+
+    `summary_above` says whether this turn is also streaming the analysis as prose just
+    before the card. It usually is — but not when the plan contained nothing except the
+    render group, which happens on the turn right after the rep approves Chốt 1: the
+    analysis already ran in earlier turns, so the planner goes straight to assembly and
+    this card is the only thing the turn emits. In that case the card has to carry the
+    content, or the rep is asked to approve a direction they cannot see.
+    """
     import uuid as _uuid
 
     from schemas.state import Checkpoint, CheckpointAction
 
-    def _head(name: str, limit: int = 900) -> str:
+    import re as _re
+
+    import json as _json
+
+    def _truncate_at_word(text: str, limit: int) -> str:
+        """Cut a preview without severing mid-word — a raw `[:limit]` slice used to
+        land inside a word or sentence, which read as the agent's output having
+        broken off rather than as an intentional preview."""
+        if len(text) <= limit:
+            return text
+        cut = text[:limit]
+        last_space = cut.rfind(" ")
+        if last_space > 0:
+            cut = cut[:last_space]
+        return cut.rstrip() + "…"
+
+    def _clean_text(name: str, limit: int = 1000) -> str:
         out = outputs.get(name)
         text = getattr(out, "content", "") if out else ""
-        return text[:limit]
+        if not text:
+            return ""
+
+        # If output is JSON (from skills), extract human readable fields
+        parsed_obj = None
+        raw = text.strip()
+        if raw.startswith("```"):
+            raw = _re.sub(r"^```[a-z]*\n?", "", raw, flags=_re.IGNORECASE)
+            raw = _re.sub(r"\n?```$", "", raw).strip()
+
+        json_match = _re.search(r"\{[\s\S]*\}", raw)
+        if json_match:
+            try:
+                parsed_obj = _json.loads(json_match.group(0))
+            except Exception:
+                parsed_obj = None
+
+        if parsed_obj and isinstance(parsed_obj, dict):
+            lines = []
+            prob = parsed_obj.get("problem_statement")
+            conf = parsed_obj.get("confidence_notes")
+            summ = parsed_obj.get("summary")
+            verd = parsed_obj.get("verdict")
+            gap = parsed_obj.get("gap_analysis")
+
+            if prob:
+                lines.append(f"**Bài toán:** {prob}")
+            if conf:
+                lines.append(f"**Giả định & Lưu ý:** {conf}")
+            if summ:
+                lines.append(f"**Tóm tắt giải pháp:** {summ}")
+            if verd:
+                lines.append(f"**Đánh giá:** {verd}")
+            if isinstance(gap, dict):
+                if gap.get("current_state"):
+                    lines.append(f"**Hiện trạng:** {gap.get('current_state')}")
+                if gap.get("desired_state"):
+                    lines.append(f"**Mục tiêu:** {gap.get('desired_state')}")
+
+            if not lines:
+                for k, v in parsed_obj.items():
+                    if k in ("skill", "status", "agent", "model"):
+                        continue
+                    if isinstance(v, (str, int, float)):
+                        lines.append(f"**{k.replace('_', ' ').title()}:** {v}")
+
+            text = "\n\n".join(lines)
+
+        # Strip ASCII header lines like === A4 COMPLIANCE REPORT ===
+        cleaned = _re.sub(r'^[-=]{3,}\s*[A-Z0-9_\s—\-]*\s*[-=]*$', '', text, flags=_re.MULTILINE)
+        cleaned = _re.sub(r'^([=]{3,}|-{3,})$', '', cleaned, flags=_re.MULTILINE)
+
+        # Translate common English phrases to Vietnamese
+        translations = [
+          (r"OVERALL VERDICT:\s*⚠️?\s*PROCEED WITH CONDITIONS", "📌 Kết luận: ĐƯỢC TRIỂN KHAI CÓ ĐIỀU KIỆN ⚠️"),
+          (r"OVERALL VERDICT:\s*PROCEED", "📌 Kết luận: ĐƯỢC PHÉP TRIỂN KHAI 🟢"),
+          (r"OVERALL VERDICT:\s*BLOCK", "📌 Kết luận: CẦN TẠM DỪNG / CHẶN 🔴"),
+          (r"Risk summary:\s*(\d+)\s*High\s*\|\s*(\d+)\s*Medium\s*\|\s*(\d+)\s*Note", r"📊 Mức độ rủi ro: \1 Cao | \2 Vừa | \3 Lưu ý"),
+          (r"EXPLICIT ASSUMPTIONS", "Giả định triển khai chính"),
+          (r"\(Provisional\s*[\-–—]\s*pending client confirmation\)", "(Tạm thời — chờ xác nhận)"),
+          (r"ASSUMPTIONS STATEMENT", "Giả định triển khai"),
+          (r"RUNNING WITH ASSUMPTIONS", "Giả định thực thi"),
+          (r"A4 COMPLIANCE REPORT", "Báo cáo tuân thủ & Pháp lý"),
+          (r"PROPOSAL:\s*", "Đề xuất: "),
+          (r"SOLUTION ARCHITECTURE & PACKAGE MAPPING", "Kiến trúc giải pháp & Gói dịch vụ"),
+          (r"SPECIFIC REQUIREMENTS:", "Yêu cầu cụ thể:"),
+          (r"CONSTRAINTS:", "Ràng buộc & Hạn chế:"),
+          (r"STRATEGIC DIAGNOSIS", "Chẩn đoán chiến lược"),
+          (r"Campaign Scale:", "Quy mô chiến dịch:"),
+          (r"Database Scale:", "Quy mô cơ sở dữ liệu:"),
+          (r"Database Size:", "Dung lượng dữ liệu:"),
+          (r"Acquisition & Loyalty Mechanic:", "Cơ chế Thu hút & Tích điểm Loyalty:"),
+          (r"Timeline Duration:", "Thời gian chiến dịch:"),
+          (r"Primary Objective:", "Mục tiêu chính:"),
+          (r"Objective:", "Mục tiêu:"),
+          (r"Total Provisional Budget:", "Tổng ngân sách dự kiến:"),
+          (r"Total Budget:", "Tổng ngân sách:"),
+          (r"Timeline:", "Thời gian triển khai:"),
+          (r"Client:", "Khách hàng:"),
+          (r"Industry:", "Ngành hàng:"),
+          (r"Assumptions applied:", "Giả định áp dụng:"),
+          (r"The FMCG beverage brand needs to increase repeat purchase frequency", "Thương hiệu nước giải khát FMCG cần tăng tần suất mua lại"),
+          (r"and build direct consumer data because category switching is high", "và xây dựng dữ liệu khách hàng trực tiếp"),
+          (r"High reliance on traditional trade/modern trade with zero direct consumer data", "Phụ thuộc nhiều vào kênh bán lẻ truyền thống, chưa có dữ liệu khách hàng trực tiếp"),
+          (r"An owned Zalo Mini App loyalty ecosystem", "Hệ sinh thái Zalo Mini App Loyalty riêng"),
+        ]
+        for pat, repl in translations:
+            cleaned = _re.sub(pat, repl, cleaned, flags=_re.IGNORECASE)
+
+        # For compliance, ensure overall verdict & risk summary come first
+        if name == "compliance":
+            verdict_match = _re.search(r'(📌 Kết luận:.*?)(?=\n\n|\n[A-Z]|$)', cleaned, _re.DOTALL)
+            risk_match = _re.search(r'(📊 Mức độ rủi ro:.*?)(?=\n\n|\n[A-Z]|$)', cleaned, _re.DOTALL)
+            prefix = ""
+            if verdict_match:
+                prefix += f"**{verdict_match.group(1).strip()}**\n\n"
+            if risk_match and risk_match.group(1) not in prefix:
+                prefix += f"{risk_match.group(1).strip()}\n\n"
+            if prefix:
+                return _truncate_at_word(prefix + cleaned, limit)
+
+        return _truncate_at_word(cleaned.strip(), limit)
+
+    preview_data = {
+        "compliance": _clean_text("compliance", 1000),
+        "strategy": _clean_text("market_strategy", 1000),
+        "solution": _clean_text("product_solution", 1000),
+    }
 
     return Checkpoint(
         id=f"cp_solution_{_uuid.uuid4().hex[:10]}",
         action=CheckpointAction(
             type="confirm_solution",
             description=(
-                "Đây là hướng giải pháp và phán quyết khả thi. Duyệt thì mình dựng "
-                "proposal đầy đủ; muốn đổi hướng thì nói, phần chiến lược và pháp lý "
-                "vẫn giữ nguyên."
+                (
+                    "Toàn bộ phương án nằm ngay bên trên. "
+                    if summary_above
+                    else "Đây là hướng giải pháp mình đã chốt từ phần phân tích trước đó. "
+                )
+                + "Duyệt để mình dựng proposal đầy đủ và file PPTX. Muốn đổi hướng thì "
+                "bấm Đổi hướng rồi nói rõ cần sửa gì — phần chiến lược và pháp lý vẫn "
+                "giữ nguyên."
             ),
             parameters={},
-            preview={
-                "strategy": _head("market_strategy"),
-                "solution": _head("product_solution"),
-                "compliance": _head("compliance", 500),
-            },
+            # Only when the turn is NOT also streaming the analysis. Normally it is, and
+            # every word of this preview is already on screen as "Tóm tắt đề xuất" right
+            # above the card — repeating it there made the rep read the same three blocks
+            # twice, the second time cut off mid-sentence at 1000 characters. When the
+            # turn emits nothing but this card, the duplication argument disappears and
+            # the opposite problem takes over: an approval request with nothing to read.
+            preview=None if summary_above else preview_data,
         ),
-        preview={
-            "strategy": _head("market_strategy"),
-            "solution": _head("product_solution"),
-            "compliance": _head("compliance", 500),
-        },
+        # The server-side copy stays: the caller uses it to decide whether there is
+        # anything worth confirming at all (an empty card above three blank rows is
+        # worse than no card), and that check has to see the real text.
+        preview=preview_data,
     )
 
 
@@ -706,11 +929,11 @@ class CentralAgent:
 
         # Step 1: Quick check — is this just a greeting/casual chat?
         if not resuming and self._is_casual(message):
-            response = await self._casual_reply(message)
+            response = await self._casual_reply(message, state)
             yield {"type": "content", "content": response}
             state.messages.append({
                 "role": "assistant", "content": response,
-                "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+                "agent": "central_agent", "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             yield {"type": "done"}
             return
@@ -789,7 +1012,7 @@ class CentralAgent:
             yield {"type": "content", "content": msg}
             state.messages.append({
                 "role": "assistant", "content": msg, "agent": "central_agent",
-                "kind": "service_error", "timestamp": datetime.now().isoformat(),
+                "kind": "service_error", "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             yield {"type": "done"}
             return
@@ -802,7 +1025,14 @@ class CentralAgent:
         # The planner sometimes still returns needs_clarification for these; the
         # classification wins, because asking a rep for their industry before telling
         # them what a package costs is the single most annoying thing this can do.
-        conversational = intent in ("lookup", "coaching")
+        #
+        # "casual" belongs here too — it was missing, so a message the planner itself
+        # correctly recognised as small talk / an ambiguous "what now" ("tôi muốn làm
+        # việc khác") still fell through to the brief-dispatch path below: Chốt 1 fired
+        # again, and the sticky `desired_outputs` safety net (see below) rebuilt the
+        # whole proposal — market_strategy through wireframe_designer — for a message
+        # that was not asking for one.
+        conversational = intent in ("lookup", "coaching", "casual")
 
         # The planner may ask for more, but only when it has actually formulated a
         # question. Without this, a complete brief could be answered with the canned
@@ -859,7 +1089,7 @@ class CentralAgent:
             state.messages.append({
                 "role": "assistant", "content": clarification_msg,
                 "agent": "central_agent", "kind": "clarification",
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             yield {"type": "done"}
             return
@@ -935,10 +1165,23 @@ class CentralAgent:
 
         skill_registry = get_skill_registry()
         all_outputs: dict[str, SkillOutput] = {}
+        # Set when Chốt 2 stops the turn. A confirmation stop IS the turn's output —
+        # the same rule main.py already applies when deciding whether an assistant
+        # message was emitted. Without this the "no skill returned anything" branch
+        # below fires whenever the stop happens before any skill ran this turn, which
+        # is the normal shape of the turn right after Chốt 1 is approved: the analysis
+        # is already on the session, so the plan is render-only. The rep approved the
+        # brief and got "Xin lỗi, các skill không trả về kết quả" for it.
+        stopped_for_checkpoint = False
 
         # One ledger for the whole turn: a reference read for the strategy agent is not
         # read again for the product agent, and the §14 log can account for the total.
         ledger = RequestLedger(request_id=f"{state.session_id}:{len(state.messages)}")
+
+        # The clock the whole skill phase runs against. Set once here, so every group
+        # shares it: a first group that ran long leaves less for the ones after it,
+        # which is the point — the rep is waiting on the turn, not on a group.
+        turn_deadline = asyncio.get_running_loop().time() + _TURN_BUDGET_S
 
         # Thinking trace: skill plan
         _plan_skills = [
@@ -981,7 +1224,11 @@ class CentralAgent:
             if is_render_group and not conversational and "confirm_solution" not in state.confirmed_stages:
                 merged_now = dict(state.outputs)
                 merged_now.update(all_outputs)
-                checkpoint = _build_solution_checkpoint(state, merged_now)
+                # `all_outputs` empty means no skill ran this turn, so nothing will be
+                # streamed above the card — see _build_solution_checkpoint.
+                checkpoint = _build_solution_checkpoint(
+                    state, merged_now, summary_above=bool(all_outputs)
+                )
 
                 # Nothing to approve if the analysis produced nothing — which happens
                 # when the skills were rate-limited. An empty card asking "duyệt hướng
@@ -994,6 +1241,7 @@ class CentralAgent:
                 preview = checkpoint.preview or {}
                 if any((preview.get(k) or "").strip() for k in ("strategy", "solution", "compliance")):
                     state.checkpoint = checkpoint
+                    stopped_for_checkpoint = True
                     print("[checkpoint] CHOT 2 raised — awaiting solution confirmation")
                     yield {"type": "checkpoint", "checkpoint": checkpoint.model_dump(mode="json")}
                     break
@@ -1003,6 +1251,26 @@ class CentralAgent:
             for item in group:
                 skill_name = item.get("skill", "")
                 task_desc = item.get("task", message)
+
+                # Force inject latest brief values (budget, industry, goal, timeline) into task_desc
+                # so specialist agents NEVER hallucinate old numbers (e.g. 300M instead of 100M)
+                if state.brief:
+                    brief_parts = []
+                    if state.brief.industry:
+                        brief_parts.append(f"Ngành hàng: {state.brief.industry}")
+                    if state.brief.budget_vnd:
+                        brief_parts.append(f"Ngân sách CHÍNH XÁC: {state.brief.budget_vnd:,.0f} VNĐ")
+                    if state.brief.goal:
+                        brief_parts.append(f"Mục tiêu: {state.brief.goal}")
+                    if state.brief.timeline:
+                        brief_parts.append(f"Thời gian: {state.brief.timeline}")
+                    if brief_parts:
+                        task_desc += (
+                            f"\n\n[DỮ LIỆU BRIEF BẮT BUỘC MỚI NHẤT - KHÔNG ĐƯỢC DÙNG CON SỐ KHÁC]:\n"
+                            + " | ".join(brief_parts)
+                            + "\n(Yêu cầu lập giải pháp & tính toán báo giá TUÂN THỦ ĐÚNG ngân sách trên)."
+                        )
+
                 skill = skill_registry.get(skill_name)
                 if not skill:
                     print(f"[CentralAgent] Skill not found: {skill_name}, skipping")
@@ -1016,7 +1284,7 @@ class CentralAgent:
                 # Re-running is what a *rejection* is for (BRD §11.3).
                 if resuming and skill_name not in _ALWAYS_SEQUENTIAL:
                     prior = state.outputs.get(skill_name)
-                    if prior is not None and _safe_field(prior, "status", "") == "COMPLETE":
+                    if prior is not None and _safe_field(prior, "status", "") in ("COMPLETE", "PARTIAL"):
                         print(f"[CentralAgent] {skill_name}: reusing result from before the checkpoint")
                         continue
                 # Merge prior session outputs with current-run group outputs so skills
@@ -1044,16 +1312,39 @@ class CentralAgent:
                     session_id=state.session_id,
                     ledger=ledger,
                 )
+                # The analysis skills are additive — four of five still makes a usable
+                # answer — so they run against the turn budget. The assembler and the
+                # deck are the deliverable itself: skipping one of those means the rep
+                # waited out the whole budget and got no proposal, which is strictly
+                # worse than waiting longer. Those stay bounded by _SKILL_TIMEOUT_S only.
                 t = asyncio.create_task(
-                    asyncio.wait_for(skill.execute(ctx), timeout=_SKILL_TIMEOUT_S)
+                    _run_skill(
+                        skill,
+                        ctx,
+                        None if skill_name in _ALWAYS_SEQUENTIAL else turn_deadline,
+                    )
                 )
                 tasks[t] = skill_name
-                yield {"type": "agent_status", "agent": skill_name, "status": "thinking", "task": task_desc[:200]}
+                # Only the first _ADMISSION_LIMIT of a group get a slot straight away;
+                # the rest are queued. Saying "thinking" for all of them showed the rep
+                # five agents working when one was, and the sidebar already has a
+                # distinct 'waiting' state for exactly this.
+                queued = len(tasks) > _ADMISSION_LIMIT
+                yield {
+                    "type": "agent_status",
+                    "agent": skill_name,
+                    "status": "waiting" if queued else "thinking",
+                    "task": task_desc[:200],
+                }
                 yield {
                     "type": "thinking_trace",
                     "step": "skill_start",
                     "agent": skill_name,
-                    "content": f"Khởi chạy agent {skill_name}: {task_desc[:120]}",
+                    "content": (
+                        f"Chờ lượt chạy agent {skill_name}"
+                        if queued
+                        else f"Khởi chạy agent {skill_name}: {task_desc[:120]}"
+                    ),
                 }
 
             if not tasks:
@@ -1069,7 +1360,7 @@ class CentralAgent:
                         all_outputs[skill_name] = out
                         state.outputs[skill_name] = AgentOutput(
                             agent=skill_name,
-                            status="COMPLETE" if out.status == "COMPLETE" else "FAILED",
+                            status=out.status if out.status in ("COMPLETE", "PARTIAL") else "FAILED",
                             payload=out.payload,
                             summary=out.summary,
                             content=out.content,
@@ -1080,11 +1371,17 @@ class CentralAgent:
                         # a full row of green ticks, and only the final message admitted
                         # anything was wrong. The status event carries the real status.
                         #
+                        # PARTIAL (truncated by max_tokens, see skills/base.py) is grouped
+                        # with COMPLETE here, not with FAILED: it still has real content —
+                        # every skill already appends "[Bị cắt do giới hạn độ dài]" to its
+                        # own summary, which is the signal the rep actually needs, not a
+                        # false "thất bại" for output that only got cut short.
+                        #
                         # The model comes along with it because it is not knowable from
                         # config: a fallback means the skill ran on something other than
                         # its MODEL_<NAME>, and that is worth seeing on the row itself.
                         model_used = get_tracker().last_model_for(skill_name)
-                        if out.status == "COMPLETE":
+                        if out.status in ("COMPLETE", "PARTIAL"):
                             yield {"type": "agent_status", "agent": skill_name,
                                    "status": "completed", "model": model_used}
                             yield {
@@ -1105,6 +1402,20 @@ class CentralAgent:
                                 "agent": skill_name,
                                 "content": f"Agent {skill_name} thất bại: {(out.summary or 'Lỗi không xác định')[:120]}",
                             }
+                    except _TurnBudgetExhausted:
+                        # Not a failure of the skill — it was never given a chance. Say
+                        # that, so the rep can read the thin section as "ran out of time"
+                        # rather than "the analysis found nothing".
+                        print(f"[CentralAgent] {skill_name} skipped — turn budget "
+                              f"({_TURN_BUDGET_S:.0f}s) spent before it was admitted")
+                        yield {"type": "agent_status", "agent": skill_name, "status": "failed",
+                               "message": "Hết thời gian lượt chạy — agent chưa kịp chạy"}
+                        yield {
+                            "type": "thinking_trace",
+                            "step": "skill_skipped",
+                            "agent": skill_name,
+                            "content": f"Bỏ qua agent {skill_name}: lượt chạy đã hết thời gian",
+                        }
                     except asyncio.TimeoutError:
                         print(f"[CentralAgent] Skill {skill_name} timed out after {_SKILL_TIMEOUT_S}s")
                         yield {"type": "agent_status", "agent": skill_name, "status": "failed",
@@ -1117,7 +1428,7 @@ class CentralAgent:
         # Step 3C: Auto-trigger wireframe_designer after proposal_assembler (only if COMPLETE)
         for trigger_skill, auto_skill in _AUTO_AFTER.items():
             trigger_out = all_outputs.get(trigger_skill)
-            if (trigger_out and trigger_out.status == "COMPLETE"
+            if (trigger_out and trigger_out.status in ("COMPLETE", "PARTIAL")
                     and trigger_out.content and auto_skill not in all_outputs):
                 auto = skill_registry.get(auto_skill)
                 if auto:
@@ -1132,7 +1443,7 @@ class CentralAgent:
                         for k, v in all_outputs.items()
                     })
                     auto_ctx = SkillContext(
-                        task="Generate proposal deck assets (HTML deck + PPTX)",
+                        task="Generate the proposal file (downloadable PPTX)",
                         brief=state.brief,
                         messages=state.messages[-_RECENT_HISTORY_WINDOW:],
                         previous_outputs=merged_auto,
@@ -1142,13 +1453,11 @@ class CentralAgent:
                     )
                     yield {"type": "agent_status", "agent": auto_skill, "status": "thinking"}
                     try:
-                        auto_out = await asyncio.wait_for(
-                            auto.execute(auto_ctx), timeout=_SKILL_TIMEOUT_S
-                        )
+                        auto_out = await _run_skill(auto, auto_ctx)
                         all_outputs[auto_skill] = auto_out
                         state.outputs[auto_skill] = AgentOutput(
                             agent=auto_skill,
-                            status="COMPLETE" if auto_out.status == "COMPLETE" else "FAILED",
+                            status=auto_out.status if auto_out.status in ("COMPLETE", "PARTIAL") else "FAILED",
                             payload=auto_out.payload,
                             summary=auto_out.summary,
                             content=auto_out.content,
@@ -1177,7 +1486,7 @@ class CentralAgent:
         _is_deck_request = any(kw in _msg_lower for kw in _DECK_REQUEST_KWS)
         if _is_deck_request and not conversational and "wireframe_designer" not in all_outputs:
             prior_pa = state.outputs.get("proposal_assembler")
-            if (prior_pa and _safe_field(prior_pa, "status", "") == "COMPLETE"
+            if (prior_pa and _safe_field(prior_pa, "status", "") in ("COMPLETE", "PARTIAL")
                     and _safe_field(prior_pa, "content", "")):
                 _deck_skill = skill_registry.get("wireframe_designer")
                 if _deck_skill:
@@ -1192,7 +1501,7 @@ class CentralAgent:
                         for k, v in all_outputs.items()
                     })
                     deck_ctx = SkillContext(
-                        task="Generate proposal deck assets (HTML deck + PPTX)",
+                        task="Generate the proposal file (downloadable PPTX)",
                         brief=state.brief,
                         messages=state.messages[-_RECENT_HISTORY_WINDOW:],
                         previous_outputs=merged_deck,
@@ -1202,13 +1511,11 @@ class CentralAgent:
                     )
                     yield {"type": "agent_status", "agent": "wireframe_designer", "status": "thinking"}
                     try:
-                        deck_out = await asyncio.wait_for(
-                            _deck_skill.execute(deck_ctx), timeout=_SKILL_TIMEOUT_S
-                        )
+                        deck_out = await _run_skill(_deck_skill, deck_ctx)
                         all_outputs["wireframe_designer"] = deck_out
                         state.outputs["wireframe_designer"] = AgentOutput(
                             agent="wireframe_designer",
-                            status="COMPLETE" if deck_out.status == "COMPLETE" else "FAILED",
+                            status=deck_out.status if deck_out.status in ("COMPLETE", "PARTIAL") else "FAILED",
                             payload=deck_out.payload,
                             summary=deck_out.summary,
                             content=deck_out.content,
@@ -1232,7 +1539,7 @@ class CentralAgent:
             }
             async for event in self._synthesize(state, message, all_outputs, prior_skill_names):
                 yield event
-        else:
+        elif not stopped_for_checkpoint:
             yield {"type": "content", "content": "Xin lỗi, các skill không trả về kết quả. Vui lòng thử lại."}
 
         yield {"type": "done"}
@@ -1294,7 +1601,7 @@ class CentralAgent:
 
         # Build a live skill catalog from the registry — no hardcoded skill names.
         # Exclude auto-triggered skills from the LLM's planning catalog.
-        _EXCLUDE_FROM_PLAN = {"wireframe_designer"}
+        _EXCLUDE_FROM_PLAN = {"wireframe_designer"} | _ON_DEMAND_ONLY
         registry = get_skill_registry()
         skill_catalog = "\n".join(
             f"  {name}: {desc}"
@@ -1310,11 +1617,18 @@ class CentralAgent:
         if _CENTRAL_SKILL:
             system_prompt = f"{_CENTRAL_SKILL}\n\n---\n\n{system_prompt}"
 
-        # Inject Admin-configured Org Rules (learning from Admin Panel)
+        # Inject Admin-configured Org Rules (learning from Admin Panel). scope="all"
+        # here is deliberate and unrelated to which scope an admin picked when
+        # creating a rule — get_active_rules() treats "all" as "no filter, return
+        # every active rule", so the planner sees every org rule regardless of its
+        # scope. Each specialist skill additionally fetches its own scope-filtered
+        # subset via BaseSkill._fetch_org_rules(), which is what makes the Admin
+        # Panel's per-skill scope picker actually mean something.
         try:
             from database import get_active_rules
-            rules = get_active_rules(scope="all")
+            rules = await asyncio.to_thread(get_active_rules, scope="all")
             if rules:
+                print(f"[org_rules] planner: {len(rules)} active rule(s) injected")
                 rules_block = "\n".join(f"- {r}" for r in rules)
                 system_prompt = (
                     f"{system_prompt}\n\n"
@@ -1338,7 +1652,7 @@ class CentralAgent:
 
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
-            None,
+            LLM_POOL,
             partial(
                 client.create_completion,
                 messages=[
@@ -1406,7 +1720,7 @@ class CentralAgent:
 
         # Validate that all skill names in the plan exist in the registry.
         # Drop any hallucinated skill names silently.
-        valid_skill_names = set(registry.all_names())
+        valid_skill_names = set(registry.all_names()) - _ON_DEMAND_ONLY
         if result.get("skill_plan"):
             result["skill_plan"] = [
                 [s for s in group if s.get("skill") in valid_skill_names]
@@ -1618,18 +1932,74 @@ class CentralAgent:
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream a synthesized final response from all skill outputs."""
         from llm.client import get_llm_client
-        from main import _ThinkFilter
 
         proposal_out = skill_outputs.get("proposal_assembler")
         if proposal_out and proposal_out.content:
             # proposal_assembler ran and produced content → stream it as the full response.
             content = _fix_gantt(proposal_out.content)
-            yield {"type": "content", "content": content}
+            # In chunks, not one frame. The whole 7-section proposal is already in hand
+            # here, so a single event was the obvious thing to send — but the browser
+            # then has to transform and markdown-parse tens of KB in one synchronous
+            # commit, which reads to the rep as the answer freezing and then snapping
+            # into place. Chunked, the frontend's per-frame token buffer reveals it
+            # progressively at the same total cost. The sleep(0) yields the event loop
+            # so the chunks actually leave as separate SSE frames.
+            for i in range(0, len(content), _PROPOSAL_STREAM_CHUNK):
+                yield {"type": "content", "content": content[i:i + _PROPOSAL_STREAM_CHUNK]}
+                await asyncio.sleep(0)
             state.messages.append({
                 "role": "assistant", "content": content,
-                "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+                "agent": "central_agent", "timestamp": datetime.now(timezone.utc).isoformat(),
             })
+            # ── AI Deal Score ────────────────────────────────────────────────
+            try:
+                brief = state.brief or {}
+                score_prompt = (
+                    f"Dựa trên proposal sau, chấm điểm khả năng chốt deal (0-100) theo 4 tiêu chí. "
+                    f"Trả lời ĐÚNG format JSON sau, không giải thích thêm:\n"
+                    f"{{\"score\":80,\"budget_fit\":85,\"timeline\":75,\"compliance\":90,\"risk\":\"Low\","
+                    f"\"action\":\"Gửi ngay và follow-up sau 2 ngày\","
+                    f"\"strength\":\"Ngân sách phù hợp, giải pháp đúng pain point\","
+                    f"\"risk_note\":\"Cần xác nhận thời gian triển khai với khách\"}}\n\n"
+                    f"Brief: {brief.get('industry','')}, Budget: {brief.get('budget','')}, "
+                    f"Goal: {brief.get('goal','')}\n\nProposal (200 từ đầu):\n{content[:600]}"
+                )
+                llm = get_llm_client()
+                score_resp = await llm.async_create_completion(
+                    messages=[{"role": "user", "content": score_prompt}],
+                    max_tokens=250,
+                )
+                score_raw = score_resp.choices[0].message.content or ""
+                import re as _re, json as _json
+                m = _re.search(r'\{.*\}', score_raw, _re.DOTALL)
+                if m:
+                    sc = _json.loads(m.group())
+                    score_val = min(100, max(0, int(sc.get("score", 0))))
+                    risk = sc.get("risk", "Medium")
+                    action = sc.get("action", "")
+                    strength = sc.get("strength", "")
+                    risk_note = sc.get("risk_note", "")
+                    if score_val >= 75: emoji = "🟢"
+                    elif score_val >= 50: emoji = "🟡"
+                    else: emoji = "🔴"
+                    score_block = (
+                        f"\n\n---\n"
+                        f"## 🎯 AI Deal Score\n"
+                        f"**{emoji} {score_val}/100** &nbsp;|&nbsp; Risk: **{risk}** "
+                        f"&nbsp;|&nbsp; Budget Fit: {sc.get('budget_fit',0)}% "
+                        f"&nbsp;|&nbsp; Timeline: {sc.get('timeline',0)}%\n\n"
+                        f"**💪 Điểm mạnh:** {strength}\n\n"
+                        f"**⚠️ Lưu ý:** {risk_note}\n\n"
+                        f"**→ Khuyến nghị hành động:** {action}"
+                    )
+                    yield {"type": "content", "content": score_block}
+                    state.messages[-1]["content"] += score_block
+            except Exception:
+                pass  # Deal score is non-critical — never block the response
+            # ─────────────────────────────────────────────────────────────────
             return
+
+
 
         outputs_block = "\n\n".join(
             f"### {name}\n{out.content}"
@@ -1671,7 +2041,7 @@ class CentralAgent:
                 yield {"type": "content", "content": msg}
                 state.messages.append({
                     "role": "assistant", "content": msg,
-                    "agent": "central_agent", "timestamp": datetime.now().isoformat(),
+                    "agent": "central_agent", "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
                 return
             # Follow-up with no new skill output — synthesizer can still answer from history
@@ -1681,22 +2051,26 @@ class CentralAgent:
             system = """You are the AdtimaBox Sales AI — final proposal writer.
 Given specialist analysis from multiple skill modules, assemble ONE cohesive proposal document.
 
-Language rule: Match the user's language. Vietnamese brief → respond fully in Vietnamese.
+Language rule: DEFAULT TO 100% VIETNAMESE (TIẾNG VIỆT). Write ALL headings, body text, analysis, assumptions, and recommendations fully in Vietnamese. Only use English if the user explicitly writes in English or for technical brand terms (e.g. Zalo OA, Mini App, ZNS, CSHub, Scan Bill). Never output raw JSON code blocks to the user.
 
-Output structure (use ALL sections that have relevant content):
+Output structure (use ALL sections that have relevant content). This mirrors
+the 7-section proposal template (see proposal_assembler_agent/SKILL.md) so a
+rep sees the same shape here as in the formal proposal document — merge or
+drop sections with no content rather than renumbering:
 1. **Tóm tắt đề xuất** — 3–4 sentence executive summary: what we recommend and why
-2. **Phân tích chiến lược** — key strategic insights, market context, consumer insight
-3. **Giải pháp Zalo** — recommended solution with user journey (include Mermaid diagrams AS-IS)
-4. **Báo giá ước tính** — pricing table if available
+2. **Bài toán kinh doanh** — key strategic insights, market context, consumer insight, current pain vs desired outcome
+3. **Giải pháp & Lộ trình triển khai** — recommended solution with user journey (include Mermaid diagrams AS-IS)
+4. **Minh chứng thực tế** — analogous case(s) with results, if available
 5. **Compliance & lưu ý pháp lý** — policy notes (only if compliance skill flagged something)
-6. **Bước tiếp theo** — 3–5 concrete next steps
+6. **Báo giá ước tính** — pricing table if available
+7. **Bước tiếp theo** — 3–5 concrete next steps
 
 Format rules:
 - Use ## for section headers, ### for sub-sections
 - Be specific to this brief/brand — no generic filler
 - Do NOT mention "skill", "agent", "module", or internal pipeline names
-- This system produces a branded HTML deck and a downloadable PPTX. Never claim it
-  cannot generate files; the only honest limits are Word, Excel and email.
+- This system produces a branded, downloadable PPTX. Never claim it cannot generate
+  files; the only honest limits are Word, Excel and email.
 
 OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
 
@@ -1715,7 +2089,7 @@ BAR CHARTS (budget breakdown, allocation, percentages):
   ╠═════════════════════════════════════════╣
   │  35%  MiniApp Development               │
   │  25%  Voucher System                    │
-  │  15%  ZNS/Ads                           │
+  │  15%  ZNS Campaign                      │
   └─────────────────────────────────────────┘
   ```
   Rules: percentage FIRST then label on same line. NEVER use █ block chars. NEVER put a box inside another box.
@@ -1734,6 +2108,7 @@ INFO BOXES (game concepts, form wireframes, feature lists, structured text):
   └─────────────────────────────────────────┘
   ```
   Rules: ONE level of box only — NEVER nest a box inside another box. Use ├──┤ separator (not ╠═╣) for info boxes.
+  Each box = its OWN separate ``` code block. NEVER put 2+ boxes inside one fence.
 
 DIAGRAMS (user flows, architecture):
   Use Mermaid in a ```mermaid block. Copy AS-IS from specialist outputs when available.
@@ -1769,17 +2144,18 @@ Your job: respond ONLY to what they asked about in the Current Request.
 - Language: match the user's language (Vietnamese if they wrote in Vietnamese).
 - Do NOT mention "skill", "agent", "module", or internal pipeline names.
 
-NEVER INVENT SLIDE CONTENTS. If a deck was built, its real slide list is in the
-context under the deck output — describe those slides and no others. If it says DECK
-NOT BUILT, say the deck could not be built yet and to retry shortly; never list slides
-or offer a download for a file that does not exist.
+NEVER INVENT SLIDE CONTENTS. If the proposal file was built, its real slide list is in
+the context under that output — describe those slides and no others. If it says
+PROPOSAL FILE NOT BUILT, say the file could not be built yet and to retry shortly;
+never list slides or offer a download for a file that does not exist.
 
-YOU PRODUCE REAL FILES. This system generates an AdtimaBox-branded HTML deck and a
-downloadable PPTX, delivered as "View Deck" and "Download PPTX" buttons in the chat.
-Claiming "mình là AI chạy trên nền tảng chat nên không xuất được file" is FALSE and a
-rep may repeat it to a client. If asked to export or download in any wording, say you
-build it — and if it does not exist yet, say what triggers it:
-  "**Tiếp theo:** nói *làm proposal* là mình dựng bản đầy đủ kèm deck HTML và file PPTX."
+YOU PRODUCE A REAL FILE. This system generates an Adtima-branded PPTX proposal,
+delivered as a "Download PPTX" button in the chat. There is NO HTML deck and no "View
+Deck" link — never offer one. Claiming "mình là AI chạy trên nền tảng chat nên không
+xuất được file" is FALSE and a rep may repeat it to a client. If asked to export or
+download in any wording, say you build it — and if it does not exist yet, say what
+triggers it:
+  "**Tiếp theo:** nói *làm proposal* là mình dựng bản đầy đủ kèm file PPTX."
 The only honest limits: no Word (.docx), no Excel, no email.
 
 ALWAYS CLOSE WITH WHAT HAPPENS NEXT. Never end on an explanation and leave the rep
@@ -1787,7 +2163,7 @@ guessing whether it is their turn. Finish with a short `**Tiếp theo:**` line t
 either what you need from them to continue, or what you can produce next and how to
 ask for it. One or two sentences — concrete, not "let me know if you need anything".
   Good:  **Tiếp theo:** cho mình ngân sách dự kiến là mình ra được báo giá chi tiết.
-  Good:  **Tiếp theo:** nói "làm proposal" là mình dựng bản đầy đủ kèm deck PPTX.
+  Good:  **Tiếp theo:** nói "làm proposal" là mình dựng bản đầy đủ kèm file PPTX.
   Bad:   Hy vọng thông tin trên hữu ích cho bạn!
 
 OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
@@ -1812,9 +2188,9 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                     history_lines.append(f"Assistant: {content}")
             history_block = "\n\n".join(history_lines)
 
-            # "Deck có mấy slide?" usually arrives on a turn that runs no skills, so the
-            # only deck facts in the prompt would be whatever the transcript happens to
-            # mention — and the model filled the gap by inventing a table of contents.
+            # "File có mấy slide?" usually arrives on a turn that runs no skills, so the
+            # only facts about it in the prompt would be whatever the transcript happens
+            # to mention — and the model filled the gap by inventing a table of contents.
             # The manifest wireframe_designer wrote is on the session; put it back in.
             deck_block = ""
             if "wireframe_designer" not in skill_outputs:
@@ -1825,7 +2201,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                     else getattr(prior_deck, "content", "")
                 ) or ""
                 if prior_content:
-                    deck_block = f"\n\n## Deck Built Earlier This Session\n{prior_content}"
+                    deck_block = f"\n\n## Proposal File Built Earlier This Session\n{prior_content}"
 
             user_msg = (
                 f"## Conversation So Far\n{history_block}\n\n"
@@ -1836,11 +2212,14 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                 "Do not repeat what was already covered in the previous response."
             )
 
-        # Inject Admin-configured Org Rules into synthesis too
+        # Inject Admin-configured Org Rules into synthesis too. scope="all" here
+        # is the same deliberate "no filter" as the planner's — the per-skill
+        # scope picker is enforced by BaseSkill._fetch_org_rules() instead.
         try:
             from database import get_active_rules
-            syn_rules = get_active_rules(scope="all")
+            syn_rules = await asyncio.to_thread(get_active_rules, scope="all")
             if syn_rules:
+                print(f"[org_rules] synthesizer: {len(syn_rules)} active rule(s) injected")
                 rules_block = "\n".join(f"- {r}" for r in syn_rules)
                 system = f"{system}\n\n## Quy tắc tổ chức bắt buộc tuân thủ\n{rules_block}"
         except Exception:
@@ -1875,9 +2254,9 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
             finally:
                 loop.call_soon_threadsafe(_safe_put, _DONE)
 
-        producer = loop.run_in_executor(None, _stream_worker)
+        producer = loop.run_in_executor(LLM_POOL, _stream_worker)
 
-        tf = _ThinkFilter()
+        tf = ThinkFilter()
         accumulated = ""
         _TOKEN_TIMEOUT = 180.0
 
@@ -1922,7 +2301,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                 "role": "assistant",
                 "content": accumulated,
                 "agent": "central_agent",
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
     # ------------------------------------------------------------------
@@ -2046,8 +2425,12 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
         stripped = message.strip()
         return bool(self._CASUAL_PATTERNS.match(stripped)) and len(stripped) < 60
 
-    async def _casual_reply(self, message: str) -> str:
-        lang = "vi" if (self._VI_CHARS.search(message) or self._VI_TOKENS.search(message)) else "en"
+    async def _casual_reply(self, message: str, state: Optional[SalesCaseState] = None) -> str:
+        # A one-word "alo" or "hi" carries no Vietnamese diacritics itself — judging
+        # on it alone answered a rep back in English mid-conversation the moment they
+        # sent a casual, script-neutral opener. Same fix as _is_vietnamese: fall back
+        # through their own earlier messages before deciding.
+        lang = "vi" if self._is_vietnamese(message, state) else "en"
         pool = self._REPLIES_VI if lang == "vi" else self._REPLIES_EN
         return random.choice(pool)
 
@@ -2099,7 +2482,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
             client = get_llm_client("central_agent")
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
-                None,
+                LLM_POOL,
                 partial(
                     client.create_completion,
                     messages=[
@@ -2188,7 +2571,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
         loop = asyncio.get_running_loop()
         try:
             response = await loop.run_in_executor(
-                None,
+                LLM_POOL,
                 partial(
                     client.create_completion,
                     messages=[

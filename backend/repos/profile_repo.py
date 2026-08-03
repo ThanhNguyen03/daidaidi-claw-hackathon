@@ -1,10 +1,8 @@
 """
 Profile Repository (ProfileRepo)
 =================================
-Repository interface for salesperson profiles.
-Dual implementation: SQLite (local fallback) / AgentBase (primary).
-
-This enables personalization and learning from user feedback.
+Repository interface for salesperson profiles. SQLite-backed. This enables
+personalization and learning from user feedback.
 """
 
 import os
@@ -92,37 +90,9 @@ class SQLiteProfileRepo(ProfileRepo):
         return []
 
 
-class AgentBaseProfileRepo(ProfileRepo):
-    """
-    AgentBase managed profile storage.
-    NOTE: This is a placeholder until AgentBase credentials are available.
-    """
-
-    def __init__(self):
-        raise NotImplementedError(
-            "AgentBase Profile implementation requires AgentBase credentials. "
-            "Use SQLiteProfileRepo() for local development."
-        )
-
-
-def create_profile_repo(use_agentbase: bool = False) -> ProfileRepo:
-    """
-    Create a profile repository based on configuration.
-
-    Args:
-        use_agentbase: If True, try to use AgentBase Profile.
-                      Falls back to SQLite if not available.
-
-    Returns:
-        ProfileRepo implementation
-    """
-    if use_agentbase:
-        try:
-            return AgentBaseProfileRepo()
-        except NotImplementedError:
-            pass
-
-    # Default to SQLite
+def create_profile_repo() -> ProfileRepo:
+    """Create the profile repository. SQLite only — this project runs on its
+    own VPS (see CLAUDE.md's Deployment section), not AgentBase Runtime."""
     return SQLiteProfileRepo()
 
 
@@ -134,7 +104,7 @@ def get_profile_repo() -> ProfileRepo:
     """Get the default profile repository."""
     global _default_profile_repo
     if _default_profile_repo is None:
-        _default_profile_repo = create_profile_repo(use_agentbase=False)
+        _default_profile_repo = create_profile_repo()
     return _default_profile_repo
 
 

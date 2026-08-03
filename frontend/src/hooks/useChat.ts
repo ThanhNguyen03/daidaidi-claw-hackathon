@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { ChatRequest, Message, Brief, ChatMode, Question, Checkpoint, FeedbackRule, SalespersonProfile, ThinkingStep } from '../lib/types';
+import type { ChatRequest, Message, Brief, ChatMode, Question, Checkpoint, FeedbackRule, SalespersonProfile, ThinkingStep, ProposalAssets } from '../lib/types';
 import { getApiBaseUrl } from '../lib/api';
 
 const BACKEND_URL = getApiBaseUrl();
@@ -35,6 +35,141 @@ interface Artifact {
   artifact_id?: string;    // artifact registry key
 }
 
+// pptx_url only ever got attached to a single message bubble — there was no single
+// place listing every file generated across a whole session. It carries a unique
+// artifact id in its URL, so turning it into an Artifact entry lets the existing
+// "Generated Artifacts" list in ContextPanel (built for the older checkpoint-approval
+// flow, currently empty because that flow doesn't run any more) double as a running
+// index of every PPTX this conversation has produced, not just the latest one.
+function proposalAssetsToArtifacts(
+  assets: ProposalAssets,
+  createdAtIso?: string
+): Artifact[] {
+  // Every file this session produces is titled identically ("Đề xuất (PPTX)"),
+  // so two real, distinct proposals (e.g. rebuilt after a follow-up edit) were
+  // indistinguishable in the list — a rep had no way to tell which entry was
+  // which before clicking. A time suffix is enough to tell them apart without
+  // needing a real per-artifact label from the backend.
+  const stamp = new Date(createdAtIso ?? Date.now()).toLocaleTimeString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const out: Artifact[] = [];
+  if (assets.pptx_url) {
+    out.push({
+      id: assets.pptx_url,
+      type: 'pptx',
+      title: `Đề xuất (PPTX) — ${stamp}`,
+      download_url: assets.pptx_url,
+    });
+  }
+  return out;
+}
+
+// download_url embeds the artifact id, so it is the natural de-dupe key — the
+// same deck re-emitted on a later turn (see main.py's "re-emit artifacts produced
+// on an earlier turn") must not show up twice in the list.
+function mergeArtifacts(prev: Artifact[], fresh: Artifact[]): Artifact[] {
+  const seen = new Set(prev.map((a) => a.download_url ?? a.id));
+  const additions = fresh.filter((a) => !seen.has(a.download_url ?? a.id));
+  return additions.length > 0 ? [...prev, ...additions] : prev;
+}
+
+// Human-readable stand-in for the raw "Tiếp tục" resume message, so approving
+// a checkpoint leaves a readable trace of what was actually approved instead
+// of erasing the card and showing a bare "continue".
+function checkpointTitle(checkpoint: Checkpoint): string {
+  return checkpoint.action.type === 'confirm_brief'
+    ? 'Chốt — Xác nhận cách hiểu brief'
+    : checkpoint.action.type === 'confirm_solution'
+      ? 'Xác nhận phương án'
+      : 'Đã duyệt bước này';
+}
+
+// `action.description` is boilerplate instruction text ("Bạn xác nhận giúp
+// trước khi mình chạy phân tích — sửa bây giờ rẻ hơn sửa sau khi đã có
+// proposal."), identical on every confirm_brief checkpoint — not a summary of
+// what's actually being confirmed. The real content lives in
+// `action.preview.groups` (said/inferred/assumed brief fields), same data
+// CheckpointCard itself renders as a table. Placeholder assumed rows
+// ("(chưa có — sẽ phỏng đoán)") are skipped — there's no real value there to
+// trace back to.
+function buildCheckpointDataSummary(checkpoint: Checkpoint): string {
+  const preview = checkpoint.action.preview as
+    | { groups?: Record<string, Array<{ field: string; label: string; value: string }>> }
+    | undefined;
+  const groups = preview?.groups;
+  // "- " (a real markdown list item), not "• " — this string ends up in an
+  // assistant message rendered through ReactMarkdown, which treats a bare
+  // single "\n" as a soft break (often just a space), collapsing "•" bullets
+  // onto one line. A markdown list is what actually forces one line per item.
+  if (groups) {
+    const lines: string[] = [];
+    for (const key of ['said', 'inferred', 'assumed']) {
+      for (const item of groups[key] ?? []) {
+        if (typeof item.value === 'string' && item.value.trim().startsWith('(')) continue;
+        lines.push(`- **${item.label}:** ${item.value}`);
+      }
+    }
+    if (lines.length > 0) return lines.join('\n');
+  }
+
+  // Non-brief checkpoints 
+  if (checkpoint.action.preview && typeof checkpoint.action.preview === 'object') {
+    const lines = Object.entries(checkpoint.action.preview as Record<string, unknown>)
+      .filter(([k]) => !['skill', 'status', 'agent', 'model'].includes(k))
+      .map(([k, v]) => {
+        const label = k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return `- **${label}:** ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`;
+      });
+    if (lines.length > 0) return lines.join('\n');
+  }
+
+  return '';
+}
+
+// The agent-voice version — what the card was proposing, kept as a normal
+// assistant message once the interactive card itself is dismissed so
+// scrollback still shows what the rep's "✅ Đã duyệt" reply was actually
+// replying to. Title + actual data, not the instruction sentence.
+function describeCheckpointForHistory(checkpoint: Checkpoint | null): string {
+  if (!checkpoint) return '';
+  const title = checkpointTitle(checkpoint);
+  const summary = buildCheckpointDataSummary(checkpoint);
+  // Blank line before the list — markdown needs it to recognize a list block
+  // right after a plain text line, not swallow the "-" into the same paragraph.
+  return summary ? `${title}\n\n${summary}` : title;
+}
+
+// The rep's own reply stays short — the agent-voice message right above it
+// (describeCheckpointForHistory) already carries the full data, so repeating
+// it here was pure duplication of the same text twice in a row.
+function describeCheckpointApproval(checkpoint: Checkpoint | null): string {
+  if (!checkpoint) return '✅ Đã duyệt';
+  return `✅ Đã duyệt ${checkpointTitle(checkpoint)}`;
+}
+
+// Same idea for a batch of question-card answers — shows what was actually
+// answered instead of a bare "continue" once the card disappears.
+function describeQuestionAnswers(
+  answers: Record<string, string>,
+  questions: Question[]
+): string {
+  const lines = Object.entries(answers).map(([qid, value]) => {
+    const q = questions.find((q) => q.id === qid);
+    return q ? `• ${q.text} → ${value}` : `• ${value}`;
+  });
+  return `✅ Đã trả lời:\n${lines.join('\n')}`;
+}
+
+function describeCheckpointEdit(params: Record<string, unknown>): string {
+  const lines = Object.entries(params).map(([field, value]) => {
+    const label = field.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
+    return `• ${label}: ${value}`;
+  });
+  return lines.length > 0 ? `✅ Đã sửa:\n${lines.join('\n')}` : '✅ Đã sửa';
+}
+
 interface UseChatReturn {
   // State
   sessionId: string | null;
@@ -49,11 +184,11 @@ interface UseChatReturn {
   profile: SalespersonProfile | null;  // Day 4: User profile
   brief: Brief | null;  // Day 4: Current brief
   artifacts: Artifact[];  // Day 6: Generated artifacts
-  proposalAssets: { deck_url?: string; pptx_url?: string } | null;
+  proposalAssets: ProposalAssets | null;
   thinkingSteps: ThinkingStep[];  // Live thinking trace for current turn
 
   // Actions
-  sendMessage: (message: string, brief?: Brief, resume?: boolean) => Promise<void>;
+  sendMessage: (message: string, brief?: Brief, resume?: boolean, isActionSummary?: boolean) => Promise<void>;
   answerQuestion: (questionId: string, answer: string) => Promise<void>;
   answerAllQuestions: (answers: Record<string, string>) => Promise<void>;
   skipQuestion: (questionId: string) => Promise<void>;
@@ -66,6 +201,7 @@ interface UseChatReturn {
   editCheckpoint: (params: Record<string, unknown>) => Promise<void>;
   clearError: () => void;
   resetSession: () => void;  // Clear session and start fresh
+  loadSession: (sid: string) => Promise<void>;  // Load a session from backend
 }
 
 export function useChat(options: UseChatOptions): UseChatReturn {
@@ -90,7 +226,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     { name: 'market_strategy', status: 'idle' },
     { name: 'compliance', status: 'idle' },
     { name: 'product_solution', status: 'idle' },
-    { name: 'design', status: 'idle' },
     { name: 'client_simulator', status: 'idle' },
     { name: 'proposal_assembler', status: 'idle' },
     { name: 'wireframe_designer', status: 'idle' },
@@ -107,13 +242,15 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   // Day 6: Artifacts state
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
 
-  // Proposal deck assets — set when wireframe_designer completes after proposal_assembler
-  const [proposalAssets, setProposalAssets] = useState<{ deck_url?: string; pptx_url?: string } | null>(null);
+  // Proposal deliverables — the PPTX when wireframe_designer built one, plus the
+  // has_proposal flag that keeps the Figma action available on its own.
+  const [proposalAssets, setProposalAssets] = useState<ProposalAssets | null>(null);
 
   // Thinking trace — accumulated steps for the current turn, shown live in the chat
   const [thinkingSteps, setThinkingSteps] = useState<ThinkingStep[]>([]);
   // Ref mirrors the state so SSE callbacks can read the latest value without stale closures
   const thinkingStepsRef = useRef<ThinkingStep[]>([]);
+
   // --- Mode isolation: save/restore state per mode ---
   const prevModeRef = useRef<string>(mode);
   type ModeSnapshot = {
@@ -123,15 +260,111 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     pendingQuestions: Question[];
     activeCheckpoint: Checkpoint | null;
     artifacts: Artifact[];
+    // Travels with the snapshot for the same reason artifacts does: it is per-conversation,
+    // and the pinned deliverables bar reads it.
+    proposalAssets: ProposalAssets | null;
     isLoading: boolean;
     isThinking: boolean;
   };
   const savedModeStates = useRef<Record<string, ModeSnapshot>>({});
 
-  // Always reflects the currently-active mode. Updated synchronously at the
-  // top of the mode-switch effect so in-flight SSE callbacks can check it
-  // without relying on a stale closure value.
+  // Always reflects the currently-active mode.
   const currentModeRef = useRef<string>(mode);
+
+  // --- Streaming token buffer -------------------------------------------------
+  // The backend emits one SSE frame per LLM token (central_agent/agent.py's synthesis
+  // loop), and each `reader.read()` resolution is its own macrotask — so React 18's
+  // auto-batching does not merge them and every token used to cost a full commit:
+  // the whole message list re-rendered and the streaming bubble re-ran its transform
+  // chain and re-parsed its markdown over the entire accumulated answer. That is
+  // O(N^2) work spread across thousands of commits, and it is what the jitter was.
+  //
+  // Tokens now land in a ref and are applied once per animation frame. The screen
+  // cannot show more than one frame's worth anyway, so nothing visible is lost —
+  // only the commits that were never going to be painted.
+  const pendingContentRef = useRef('');
+  const flushRafRef = useRef<number | null>(null);
+  // The mode this buffer belongs to. sendMessage captures `myMode`, but flushes also
+  // happen from unmount and from the finally block, so the target has to be recorded
+  // with the text rather than inferred at flush time.
+  const pendingModeRef = useRef<string | null>(null);
+  // Set by the first token after a thinking stretch. `setIsThinking(false)` used to
+  // run on every single token even though it is already false after the first. Reset
+  // on each `thinking_start` and at the top of every turn.
+  const thinkingClearedRef = useRef(false);
+
+  /**
+   * Apply every buffered token in one setMessages call.
+   *
+   * MUST run before any other event that reads or rewrites the last message —
+   * `assistant_message`, `agent_message`, `proposal_assets`, checkpoints, question
+   * cards — or that event would act on a message missing its most recent tokens.
+   * MUST also run when the stream ends (normally, on error, or on abort), or the
+   * tail of the answer is silently dropped.
+   */
+  const flushPendingContent = useCallback(() => {
+    if (flushRafRef.current !== null) {
+      cancelAnimationFrame(flushRafRef.current);
+      flushRafRef.current = null;
+    }
+    const chunk = pendingContentRef.current;
+    if (!chunk) return;
+    pendingContentRef.current = '';
+
+    const targetMode = pendingModeRef.current;
+    const streamAgent = targetMode === 'cs' ? 'cs_agent' : 'sales_orchestrator';
+
+    // The rep switched mode while these tokens were buffered. React state now belongs
+    // to a different conversation, so write into that mode's snapshot instead — the
+    // same thing the reader loop does for tokens that arrive after a switch. Without
+    // this the tail of one mode's answer would be appended to the other mode's chat.
+    if (targetMode !== null && targetMode !== currentModeRef.current) {
+      const saved = savedModeStates.current[targetMode];
+      if (saved) {
+        const lastMsg = saved.messages[saved.messages.length - 1];
+        saved.messages =
+          lastMsg && lastMsg.role === 'assistant'
+            ? [...saved.messages.slice(0, -1), { ...lastMsg, content: lastMsg.content + chunk }]
+            : [
+                ...saved.messages,
+                {
+                  role: 'assistant' as const,
+                  content: chunk,
+                  agent: streamAgent,
+                  timestamp: new Date().toISOString(),
+                },
+              ];
+        savedModeStates.current[targetMode] = { ...saved };
+      }
+      return;
+    }
+
+    // Thinking steps accumulated before the first token belong on the message this
+    // flush may be creating — same rule as the per-token version it replaces.
+    const steps = thinkingStepsRef.current.length > 0 ? [...thinkingStepsRef.current] : undefined;
+    if (steps) {
+      thinkingStepsRef.current = [];
+      setThinkingSteps([]);
+    }
+
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === 'assistant') {
+        // Append to the existing assistant message (any agent — same streaming turn)
+        return [...prev.slice(0, -1), { ...last, content: last.content + chunk }];
+      }
+      return [
+        ...prev,
+        {
+          role: 'assistant',
+          content: chunk,
+          agent: streamAgent,
+          timestamp: new Date().toISOString(),
+          thinkingSteps: steps,
+        },
+      ];
+    });
+  }, []);
 
   useEffect(() => {
     // Always sync ref first — SSE callbacks read this to know the live mode.
@@ -141,12 +374,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     if (prevMode === mode) return;
 
     // NOTE: We intentionally do NOT abort the in-flight SSE request here.
-    // Instead, the SSE loop checks currentModeRef vs its origin mode and
-    // buffers content into savedModeStates so the user sees the response
-    // when they switch back to the origin mode.
-
-    // Snapshot current mode's state — include loading/thinking so the stream
-    // continues visually when the user returns to this mode.
     savedModeStates.current[prevMode] = {
       sessionId,
       messages,
@@ -154,6 +381,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       pendingQuestions,
       activeCheckpoint,
       artifacts,
+      proposalAssets,
       isLoading,
       isThinking,
     };
@@ -167,6 +395,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       setPendingQuestions(saved.pendingQuestions);
       setActiveCheckpoint(saved.activeCheckpoint);
       setArtifacts(saved.artifacts);
+      setProposalAssets(saved.proposalAssets);
       setIsLoading(saved.isLoading);
       setIsThinking(saved.isThinking);
     } else {
@@ -176,6 +405,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       setPendingQuestions([]);
       setActiveCheckpoint(null);
       setArtifacts([]);
+      setProposalAssets(null);
       setIsLoading(false);
       setIsThinking(false);
     }
@@ -191,7 +421,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       { name: 'market_strategy', status: 'idle' as const },
       { name: 'compliance', status: 'idle' as const },
       { name: 'product_solution', status: 'idle' as const },
-      { name: 'design', status: 'idle' as const },
       { name: 'client_simulator', status: 'idle' as const },
       { name: 'proposal_assembler', status: 'idle' as const },
       { name: 'wireframe_designer', status: 'idle' as const },
@@ -229,7 +458,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     setPendingQuestions([]);
     setActiveCheckpoint(null);
     setArtifacts([]);
-  }, [salespersonId, mode]);
+    // Was missed here as well as in loadSession: a new conversation starting with the
+    // previous one's deck and PPTX offered on the pinned bar is a cross-client leak, not
+    // just stale UI.
+    setProposalAssets(null);
+  }, [mode]);
 
   // Per-mode abort controllers so cancelling one mode's stream never kills another.
   const modeAbortControllers = useRef<Record<string, AbortController | null>>({});
@@ -241,12 +474,15 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
   // Send message with SSE streaming
   const sendMessage = useCallback(
-    async (message: string, brief?: Brief, resume = false) => {
+    async (message: string, brief?: Brief, resume = false, isActionSummary = false) => {
       // Capture origin mode first — everything below is scoped to this mode.
       const myMode = mode;
 
-      // Cancel any existing request for THIS mode only — never touches other
-      // modes' streams (that's the whole point of per-mode controllers).
+      // Cancel any existing request for THIS mode only. Flush first: the aborted
+      // stream may have tokens still sitting in the buffer, and they belong to the
+      // message above the one this turn is about to add.
+      flushPendingContent();
+      thinkingClearedRef.current = false;
       modeAbortControllers.current[myMode]?.abort();
       const controller = new AbortController();
       modeAbortControllers.current[myMode] = controller;
@@ -258,12 +494,14 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       // Reset thinking trace for the new turn
       thinkingStepsRef.current = [];
       setThinkingSteps([]);
+      setPendingQuestions([]);
 
       // Add user message immediately
       const userMessage: Message = {
         role: 'user',
         content: message,
         timestamp: new Date().toISOString(),
+        isActionSummary,
       };
       setMessages((prev) => [...prev, userMessage]);
 
@@ -275,9 +513,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         : JSON.stringify({ message, session_id: sessionId, salesperson_id: salespersonId, mode, brief, resume });
 
       try {
+        const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+        const fetchHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) fetchHeaders['Authorization'] = `Bearer ${token}`;
+
         response = await fetch(`${BACKEND_URL}${isCs ? '/cs/chat/stream' : '/chat/stream'}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: fetchHeaders,
           body: requestBody,
           signal: controller.signal,
         });
@@ -309,10 +551,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               if (currentModeRef.current !== myMode) {
-                // Mode switched while this stream was in flight. Buffer content
-                // into the origin mode's saved snapshot so the user sees the
-                // response when they switch back — without writing to the wrong
-                // mode's live message list.
                 try {
                   const data = JSON.parse(line.slice(6));
                   if (data.type === 'content' && data.content) {
@@ -347,7 +585,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
               // Normal path: process event for the currently active mode
               try {
                 const data = JSON.parse(line.slice(6));
-                await handleSSEEvent(data);
+                handleSSEEvent(data);
               } catch {
                 console.error('Failed to parse SSE data');
               }
@@ -360,10 +598,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           return;
         }
         if (currentModeRef.current === myMode) {
-          // "network error" / "Failed to fetch" is what the browser reports when a
-          // stream is cut, which says nothing about whether the work survived — and
-          // the rep's own connection is usually fine. Name the likely cause and the
-          // action instead of echoing the browser's wording.
+          // "network error"
           const raw = (e as Error).message || '';
           const dropped = /network|failed to fetch|load failed|terminated/i.test(raw);
           setError(
@@ -373,6 +608,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           );
         }
       } finally {
+        // The last frame's worth of tokens has no `done` event guaranteed to follow
+        // it — without this the tail of every answer would be dropped.
+        flushPendingContent();
         modeAbortControllers.current[myMode] = null;
         if (currentModeRef.current === myMode) {
           // Still on our mode — clear live state
@@ -394,7 +632,14 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
   // Handle SSE events
   const handleSSEEvent = useCallback(
-    async (data: { type: string; [key: string]: unknown }) => {
+    (data: { type: string; [key: string]: unknown }) => {
+      // Any event that is not a token has to see the message list as the tokens so
+      // far left it — several of them append after, or rewrite, the last message.
+      // Flushing here once covers all of them, including ones added later.
+      if (data.type !== 'content') {
+        flushPendingContent();
+      }
+
       switch (data.type) {
         case 'session':
           // Session confirmed — persist id and sync brief from BE
@@ -403,6 +648,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
             setSessionId(sid);
             if (typeof window !== 'undefined') {
               sessionStorage.setItem(`chat_session_${salespersonIdRef.current}`, sid);
+              window.dispatchEvent(new Event('session_updated'));
             }
           }
           // Sync brief from BE (provides latest accumulated brief on session resume)
@@ -442,6 +688,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           break;
 
         case 'thinking_start':
+          // Re-arm the once-per-stretch guard below: a turn can enter thinking more
+          // than once, and the next content token has to be able to clear it again.
+          thinkingClearedRef.current = false;
           setIsThinking(true);
           break;
 
@@ -450,37 +699,23 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           break;
 
         case 'content':
-          // Streaming content chunk — reasoning tokens have already been stripped by the backend
-          setIsThinking(false);
+          // Streaming content chunk — buffered, applied once per animation frame.
+          // See flushPendingContent above for why this is not a setState per token.
           {
             const content = data.content as string;
-            // Determine agent name for this streaming turn
-            const streamAgent = mode === 'cs' ? 'cs_agent' : 'sales_orchestrator';
-            // Attach accumulated thinking steps to the first assistant message of this turn
-            const steps = thinkingStepsRef.current.length > 0 ? [...thinkingStepsRef.current] : undefined;
-            if (steps) {
-              thinkingStepsRef.current = [];
-              setThinkingSteps([]);
+            if (!content) break;
+            if (!thinkingClearedRef.current) {
+              thinkingClearedRef.current = true;
+              setIsThinking(false);
             }
-            setMessages((prev) => {
-              const last = prev[prev.length - 1];
-              if (last && last.role === 'assistant') {
-                // Append to existing assistant message (any agent - within same streaming turn)
-                return [...prev.slice(0, -1), { ...last, content: last.content + content }];
-              } else {
-                // Create new assistant message — attach thinking steps
-                return [
-                  ...prev,
-                  {
-                    role: 'assistant',
-                    content,
-                    agent: streamAgent,
-                    timestamp: new Date().toISOString(),
-                    thinkingSteps: steps,
-                  },
-                ];
-              }
-            });
+            pendingContentRef.current += content;
+            pendingModeRef.current = currentModeRef.current;
+            if (flushRafRef.current === null) {
+              flushRafRef.current = requestAnimationFrame(() => {
+                flushRafRef.current = null;
+                flushPendingContent();
+              });
+            }
           }
           break;
 
@@ -505,6 +740,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           if (data.brief && typeof data.brief === 'object' && Object.keys(data.brief as object).length > 0) {
             setBrief(data.brief as Brief);
           }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('session_updated'));
+          }
           break;
 
         case 'question':
@@ -522,6 +760,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           {
             const questionCardData = data.questions as Question[];
             if (questionCardData) {
+              setIsLoading(false); // pause loading UI while waiting for user answers
               setIsThinking(false);
               setPendingQuestions(questionCardData);
             }
@@ -534,6 +773,8 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           {
             const checkpoint = data.checkpoint as Checkpoint;
             if (checkpoint) {
+              setIsLoading(false); // pause loading UI while waiting for user approval
+              setIsThinking(false);
               setActiveCheckpoint(checkpoint);
             }
           }
@@ -612,11 +853,12 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           break;
 
         case 'proposal_assets':
-          // PPTX + HTML deck generated after proposal_assembler
+          // The downloadable PPTX (if it was built) plus has_proposal, emitted after
+          // proposal_assembler. There is no HTML deck any more.
           {
-            const assets: { deck_url?: string; pptx_url?: string } = {};
-            if (data.deck_url) assets.deck_url = data.deck_url as string;
+            const assets: ProposalAssets = {};
             if (data.pptx_url) assets.pptx_url = data.pptx_url as string;
+            if (data.has_proposal) assets.has_proposal = true;
             if (Object.keys(assets).length > 0) {
               setProposalAssets(assets);
               // Attach to last assistant message for scoped rendering
@@ -627,6 +869,8 @@ export function useChat(options: UseChatOptions): UseChatReturn {
                 }
                 return prev;
               });
+              // Also index it in the session-wide artifacts list
+              setArtifacts((prev) => mergeArtifacts(prev, proposalAssetsToArtifacts(assets)));
             }
           }
           break;
@@ -635,8 +879,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           console.log('Unknown SSE event:', data);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sessionId]
+    // Every value read above is a ref, a setState function, or flushPendingContent
+    // (itself a []-dep useCallback) — all stable identities — so this callback never
+    // needs to change.
+    [flushPendingContent]
   );
 
   // Answer a pending question
@@ -692,11 +938,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   );
 
   // Submit every answer on the card in one request.
-  //
-  // The per-question version advanced the pipeline as soon as the first answer
-  // landed, which discarded the rest of the card. The card asks for several
-  // blocking fields at once precisely because they are needed together, so the
-  // commit has to be together too.
   const answerAllQuestions = useCallback(
     async (answers: Record<string, string>) => {
       if (!sessionId || Object.keys(answers).length === 0) return;
@@ -718,7 +959,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
         if (remaining.length === 0) {
           // Everything answered — let the pipeline pick up where it stopped.
-          await sendMessage('Tiếp tục', undefined, true);
+          // Summarizing the answers (instead of a bare "Tiếp tục") keeps the
+          // question card's content readable on scrollback after it's gone.
+          await sendMessage(describeQuestionAnswers(answers, pendingQuestions), undefined, true, true);
         }
       } catch (e) {
         setError((e as Error).message);
@@ -726,7 +969,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         setIsLoading(false);
       }
     },
-    [sessionId, sendMessage]
+    [sessionId, sendMessage, pendingQuestions]
   );
 
   // Skip an optional question (Day 3: C.5 §6)
@@ -941,13 +1184,19 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         };
         setMessages((prev) => [...prev, msg]);
       }
+
+      const proposalMsg: Message = {
+        role: 'assistant',
+        content: describeCheckpointForHistory(activeCheckpoint),
+        agent: 'sales_orchestrator',
+        timestamp: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, proposalMsg]);
+
       setActiveCheckpoint(null);
 
-      // The confirmation stops (Chốt 1 / Chốt 2) pause the pipeline mid-run.
-      // Approving has to restart it — otherwise the card just disappears and the
-      // rep is left staring at a conversation that stopped for no visible reason.
       if (data.resume) {
-        await sendMessage('Tiếp tục', undefined, true);
+        await sendMessage(describeCheckpointApproval(activeCheckpoint), undefined, true, true);
       }
     } catch (e) {
       setError((e as Error).message);
@@ -976,7 +1225,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       setActiveCheckpoint(null);
 
       const clarifyingMsg =
-        data.clarifying_question || 'Action rejected. How would you like to adjust?';
+        data.clarifying_question || 'Mình đã dừng bước này. Bạn muốn điều chỉnh gì?';
       const msg: Message = {
         role: 'assistant',
         content: clarifyingMsg,
@@ -1018,8 +1267,20 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           // so the card comes back showing what was fixed — leaving a stale card on
           // screen next to an "updated" notice tells the rep nothing about whether
           // their edit took.
+          //
+          // Same as approveCheckpoint: preserve what the card was proposing as a
+          // normal assistant message before it disappears, so the rep's own
+          // "✅ Đã sửa" reply isn't left replying to nothing on scrollback.
+          const proposalMsg: Message = {
+            role: 'assistant',
+            content: describeCheckpointForHistory(activeCheckpoint),
+            agent: 'sales_orchestrator',
+            timestamp: new Date().toISOString(),
+          };
+          setMessages((prev) => [...prev, proposalMsg]);
+
           setActiveCheckpoint(null);
-          await sendMessage('Tiếp tục', undefined, true);
+          await sendMessage(describeCheckpointEdit(params), undefined, true, true);
         } else {
           setActiveCheckpoint(data.checkpoint ?? null);
           setMessages((prev) => [
@@ -1046,11 +1307,82 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     setError(null);
   }, []);
 
-  // Cleanup on unmount — abort all in-flight streams across all modes
+  // Cleanup on unmount — abort all in-flight streams across all modes.
+  // Same object reference for the lifetime of the hook (mutated in place,
+  // never reassigned), so capturing it here still sees controllers added later.
   useEffect(() => {
+    const controllers = modeAbortControllers.current;
     return () => {
-      Object.values(modeAbortControllers.current).forEach((c) => c?.abort());
+      Object.values(controllers).forEach((c) => c?.abort());
+      // Drop the pending frame rather than flushing it — the component is going away,
+      // so a setMessages here would only warn about updating an unmounted component.
+      if (flushRafRef.current !== null) {
+        cancelAnimationFrame(flushRafRef.current);
+        flushRafRef.current = null;
+      }
     };
+  }, []);
+
+  // Load a session by session_id from backend
+  const loadSession = useCallback(async (targetSessionId: string) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const token = localStorage.getItem('auth_token');
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      // BACKEND_URL already contains /api (e.g. https://domain/api)
+      // Strip it before appending /api/user/sessions to avoid double /api
+      const sessionBaseUrl = BACKEND_URL.endsWith('/api') ? BACKEND_URL.slice(0, -4) : BACKEND_URL;
+      const res = await fetch(`${sessionBaseUrl}/api/user/sessions/${targetSessionId}`, { headers });
+      if (!res.ok) {
+        throw new Error('Không thể nạp lịch sử cuộc nói chuyện');
+      }
+      const data = await res.json();
+      setSessionId(data.session_id);
+      // The deck/PPTX links only ever arrived as a one-off SSE event on the turn
+      // that built them, never saved onto the message itself — so reopening a past
+      // conversation from the sidebar showed no way to re-download a deck that was
+      // still sitting on disk the whole time. The backend now reconstructs it as
+      // `proposal_assets`; attach it to the last assistant turn, same place a live
+      // stream would have put it, so MessageBubble's existing download buttons
+      // just work without new UI.
+      let msgs: Message[] = data.messages || [];
+      let lastAssistantTimestamp: string | undefined;
+      if (data.proposal_assets && msgs.length > 0) {
+        const lastAssistantIdx = msgs.map((m) => m.role).lastIndexOf('assistant');
+        if (lastAssistantIdx !== -1) {
+          lastAssistantTimestamp = msgs[lastAssistantIdx].timestamp;
+          msgs = msgs.map((m, i) =>
+            i === lastAssistantIdx ? { ...m, proposalAssets: data.proposal_assets } : m
+          );
+        }
+      }
+      setMessages(msgs);
+      // Reset rather than merge: this is a different conversation, and the
+      // previous session's artifact list (or the stale sessionStorage copy the
+      // legacy checkpoint flow writes) must not bleed into it.
+      setArtifacts(
+        data.proposal_assets
+          ? proposalAssetsToArtifacts(data.proposal_assets, lastAssistantTimestamp)
+          : []
+      );
+      // Same reset-not-merge rule as the artifact list above, and for a sharper reason: this
+      // state drives the deliverables bar pinned above the composer, so leaving the previous
+      // conversation's value in place offers the rep another client's deck and PPTX on this
+      // one. Only the SSE handler used to set it, so a resumed session showed no bar at all
+      // while a session switch showed the wrong one.
+      setProposalAssets(data.proposal_assets ?? null);
+      if (data.brief) setBrief(data.brief);
+      setPendingQuestions([]);
+      setActiveCheckpoint(null);
+      setThinkingSteps([]);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Có lỗi khi tải session');
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   return {
@@ -1081,5 +1413,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     editCheckpoint,
     clearError,
     resetSession,
+    loadSession,
   };
 }

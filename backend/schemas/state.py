@@ -112,8 +112,12 @@ class AgentOutput(BaseModel):
     """
 
     agent: str = Field(..., description="Name of the agent that produced this output")
-    status: Literal["COMPLETE", "NEEDS_INPUT", "NEEDS_AGENT", "FAILED"] = Field(
-        ..., description="Status of the agent's work"
+    status: Literal["COMPLETE", "PARTIAL", "NEEDS_INPUT", "NEEDS_AGENT", "FAILED"] = Field(
+        ..., description=(
+            "Status of the agent's work. PARTIAL means the call was truncated by "
+            "max_tokens but still produced usable content — distinct from FAILED, "
+            "which means the call raised."
+        )
     )
     payload: dict[str, Any] = Field(
         default_factory=dict, description="The actual result data"

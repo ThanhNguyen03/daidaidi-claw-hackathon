@@ -19,11 +19,12 @@ adding to any of them, reconcile rather than adding a fourth story:
 | `docs/workflow.jpg` | A 9-agent A1–A9 pipeline with an AE review step |
 | **the code** | 7 skills, listed below |
 
-The 7 skills registered in `backend/skills/registry.py`:
+The 8 skills registered in `backend/skills/registry.py`:
 
 ```
 market_strategy      product_solution     compliance      client_simulator
 design               proposal_assembler   wireframe_designer
+figma_wireframe      ← on-demand only, never planned
 ```
 
 `central_agent/` is the orchestrator — it is not a skill and is not in the registry.
@@ -41,6 +42,26 @@ POST /chat/stream
   ↓ proposal_assembler + wireframe_designer
   ↓ _synthesize            streams the final answer
 ```
+
+### Where a conversation lives
+
+Two SQLite files, each with a table called `sessions`, and they are not the same thing:
+
+| File | Written by | Holds |
+|---|---|---|
+| `data/app.db` | `database.py` | users, org rules, and the transcript the history sidebar lists — `messages_json`, brief, constraints |
+| `data/sales_assistant.db` | `repos/memory_repo.py` | the whole serialised `SalesCaseState`, skill outputs included. Much the larger of the two |
+
+`GET /user/sessions` reads the first; a resumed turn loads state from the second. So
+anything that removes a conversation has to remove it from **both**, plus
+`_session_store`, plus the PII alias table, plus the deck/PPTX files in
+`data/artifacts/`. That is what `main.py:_purge_session_everywhere` is for — the
+`DELETE /user/sessions[/{id}]` endpoints and the trash buttons in the sidebar both go
+through it, and both `VACUUM` afterwards because a SQLite `DELETE` alone does not
+shrink the file.
+
+`DELETE /sessions/{id}` is the old endpoint and only drops the in-memory entry. The
+history UI does not use it.
 
 ---
 
@@ -96,6 +117,72 @@ Four code paths arrange that plan. The arrangement pass at the end of `_plan` is
 last word — it used to collapse every sequential skill into a single final group and
 silently undid the other three.
 
+**The proposal document has exactly one section scheme: 7 sections, defined in
+`proposal_assembler_agent/SKILL.md` and mirrored exactly in
+`wireframe_designer_agent/SKILL.md`'s slide map** (Section 5 = Compliance, Section 6 =
+Investment — the deck's compliance gate keys off "SECTION 5" verbatim, so the two
+files cannot drift). `product_solution` owns the journey and Mermaid diagram in
+Section 3 on every turn; `design` only contributes there when the rep explicitly asked
+for design artifacts, and never duplicates what `product_solution` already produced.
+The synthesizer's own non-assembled fallback answer (when there is no formal
+`proposal_assembler` output to stream) uses the same 7-section shape for consistency,
+even though it is a different code path and not read by the deck extractor.
+
+**Figma cannot be drawn into from a server, so the Figma feature is pull-based.** Figma
+exposes no REST API for creating nodes, and OAuth grants no Plugin-API access — drawing only
+happens from inside a running Figma session. So `POST /figma/wireframe` builds a spec and
+parks it under a short code (`backend/figma/jobs.py`), and the plugin in `figma-plugin/`
+pulls that code from inside the rep's own file. `GET /figma/job/{code}` is unauthenticated
+by necessity: the request comes from a plugin sandbox that carries none of this app's auth,
+so the code *is* the credential — 40 bits from `secrets`, 24-hour TTL, and it names nothing
+about the session it came from. Do not "improve" this into a connect-Figma-via-OAuth-and-draw
+flow; there is no capability to build it on.
+
+`figma_wireframe` is the one registered skill that may never appear in a plan. Hiding it
+from the planner's catalog is not enough — the planner invents skill names, and this one is
+an easy guess on any message mentioning a wireframe — so `_ON_DEMAND_ONLY` is also
+subtracted from `valid_skill_names` in `_plan`, which is the only place that decides what
+actually dispatches. It runs on-demand because it is a serialised LLM call
+(`LLM_MAX_CONCURRENCY=1`) that most proposal turns never need, and because the spec is
+built from the assembler's finished proposal either way.
+
+The spec is **unmasked on the way out** (`main.py:_unmask_spec`, walked per string rather
+than over the serialised JSON — a restored value containing a quote would break the
+document). The proposal in state is masked, so without this a rep showed a client a
+wireframe with `[CONTACT-1]` drawn into it.
+
+**The block vocabulary is one closed set of 25 kinds, written down in three places that
+cannot drift:** the table in `figma_wireframe_agent/SKILL.md` (what the model may emit),
+`_BLOCK_KINDS` in `skills/figma_wireframe/skill.py` (what survives validation), and the
+`buildBlock()` switch in `figma-plugin/code.js` (what gets drawn). Adding a kind means all
+three. A kind missing from the middle one is dropped silently; missing from the last draws as
+a grey "khối chưa hỗ trợ" box. The per-platform bans (`_ZNS_FORBIDDEN`, `_OA_FORBIDDEN`, and
+the matching filter in `drawZnsScreen`) are duplicated the same way and for the same reason —
+a ZNS is a fixed template with no navigation, no scrolling collection and no input, so a
+`tabbar` drawn into one misrepresents the platform.
+
+It started at 9 kinds and every screen came out as heading + list + button, because 9 generic
+kinds cannot express a real Mini App: no `hero` for the points/tier header, no `voucher`, no
+`qr` for the counter code, no `grid`. **The guidance was pushing the same way** — "aim for 3–6
+screens", "4–7 blocks", and a reference file whose closing line was "three honest screens beat
+six confident ones". That line was written against the risk of *inventing content* and it
+silently suppressed *structure* too. The distinction the knowledge base now turns on:
+**structure is inference, content is quotation.** Drawing the QR screen a redemption journey
+implies is not fabrication; putting an invented code on it is. Targets are 6–12 screens and
+5–9 blocks, and `skill.py` logs a `WARN thin journey` / `WARN flat output` line when the model
+falls back to the old shape — otherwise there is no way to tell from outside whether the
+vocabulary was used.
+
+**Compliance emits one machine-readable token, and everything reads the same one.**
+`compliance/skill.py` requires a `VERDICT: CLEAR|CONDITIONS|BLOCKED` line — exactly
+that word, alone on its line — and regex-extracts it into `payload["verdict"]`. This
+existed as three different spellings before ("CLEAR TO PROCEED", "PROCEED WITH
+CONDITIONS", a bare "CLEAR / CONDITIONS / BLOCKED" in the same reference file
+contradicting its own template 114 lines up) and nothing downstream could gate on any
+of them despite the SKILL.md's workflow claiming to "gate downstream." An unrecognised
+or missing verdict defaults to `CONDITIONS`, never `CLEAR` — an unreadable verdict
+should read as "not fully cleared."
+
 ---
 
 ## Adding a skill
@@ -103,6 +190,14 @@ silently undid the other three.
 1. `backend/agents/<name>_agent/SKILL.md` — role, workflow, and a **Reference Skills
    List** table. The loader parses that table; a skill without one gets no knowledge.
    Fill the Purpose column with something real — the selector has nothing else to go on.
+   **The filename column must be a markdown link**: `knowledge/loader.py:_ROW_RE` matches
+   `| [file.md](reference/file.md) | Purpose |` and nothing else, so a row that names the file
+   in backticks or as bare text is not in the catalog. `parse_catalog` returning `[]` is a
+   documented, non-error state meaning "this agent has no retrievable knowledge", so a
+   mis-formatted table produces no warning anywhere — the skill just runs on its SKILL.md
+   alone. `figma_wireframe` shipped that way and nobody noticed until its three reference
+   files were checked against `parse_catalog` directly. Verify with
+   `parse_catalog(open(SKILL.md).read())` after writing the table, not by eye.
 2. `backend/agents/<name>_agent/reference/*.md`
 3. `backend/skills/<name>/skill.py`, subclassing `BaseSkill`
 4. Register in `backend/skills/registry.py`
@@ -127,7 +222,33 @@ LLM_REASONING_EFFORT=low
 LLM_MAX_CONCURRENCY=1
 LLM_RETRY_ATTEMPTS=6
 LLM_RETRY_MAX_WAIT_S=60
+TURN_BUDGET_S=600
 ```
+
+**`LLM_MAX_CONCURRENCY` is enforced twice, and both are needed.** `llm/client.py`
+holds a threading semaphore around every completion — that is what protects the
+provider. `central_agent/agent.py` holds an asyncio one around every *skill* — that
+is what makes the per-skill timeout mean anything. Without the second, a group's
+skills all started their 270s clock at task-creation time while only one could talk
+to the provider, so the ones at the back of the queue expired having sent no request
+at all. See the entry in "Bugs that bit us".
+
+**`TURN_BUDGET_S` bounds the analysis phase**, because serialised admission removed
+the accidental bound that the spurious timeouts used to provide. Once it is spent the
+queued analysis skills are skipped, announced as skipped, and the answer is built
+from what finished. `proposal_assembler` and `wireframe_designer` are exempt — they
+are the deliverable, and skipping one of those means the rep waited out the whole
+budget for nothing.
+
+**Every LLM call runs on its own thread pool (`llm/pool.py`), separate from the
+default executor `asyncio.to_thread` uses for DB and file I/O.** `llm/client.py`'s
+`_INFLIGHT` semaphore parks a worker thread for the whole time it waits on a slot, and
+the synthesis stream worker holds one for an entire token stream — on the default
+pool (`min(32, cpu+4)`, as few as 6 threads on a 2-vCPU box) that was enough to starve
+session saves and deck writes queued behind them. Concurrency at the provider is still
+capped at `LLM_MAX_CONCURRENCY` either way; only which pool the waiting happens on
+changed. The default executor itself is widened in `lifespan` (`IO_POOL_WORKERS`,
+default 16) for the same reason, on the DB/file side.
 
 Measured on this key's free tier — do not re-litigate these without re-measuring:
 
@@ -143,19 +264,35 @@ draws those tokens from the same `max_tokens` budget as the answer. Without it t
 planner prompt never returned inside 150s, and `gemini-3.5-flash` came back
 `finish_reason: length` having produced nothing.
 
-**Rate limits are the main operational risk.** A full proposal turn fans out to
-planner, selectors, four specialists, assembler and synthesis. Six concurrent
-requests draw a 429; a whole run on free tier produced 28 of them and failed four
-skills. Hence concurrency 1 and the long retry ceiling. Before a demo, either buy
-quota or run a session in advance and present that.
+**The project moved to paid Tier 1 on 2026-07-28** (billing linked, $250/mo cap).
+Tier 1 ceilings for the models this app uses are roughly 50-500x the free-tier ones
+below — `gemini-3.6-flash` alone went from 5 RPM/20 RPD to 1,000 RPM/10,000 RPD.
+`config/model_limits.yaml` has been updated to the Tier 1 numbers (read off AI
+Studio's Rate Limit page, the same way the originals were). The paragraphs below
+describe the free-tier regime the concurrency/retry/fallback settings were designed
+against; nothing about those settings changed with the upgrade — Tier 1 makes them
+more conservative than necessary, not wrong, and loosening `LLM_MAX_CONCURRENCY` or
+`LLM_FALLBACK_MODELS` is a deliberate decision to make later, not a side effect of
+updating the quota display. One thing the upgrade *does* explain: `out_of_quota_today`
+firing right after the upgrade was chasing the old free-tier ceiling, not a real
+Tier-1 problem — AI Studio's own 28-day peak-usage chart for this project never
+showed more than 25 RPD on `gemini-3.6-flash`, well under either ceiling.
 
-**Requests-per-day is the limit that actually stops a demo, and retrying cannot fix
-it.** Measured 2026-07-26: `gemini-3.6-flash` at 25/20 RPD while
-`gemini-3.5-flash-lite` sat at 246/500, and the five skills pinned to 3.6-flash all
-failed while the two on flash-lite sailed through. So `LLM_FALLBACK_MODELS` moves a
-call to the next model once one is spent, and the 429 body is read to tell a
-per-minute limit (wait it out) from a per-day one (switch immediately — six attempts
-across three models would hit the 270s skill timeout before reaching the last).
+**Rate limits were the main operational risk on free tier.** A full proposal turn
+fans out to planner, selectors, four specialists, assembler and synthesis. Six
+concurrent requests draw a 429 on free tier; a whole run produced 28 of them and
+failed four skills. Hence concurrency 1 and the long retry ceiling — kept as-is
+after the Tier 1 upgrade until there's a reason to re-measure and loosen them.
+
+**Requests-per-day was the limit that actually stopped a demo on free tier, and
+retrying could not fix it.** Measured 2026-07-26: `gemini-3.6-flash` at 25/20 RPD
+while `gemini-3.5-flash-lite` sat at 246/500, and the five skills pinned to
+3.6-flash all failed while the two on flash-lite sailed through. So
+`LLM_FALLBACK_MODELS` moves a call to the next model once one is spent, and the 429
+body is read to tell a per-minute limit (wait it out) from a per-day one (switch
+immediately — six attempts across three models would hit the 270s skill timeout
+before reaching the last). Both mechanisms stay in place post-upgrade; they just
+fire far less often now.
 
 ```
 LLM_FALLBACK_MODELS=gemini-3.5-flash-lite,gemini-3.5-flash
@@ -223,11 +360,13 @@ Every turn should produce this trail. If a line is missing, that stage did not r
 
 ## Known dead code
 
-Present, unreferenced, and safe to delete when someone has time. Roughly 1,500 lines.
+Present, unreferenced, and safe to delete when someone has time. Roughly 1,000 lines.
+(`main.py` already lost ~510 lines this way — `_maybe_create_checkpoint`,
+`_extract_agent_content`, `process_simple`, the sync `get_or_create_session`, and their
+supporting constants/prompt — all provably zero-caller before deletion.)
 
 | Path | Note |
 |---|---|
-| `main.py:_maybe_create_checkpoint` | ~260 lines, no callers. The live checkpoints are built in `central_agent/agent.py` |
 | `validation/validator.py` | No callers. The BRD critiques its `MANDATORY_FIELDS`; `gate.py` supersedes it |
 | `mode/brainstorm.py` | Mode is "coming soon" in the UI |
 | `generation/pptx.py`, `generation/userflow.py` | Superseded by `pptx_adtimabox.py` and inline Mermaid |
@@ -239,6 +378,33 @@ Present, unreferenced, and safe to delete when someone has time. Roughly 1,500 l
 
 ## Bugs that bit us, so they are not reintroduced
 
+- **A queued skill was spending its whole timeout in the queue.** Every skill in a
+  plan group got its own `asyncio.wait_for(..., 270s)` the moment its task was created,
+  but `llm/client.py`'s semaphore let exactly one of them reach the provider. So a
+  five-skill group cost 270s *per queued skill* and reported the ones that never ran as
+  failures — which is most of what "a run produced 28 rate-limit errors and failed four
+  skills" actually was. The clock now starts when a skill is admitted, not when it is
+  queued, and the sidebar shows the queued ones as `waiting` rather than `thinking`.
+- **Blocking SQLite on the event loop stalls every open stream.** The sidebar polled
+  `/user/sessions` every 5s — 12 requests a minute per tab — and the handler read
+  sqlite3 synchronously, so each poll froze the SSE stream the rep was watching. The
+  list is event-driven now (`session_updated`, fired at both ends of a turn, plus a 60s
+  fallback) and every session read and write goes through `asyncio.to_thread`.
+  `updated_at` is the last column of a row whose `messages_json` spills to overflow
+  pages, so the list query had to walk that chain per row; `idx_sessions_user_updated`
+  keeps it out of the row entirely.
+- **Both session writes are upserts, so deleting mid-turn resurrected the row.** The
+  save at the end of a turn runs long after the rep could have deleted the
+  conversation — which is exactly what they do to a turn that looks stuck. A bounded
+  tombstone list in `main.py` suppresses that final write, and a new turn on the same
+  id retracts the tombstone, because a second tab still using the session outranks the
+  delete.
+- **The deck HTML was re-serialised into the state row on every later turn.** Same
+  shape as the `pptx_bytes` bug below, minus the crash: `html_content` sat in
+  `wireframe_designer`'s payload, so a few hundred KB of HTML was rewritten into
+  `sales_assistant.db` on every subsequent message, for a string nothing reads again.
+  It goes to disk in `ARTIFACTS_DIR` now, like the PPTX beside it, which also means the
+  deck link survives a restart instead of 404ing.
 - **`pyyaml` is a hard dependency.** `tools/ingest.py` imports it to read
   `config/agents.yaml` and returns `[]` on ImportError — the entire knowledge base
   goes unindexed with only a stdout warning. It was absent from `requirements.txt`
@@ -283,6 +449,103 @@ Present, unreferenced, and safe to delete when someone has time. Roughly 1,500 l
 - **`core.autocrlf` is on for the team's Windows checkouts.** `.gitattributes` pins LF
   for shell, compose and nginx files; without it a fresh clone hands `deploy.sh` CRLF
   and bash refuses it.
+- **Per-call state cannot live on `self` inside a skill.** `BaseSkill` instances are
+  process-wide singletons (`skills/registry.py`) serving every concurrent turn —
+  writing `self.last_call_truncated` in `_call_llm` for one turn to read looked like
+  the natural place, until it was clear a second turn's call could overwrite the flag
+  before the first turn read it. `_call_llm` returns `(text, truncated)` instead;
+  nothing about a single call is ever stored on the shared instance.
+- **A truncated reply was indistinguishable from a whole one.** Nothing checked
+  `finish_reason`, so a skill's answer cut off by `max_tokens` still came back
+  `status="COMPLETE"` and got assembled into the proposal as if it were finished.
+  `_call_llm`'s second return value is `True` on `finish_reason == "length"`; every
+  skill wraps it as `status="PARTIAL"` and appends a note to its own summary.
+- **`tableLayout: 'fixed'` silently defeated the overflow-x-auto wrapper built to fix
+  wide tables.** Fixed layout forces every column into the container width no matter
+  what the wrapper allows, so a 5-column ratecard in a narrow chat bubble squeezed
+  every figure into single-digit pixel columns instead of scrolling — the wrapper
+  never got the chance to activate. `tableLayout: 'auto'` + `width: max-content` +
+  `minWidth: '100%'` on the `<table>` is what actually lets the wrapper do its job.
+- **A modal card without its own opaque background reads as broken, not just
+  translucent.** `--color-surface` is 60% alpha in the (default) dark theme, and two
+  modals painted their card with it and no `backdrop-filter` — 16-20% of the page
+  behind them showed through unblurred, directly behind dense numeric quota rows.
+  A separate bare-`header`/`form` CSS selector then made the modal's own header *more*
+  transparent than its body. Modals get an opaque `--color-surface-solid` card plus a
+  blurred scrim (`.modal-card`/`.modal-scrim`); the frosted-chrome selector is scoped
+  to an explicit `.app-chrome` class so it never lands on a modal by accident again.
+- **The entire session history and agent status list were unreachable on a phone.**
+  The sidebar was hard-wrapped in `hidden md:block`, and the mobile drawer that stood
+  in for it carried only two mode buttons — seven of eight sidebar capabilities,
+  Model & Quota included, had no mobile path at all. The sidebar is one off-canvas
+  component now (`fixed` + `translate-x`), shared by desktop and the mobile drawer, so
+  there is only ever one place to fix.
+- **An unlayered CSS rule beats a layered one regardless of specificity.** Moving
+  `text-xs`/`sm`/`base`/`lg` into Tailwind v4's `@theme` block (to fix a line-height
+  bug) dropped the `!important` a hand-written `.text-xs{font-size:...!important}`
+  used to carry — and `@theme` utilities live in a Tailwind cascade layer, which loses
+  to *any* unlayered rule no matter how low its specificity. `globals.css` had a
+  pre-existing unlayered `h1, h2, .text-xl, ... {font-size: 22px}` headline rule that
+  bare-matched every `<h2>` element, so it started winning outright — Sidebar's
+  "Active Agents", ChatWindow's mode header, every small-text heading rendered at
+  22-26px instead of its intended size. Every `<h1>`/`<h2>` in the codebase already
+  carries its own explicit sizing class, so the fix removed the bare element selectors
+  entirely rather than narrowing them — nothing relied on them.
+- **A planner intent with no matching branch falls through to "run everything."**
+  `_resolve_intent()` can legitimately return `"casual"` (an ambiguous "tôi muốn làm
+  việc khác"), but `_build_contextual_skill_plan()` had no case for it, so it fell to
+  the default branch — every core skill, then the sticky `desired_outputs` safety net
+  chained on `proposal_assembler` + the deck. Same gap in the `conversational` tuple
+  gating Chốt 1: it listed `("lookup", "coaching")` and forgot `"casual"`, so a message
+  the planner itself correctly classified as small talk still re-ran the full brief
+  pipeline. Result: once a proposal existed, almost any follow-up message rebuilt the
+  whole thing. `casual` now short-circuits both checks; an empty skill plan lets
+  `_synthesize` answer from conversation history alone instead of dispatching nothing
+  useful into a five-skill re-run.
+- **A message timestamp with no UTC offset is read as local time by the browser.**
+  Every `state.messages[...]["timestamp"]` was stamped with naive `datetime.now()` —
+  the server's system clock (UTC, since nothing sets `TZ`), serialised via
+  `.isoformat()` with no trailing `Z`/`+00:00`. `new Date(message.timestamp)` on the
+  frontend has no offset to go on, so it parses the string as if it were *already* in
+  the viewer's local zone (Asia/Ho_Chi_Minh, UTC+7) — a message the server stamped at
+  20:00 UTC (03:00 the next day in Vietnam) rendered as 20:00 that same day, a whole
+  calendar date off whenever the 7-hour gap crossed midnight. Fixed at the source:
+  every one of the 12 call sites across `central_agent/agent.py`, `main.py`,
+  `cs_agent/agent.py`, and `memory/profile.py` now stamps `datetime.now(timezone.utc)`,
+  which serialises with an explicit offset the browser can actually convert from.
+- **A casual-reply picker judged language from one message, not the conversation.**
+  `_is_vietnamese()` was written specifically to fall back through a rep's own earlier
+  messages, because a single system-generated nudge or a short reply carries no
+  language signal on its own — but `_casual_reply()` (the greeting/small-talk path)
+  never used it, and instead re-implemented the single-message check it was meant to
+  replace. A one-word opener like "alo" mid-conversation has no Vietnamese diacritics,
+  so it answered a Vietnamese rep in English partway through their own session.
+  `_casual_reply` now takes `state` and calls `_is_vietnamese(message, state)` like
+  every other language decision in this file.
+- **`figma.createTextNode()` does not exist.** The Figma Plugin API method is
+  `figma.createText()`. The plugin was first written against a hand-rolled mock of the
+  Plugin API — which happily defined whatever the code called, so the mock passed 5/5
+  screens while the real API would have thrown on the first label. A mock cannot tell you a
+  method exists; only the typings can. `figma-plugin/code.js` guards genuinely
+  version-dependent calls (`createAutoLayout`, `createSection`, `resizeWithoutConstraints`)
+  behind `typeof … === 'function'`, and that pattern is easy to mistake for "all API access
+  here is checked" — it is not.
+- **A scope parameter that only one caller ever sets is not a filter, it's a
+  constant.** `get_active_rules(scope)` in `database.py` does real filtering —
+  `scope IN ('all', ?)` — but both call sites in the codebase (the planner and
+  the final synthesizer) always passed the literal string `"all"`, which the
+  function special-cases to mean "no filter, return every active rule". So the
+  Admin Panel's per-skill scope picker ("Compliance", "Product Solution", ...)
+  never actually narrowed anything — and more importantly, neither the planner
+  nor the synthesizer is the thing that writes a proposal's compliance section
+  or strategy section. A rule scoped to "Compliance" never reached
+  `compliance/skill.py` at all; it only ever reached two calls that don't own
+  that content. `BaseSkill._fetch_org_rules()` now calls
+  `get_active_rules(self.name)` from inside each of the 6 skills that build
+  their own system prompt, which is what makes the scope picker real. Also had
+  zero observability — nothing logged when a rule was or wasn't injected — so
+  there was no way to confirm from outside that it worked; a `[org_rules]` line
+  now prints wherever a rule is actually injected.
 
 ---
 

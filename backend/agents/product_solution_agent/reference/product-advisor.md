@@ -45,7 +45,7 @@ AdtimaBox pricing and feature reference — activate when someone asks about spe
 
 - **Unify & Segment** — Hợp nhất profile, gán nhãn tự động, phân tệp theo hành vi
 
-- **Analyze** — Dashboard chỉ số chính + **Khám phá chân dung khách hàng với Zalo DMP** (lợi thế cạnh tranh duy nhất vs đối thủ hiện tại, giúp tự động phân tích tạo các báo cáo khám phá chân dung khách hàng bao gồm: giới tính, độ tuổi, ngành nghề, nơi sinh sống/làm việc, quê quán, mối quan tâm, thiết bị, nhà mạng, hành vi đọc báo mới hoặc tương tác với ads trên hệ sinh thái Zalo - Auto EDA).
+- **Analyze** — Dashboard chỉ số chính + **Khám phá chân dung khách hàng với Zalo DMP** (lợi thế cạnh tranh duy nhất vs CNV Loyalty, Pango, Mmenu, Digibird, giúp tự động phân tích tạo các báo cáo khám phá chân dung khách hàng bao gồm: giới tính, độ tuổi, ngành nghề, nơi sinh sống/làm việc, quê quán, mối quan tâm, thiết bị, nhà mạng, hành vi đọc báo mới hoặc tương tác với ads trên hệ sinh thái Zalo - Auto EDA).
 
 - **Activation & Conversion** — Cá nhân hóa, Quản lý sự kiện, Khảo sát & Câu hỏi, Hệ thống tự động hóa tin nhắn Zalo.
 

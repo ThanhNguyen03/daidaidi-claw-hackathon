@@ -1,0 +1,159 @@
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    font-family: Inter, "Helvetica Neue", Arial, sans-serif;
+    font-size: 12px;
+    color: #111827;
+    background: #FFFFFF;
+  }
+  h1 {
+    margin: 0 0 2px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  p.lede {
+    margin: 0 0 14px;
+    font-size: 11px;
+    line-height: 1.45;
+    color: #6B7280;
+  }
+  label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #374151;
+  }
+  .field { margin-bottom: 12px; }
+  input {
+    width: 100%;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid #D1D5DB;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 12px;
+    color: #111827;
+    background: #FFFFFF;
+    outline: none;
+  }
+  input:focus { border-color: #F65009; }
+  #code {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    font-size: 14px;
+  }
+  .hint {
+    margin: 4px 0 0;
+    font-size: 10px;
+    color: #9CA3AF;
+  }
+  button {
+    width: 100%;
+    height: 36px;
+    border: 0;
+    border-radius: 6px;
+    background: #F65009;
+    color: #FFFFFF;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: #DC4708; }
+  button:disabled { background: #E5E7EB; color: #9CA3AF; cursor: default; }
+  #status {
+    margin-top: 12px;
+    padding: 9px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    line-height: 1.5;
+    display: none;
+    white-space: pre-wrap;
+  }
+  #status.show { display: block; }
+  #status.info { background: #F3F4F6; color: #374151; }
+  #status.ok { background: #ECFDF3; color: #15803D; }
+  #status.err { background: #FEF2F2; color: #B91C1C; }
+</style>
+
+<h1>AdtimaBox Wireframe</h1>
+<p class="lede">Nhập mã job từ đề xuất AdtimaBox để vẽ wireframe mobile vào file Figma này.</p>
+
+<div class="field">
+  <label for="code">Mã job (8 ký tự)</label>
+  <input id="code" maxlength="8" placeholder="A1B2C3D4" autocomplete="off" spellcheck="false" />
+</div>
+
+<div class="field">
+  <label for="api">Địa chỉ API</label>
+  <input id="api" placeholder="https://zah-28.123c.vn/api" autocomplete="off" spellcheck="false" />
+  <p class="hint">Chỉ cần nhập một lần, plugin sẽ ghi nhớ.</p>
+</div>
+
+<button id="draw">Vẽ Wireframe</button>
+<div id="status"></div>
+
+<script>
+  var DEFAULT_API = 'https://zah-28.123c.vn/api';
+
+  var codeInput = document.getElementById('code');
+  var apiInput = document.getElementById('api');
+  var drawBtn = document.getElementById('draw');
+  var statusBox = document.getElementById('status');
+
+  function setStatus(text, kind) {
+    statusBox.textContent = text;
+    statusBox.className = 'show ' + (kind || 'info');
+  }
+
+  function post(msg) {
+    parent.postMessage({ pluginMessage: msg }, '*');
+  }
+
+  function submit() {
+    var code = codeInput.value.trim().toUpperCase();
+    var api = apiInput.value.trim() || DEFAULT_API;
+    if (!code) {
+      setStatus('Vui lòng nhập mã job.', 'err');
+      codeInput.focus();
+      return;
+    }
+    drawBtn.disabled = true;
+    setStatus('Đang tải spec…', 'info');
+    post({ type: 'draw', code: code, apiBase: api });
+  }
+
+  drawBtn.onclick = submit;
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !drawBtn.disabled) submit();
+  });
+
+  codeInput.oninput = function () {
+    codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  };
+
+  window.onmessage = function (event) {
+    var msg = event.data && event.data.pluginMessage;
+    if (!msg) return;
+    if (msg.type === 'config') {
+      apiInput.value = msg.apiBase || DEFAULT_API;
+      codeInput.focus();
+    } else if (msg.type === 'status') {
+      setStatus(msg.text, 'info');
+    } else if (msg.type === 'done') {
+      drawBtn.disabled = false;
+      setStatus(msg.text, 'ok');
+    } else if (msg.type === 'error') {
+      drawBtn.disabled = false;
+      setStatus(msg.text, 'err');
+    }
+  };
+
+  // Ask code.js for the stored API base (clientStorage is only reachable from the main thread).
+  post({ type: 'ready' });
+</script>

@@ -1,5 +1,5 @@
 # =============================================================================
-# Backend Dockerfile for AgentBase Runtime Deployment
+# Backend Dockerfile — built by docker-compose.prod.yml for the team's own VPS
 # =============================================================================
 # Multi-stage build for production-optimized image
 FROM python:3.11-slim AS builder
@@ -34,16 +34,19 @@ RUN chown -R appuser:appuser /app
 # Switch to non-root user
 USER appuser
 
-# AgentBase Runtime Service Contract: the platform routes traffic to port 8080
-# and probes GET /health. The app reads PORT from the env, so pin it to 8080.
-# (Locally you can override with -e PORT=8000.)
+# Default port; docker-compose.prod.yml overrides this to 8000 via `environment:`
+# (host nginx proxies /api/ to backend:8000 — see docker-compose.prod.yml). The
+# app reads PORT from the env either way.
 ENV PORT=8080
 EXPOSE 8080
 
-# Health check (uses python's stdlib so we don't need curl in the slim image)
+# Health check (uses python's stdlib so we don't need curl in the slim image).
+# Reads $PORT at check time rather than hardcoding 8080, so it still reports
+# correctly when docker-compose overrides PORT (production runs on 8000 — a
+# hardcoded 8080 here would show the container as permanently "unhealthy" in
+# `docker ps` despite the app working fine on the port that's actually mapped).
 HEALTHCHECK --interval=180s --timeout=10s --start-period=120s --retries=5 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health').status==200 else 1)" || exit 1
+    CMD python -c "import os,urllib.request,sys; p=os.environ.get('PORT','8080'); sys.exit(0 if urllib.request.urlopen(f'http://localhost:{p}/health').status==200 else 1)" || exit 1
 
-# Run the application (binds to $PORT = 8080). GREENNODE_* creds are auto-injected
-# by AgentBase Runtime — do NOT bake them into the image.
+# Run the application (binds to $PORT).
 CMD ["python", "-m", "main"]

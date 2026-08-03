@@ -282,16 +282,28 @@ class CheckpointManager:
 
         return checkpoint
 
-    def get_clarifying_question(self, checkpoint: Checkpoint) -> str:
-        """
-        Get the clarifying question after rejection.
+    # What to ask after a rejection, per stop point. Written per-stage rather than
+    # from a template because the old version echoed `action.description` back
+    # verbatim — a three-sentence instruction wrapped in "Action '...' was rejected",
+    # in English, to a rep working in Vietnamese. The rep is not rejecting an
+    # "action"; at Chốt 2 they are changing direction, and this is the message that
+    # has to tell them what to type next.
+    _REJECTION_PROMPTS = {
+        "confirm_solution": (
+            "Rõ rồi — mình chưa dựng proposal. Bạn muốn đổi hướng thế nào? "
+            "Nói cụ thể phần nào chưa ổn (cơ chế, gói sản phẩm, kênh, phạm vi...) "
+            "là mình làm lại phần đó; chiến lược và đánh giá pháp lý vẫn giữ nguyên."
+        ),
+        "confirm_brief": (
+            "Được, mình dừng lại. Bạn sửa giúp mình chỗ nào đang hiểu sai trong brief nhé."
+        ),
+    }
 
-        Returns:
-            A single clarifying question
-        """
-        return (
-            f"Action '{checkpoint.action.description}' was rejected. "
-            "How would you like to adjust?"
+    def get_clarifying_question(self, checkpoint: Checkpoint) -> str:
+        """The follow-up question shown after the rep rejects a checkpoint."""
+        return self._REJECTION_PROMPTS.get(
+            checkpoint.action.type,
+            "Mình đã dừng bước này. Bạn muốn điều chỉnh gì?",
         )
 
 

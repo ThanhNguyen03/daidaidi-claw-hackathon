@@ -5,6 +5,7 @@
  */
 
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, ZoomIn, Download } from 'lucide-react';
 
 interface ImageLightboxProps {
@@ -30,11 +31,16 @@ export function ImageLightbox({ src, alt, isOpen, onClose }: ImageLightboxProps)
     };
   }, [isOpen, onClose]);
 
-  if (!isOpen || !src) return null;
+  if (!isOpen || !src || typeof document === 'undefined') return null;
 
-  return (
+  // Portalled to <body>: this component is rendered from inside a message
+  // bubble that carries .glass-panel (backdrop-filter), which establishes a
+  // containing block for `position: fixed` descendants and a new stacking
+  // context. Without the portal, "fullscreen" resolves against the bubble,
+  // not the viewport — a lightbox the size of one chat message.
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in p-4"
+      className="modal-scrim items-center p-4 animate-fade-in"
       onClick={onClose}
     >
       <div
@@ -64,6 +70,7 @@ export function ImageLightbox({ src, alt, isOpen, onClose }: ImageLightboxProps)
         </div>
 
         {/* Full-size image */}
+        {/* eslint-disable-next-line @next/next/no-img-element -- arbitrary runtime src (data URI or external artifact URL), no fixed dimensions for next/image */}
         <img
           src={src}
           alt={alt || 'Full size preview'}
@@ -76,6 +83,7 @@ export function ImageLightbox({ src, alt, isOpen, onClose }: ImageLightboxProps)
           </p>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

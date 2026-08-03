@@ -1,0 +1,15 @@
+{
+  "name": "AdtimaBox Wireframe",
+  "id": "adtimabox-wireframe",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": [
+      "https://zah-28.123c.vn",
+      "http://localhost:8000"
+    ],
+    "reasoning": "Fetches the wireframe spec JSON for a job code from the AdtimaBox backend."
+  }
+}

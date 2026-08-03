@@ -197,8 +197,7 @@ These trigger an automatic 🔴 HIGH flag regardless of other context:
 ## 7. Output Format
 
 Return plain text to A2 Orchestrator in the following structure.
-**Language:** Match the language the user/Orchestrator used in the brief.
-If brief is in Vietnamese → output in Vietnamese. If in English → output in English.
+**Language:** DEFAULT TO 100% VIETNAMESE (TIẾNG VIỆT). Write all findings, notes, and conditions fully in Vietnamese. Only use English if the user explicitly writes in English or for technical terms.
 
 ```
 ═══════════════════════════════════════════
@@ -209,7 +208,10 @@ Zalo Products in scope: [List]
 Date: [YYYY-MM-DD]
 ═══════════════════════════════════════════
 
-OVERALL VERDICT: ✅ CLEAR TO PROCEED / ⚠️ PROCEED WITH CONDITIONS / ❌ BLOCKED
+OVERALL VERDICT: [pick one emoji+label] ✅ CLEAR TO PROCEED / ⚠️ PROCEED WITH CONDITIONS / ❌ BLOCKED
+VERDICT: [CLEAR / CONDITIONS / BLOCKED — the single word matching the label above,
+  read by the proposal assembler and the deck generator; must be exactly one of
+  these three words, nothing else on that line]
 
 Risk summary: [X] High | [X] Medium | [X] Notes
 

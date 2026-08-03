@@ -48,6 +48,9 @@ def _build_registry() -> SkillRegistry:
     _try_register(registry, "skills.design.skill", "DesignSkill")
     _try_register(registry, "skills.proposal_assembler.skill", "ProposalAssemblerSkill")
     _try_register(registry, "skills.wireframe_designer.skill", "WireframeDesignerSkill")
+    # On-demand only — central_agent excludes it from every plan (_EXCLUDE_FROM_PLAN).
+    # Registered so POST /figma/wireframe can resolve it the same way as any other skill.
+    _try_register(registry, "skills.figma_wireframe.skill", "FigmaWireframeSkill")
 
     print(f"[SkillRegistry] Loaded: {registry.all_names()}")
     return registry

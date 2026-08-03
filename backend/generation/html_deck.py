@@ -563,7 +563,7 @@ def _esc(s: str) -> str:
 def _safe_icon(text: str) -> str:
     """Strip Unicode that causes invalid HTML or broken emoji rendering:
     lone surrogates (illegal in HTML5), variation selectors without base,
-    and C0 control chars. Mirrors _safe_text in pptx_adtimabox.py."""
+    and C0 control chars. Mirrors _safe_text in generation/pptx_corporate.py."""
     if not text:
         return ""
     result = []
@@ -641,6 +641,7 @@ class HTMLDeckGenerator:
 
     async def _extract_slides(self, proposal_text: str, brief: dict, attempt: int = 0) -> list[dict]:
         from llm.client import get_llm_client
+        from llm.pool import LLM_POOL
         from skills.base import strip_think_blocks, extract_json_block, repair_json_escapes
 
         # Dedicated slot rather than the design skill's model, so this call can be
@@ -655,7 +656,7 @@ class HTMLDeckGenerator:
 
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
-            None,
+            LLM_POOL,
             partial(
                 client.create_completion,
                 messages=[

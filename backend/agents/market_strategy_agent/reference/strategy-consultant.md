@@ -214,6 +214,14 @@ First-Party Data Priority Stack (Zalo ecosystem):
 
 Framework: Business Problem → Business Capability → Process Design → Zalo Solution
 
+**Ads-labeled rows (Multi-screen Ads, Zing MP3 Audio Ads, Zalo Ads, Lead Form Ads)
+describe the wider Zalo/VNG media landscape for strategic context — they are not
+Adtima line items. Adtima's portfolio is OA, ZNS, Mini App, and CShub; never quote
+Ads pricing, CPM, CPC, or an Ads budget as part of a proposal or recommend it as
+something Adtima delivers. If a paid-Ads row is the closest fit for a business
+problem, name it as a separate channel the client would arrange directly with
+Zalo, not as part of this quote.**
+
 | Business Problem | Capability Needed | Zalo Solution |
 |-----------------|------------------|---------------|
 | Low repeat purchase | CRM + Loyalty | Mini App loyalty + ZNS re-engagement |
@@ -262,7 +270,7 @@ If `adtimabox-case-studies` returns no match, set `"alias": "no_match"` with a n
 ## Output Format
 
 Return a single JSON object. This is machine-readable output for other agents — completeness and valid JSON are required.
-
+**CRITICAL LANGUAGE MANDATE:** All string values inside the JSON MUST be written entirely in Vietnamese (Tiếng Việt). Do NOT write English sentences. (Exceptions: "skill", "status", and "industry" enum values, and technical terms like Zalo OA, Mini App).
 ```json
 {
   "skill": "strategy-skill",

@@ -14,7 +14,7 @@
  */
 
 import React, { useState } from 'react';
-import { HelpCircle, Check, SkipForward, Send, Pencil } from 'lucide-react';
+import { HelpCircle, Check, SkipForward, Send, Pencil, Bot } from 'lucide-react';
 import type { Question } from '../lib/types';
 
 interface QuestionCardProps {
@@ -66,7 +66,11 @@ export function QuestionCard({
   const blocking = mandatory.length;
 
   return (
-    <div className="relative mb-4 rounded-xl border border-accent/35 bg-surface/70 p-4 shadow-card backdrop-blur">
+    <div className="flex gap-2 sm:gap-3 mt-3 sm:mt-4 mb-4 animate-fade-in-up">
+      <div className="shrink-0 aspect-square p-2 size-fit rounded-full flex items-center justify-center text-white bg-accent glow-border" style={{ boxShadow: '0 0 12px rgba(0, 104, 255, 0.5)' }}>
+        <Bot size={16} className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+      </div>
+      <div className="relative flex-1 min-w-0 rounded-xl border border-accent/35 bg-surface/70 p-4 shadow-card backdrop-blur-sm">
       <div className="mb-1 flex items-center gap-2 text-accent-text">
         <HelpCircle size={18} />
         <span className="text-sm font-semibold">Chọn nhanh hoặc tự nhập</span>
@@ -163,7 +167,7 @@ export function QuestionCard({
                     setSelected((prev) => ({ ...prev, [question.id]: value }));
                   }}
                   placeholder="Nhập câu trả lời của bạn…"
-                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-text outline-none transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-text outline-hidden transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
                 />
               )}
 
@@ -236,7 +240,7 @@ export function QuestionCard({
             disabled={busy}
             onChange={(e) => setFreeText(e.target.value)}
             placeholder="Hoặc trả lời tất cả trong một câu…"
-            className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-text outline-none transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
+            className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-text outline-hidden transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
           />
           <button
             type="submit"
@@ -248,6 +252,7 @@ export function QuestionCard({
           </button>
         </div>
       </form>
+      </div>
     </div>
   );
 }

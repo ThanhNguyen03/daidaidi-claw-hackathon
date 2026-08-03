@@ -49,14 +49,16 @@ export function AuthModal({ onSuccess }: AuthModalProps) {
   };
 
   return (
-    <div className="auth-modal-overlay">
-      <div className="auth-modal-card">
+    <div className="auth-modal-overlay tf-stage">
+      <span className="tf-orb tf-orb--1" />
+      <span className="tf-orb tf-orb--2" />
+      <div className="auth-modal-card tf-card overflow-hidden">
         {/* Header */}
         <div className="auth-modal-header">
-          <div className="auth-modal-logo">
+          <div className="auth-modal-logo tf-mark">
             <Sparkles size={28} />
           </div>
-          <h1 className="auth-modal-title">AdtimaBox Sales AI</h1>
+          <h1 className="auth-modal-title">Z-PreSales Agent</h1>
           <p className="auth-modal-subtitle">Multi-Agent Sales Assistant</p>
         </div>
 

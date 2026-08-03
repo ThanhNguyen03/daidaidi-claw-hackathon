@@ -28,8 +28,7 @@ description: >
 [product-advisor]        ┘
 ```
 
-**Language rule:** Match the language of the original client brief.
-Vietnamese brief → proposal in Vietnamese. English brief → English. Mixed → Vietnamese.
+**Language rule:** DEFAULT TO 100% VIETNAMESE (TIẾNG VIỆT). Always write the proposal in Vietnamese unless explicitly requested otherwise.
 
 ---
 
@@ -124,7 +123,12 @@ Recommend presenting as a first-mover opportunity."]
 SECTION 5 — COMPLIANCE STATUS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Overall verdict: [✅ CLEAR TO PROCEED | ⚠️ PROCEED WITH CONDITIONS | ❌ BLOCKED]
+Overall verdict: copy the exact word from the compliance skill's VERDICT line
+— CLEAR, CONDITIONS, or BLOCKED — followed by its Vietnamese label, e.g.
+"✅ CLEAR — Đủ điều kiện triển khai" / "⚠️ CONDITIONS — Cần bổ sung điều kiện"
+/ "❌ BLOCKED — Tạm dừng". wireframe_designer_agent reads this exact word to
+decide whether to render Sections 6–7 as slides; a paraphrase ("PROCEED WITH
+CONDITIONS" instead of "CONDITIONS") is what breaks that gate.
 
 [If CLEAR: "No compliance blockers identified. Standard Zalo policy and data privacy
 requirements apply — see onboarding consent flow in Section 3."]
@@ -212,6 +216,11 @@ Do not render investment or next steps for a blocked proposal.
 **Rule 2 — Never fabricate numbers.**
 If pricing advisor did not return a specific line item, write `[to be confirmed with product advisor]`
 rather than estimating. Wrong numbers in a proposal are worse than missing numbers.
+
+If the itemized sum does not match a total stated elsewhere (e.g. the rep's stated budget vs.
+the computed quote), show both numbers and flag the mismatch visibly rather than quietly
+adjusting a line item or the total to make the arithmetic close — a silent fix hides exactly
+the discrepancy the rep needs to see before it reaches the client.
 
 **Rule 3 — Case proof must be honest about source.**
 Cases from `adtimabox-case-studies` (CS-01 to CS-11) are Adtima's own cases — cite them directly.

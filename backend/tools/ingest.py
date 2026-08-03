@@ -53,6 +53,7 @@ AGENT_SOURCE_PRIORITY = {
     "compliance": ["compliance_policy_agent"],
     "client_simulator": ["client_simulator_agent"],
     "wireframe_designer": ["wireframe_designer_agent"],
+    "figma_wireframe": ["figma_wireframe_agent"],
     "cs_agent": ["cs-agent"],
     "predict_agent": ["predict-agent"],
 }
@@ -178,16 +179,12 @@ async def ingest_agent(agent_name: str, force: bool = False) -> dict[str, int]:
     """
     Index all skills/ and knowledge/ files for one agent.
 
-    Hash-check priority:
-      1. AgentBase Memory (if AGENTBASE_MEMORY_ID is set) — persists hash records across
-         restarts.  LanceDB is always rebuilt via re-embedding through the configured
-         embedding provider (volatile in containers).
-      2. Local ingest_state.json — file-based fallback; skips re-embed only when LanceDB
-         data also persists (local dev with a persistent ./data directory).
+    Hash-check: local ingest_state.json — file-based, skips re-embed only when
+    LanceDB data also persists (a persistent ./data directory).
 
     Returns {"indexed": N, "skipped": N, "errors": N}
     """
-    from repos.kb_repo import get_kb_repo, HybridKBRepo
+    from repos.kb_repo import get_kb_repo
 
     kb = get_kb_repo()
     local_state = _load_state()
@@ -202,22 +199,9 @@ async def ingest_agent(agent_name: str, force: bool = False) -> dict[str, int]:
         source_key = f"{agent_name}/{doc_type}/{filename}"
         file_hash = _file_hash(md_file)
 
-        skip_memory_update = False
-        if not force:
-            if isinstance(kb, HybridKBRepo) and kb.using_agentbase:
-                cached_hash = await kb.get_cached_hash(source_key)
-                if cached_hash == file_hash:
-                    if local_state.get(source_key) == file_hash:
-                        # Both Memory and local hash match: LanceDB was populated
-                        # in this process environment and is still current.
-                        stats["skipped"] += 1
-                        continue
-                    skip_memory_update = True  # Memory hash current; just re-embed
-            else:
-                # Local dev without AgentBase: LanceDB persists on disk.
-                if local_state.get(source_key) == file_hash:
-                    stats["skipped"] += 1
-                    continue
+        if not force and local_state.get(source_key) == file_hash:
+            stats["skipped"] += 1
+            continue
 
         try:
             text = md_file.read_text(encoding="utf-8")
@@ -246,21 +230,10 @@ async def ingest_agent(agent_name: str, force: bool = False) -> dict[str, int]:
                 ))
 
             # add_documents() embeds + writes to LanceDB.
-            # update_memory=False when hash already matches in AgentBase Memory
-            # (no need to re-write the same hash record).
-            if isinstance(kb, HybridKBRepo):
-                await kb.add_documents(
-                    docs,
-                    source_key=source_key,
-                    file_hash=file_hash,
-                    update_memory=not skip_memory_update,
-                )
-            else:
-                await kb.add_documents(docs)
+            await kb.add_documents(docs)
 
             local_state[source_key] = file_hash
-            label = "re-embedded (hash unchanged)" if skip_memory_update else "indexed"
-            print(f"  [ingest] {source_key}: {len(docs)} chunk(s) {label}")
+            print(f"  [ingest] {source_key}: {len(docs)} chunk(s) indexed")
             stats["indexed"] += len(docs)
 
         except Exception as e:
@@ -303,7 +276,7 @@ async def ingest_all_agents(force: bool = False) -> None:
     else:
         any_changed = True  # force=True means always re-index
 
-    # If nothing changed and AgentBase Memory has up-to-date hashes, skip entirely
+    # If nothing changed per ingest_state.json, skip KB init entirely
     if not any_changed:
         print("[ingest] skipped — all files unchanged")
         return

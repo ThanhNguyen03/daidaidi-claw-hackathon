@@ -40,6 +40,12 @@ services:
     volumes:
       # SQLite sessions, LanceDB vectors, generated PPTX artifacts
       - ./data/backend:/app/data
+      # The Figma plugin source, served as a zip by GET /figma/plugin.zip so a teammate
+      # without a repo checkout can install it. Mounted rather than COPYed because the build
+      # context is ./backend and these files live at the repo root — a copy under backend/
+      # would be a second source of truth for the one file (code.js) that must stay in step
+      # with the block vocabulary. Read-only: the backend only ever reads it.
+      - ./figma-plugin:/app/figma-plugin:ro
     restart: unless-stopped
     healthcheck:
       test:
