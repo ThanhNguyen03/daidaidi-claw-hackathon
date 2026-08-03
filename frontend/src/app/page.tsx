@@ -172,6 +172,7 @@ export default function Home() {
     constraints,
     brief,
     artifacts,
+    proposalAssets,
     sendMessage,
     answerAllQuestions,
     skipQuestion,
@@ -334,6 +335,8 @@ export default function Home() {
           onModeChange={setMode}
           onNewChat={handleNewChat}
           thinkingSteps={thinkingSteps}
+          sessionId={sessionId}
+          proposalAssets={proposalAssets}
         />
       </main>
 
