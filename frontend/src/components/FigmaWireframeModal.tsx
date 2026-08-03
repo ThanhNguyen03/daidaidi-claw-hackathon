@@ -152,14 +152,55 @@ export function FigmaWireframeModal({ isOpen, sessionId, onClose }: FigmaWirefra
                 </button>
               </div>
 
+              {/* Lần đầu và lần sau là hai việc khác nhau, và gộp chúng vào một danh sách là
+                  lý do một BA tải đúng một file manifest.json rồi nhận lỗi "error occurred
+                  while loading the plugin environment" — manifest trỏ tới code.js và ui.html
+                  bằng đường dẫn tương đối nên thiếu chúng là plugin không nạp được. */}
+              <details className="mb-4 rounded-lg border border-border bg-surface-2/60">
+                <summary className="px-3 py-2 text-xs font-semibold text-text cursor-pointer">
+                  Lần đầu dùng? Cài plugin trước (1 phút)
+                </summary>
+                <ol className="text-xs text-text-muted space-y-2 list-decimal list-inside px-3 pb-3 pt-1">
+                  <li>
+                    <a
+                      href={`${getApiBaseUrl()}/figma/plugin.zip`}
+                      className="font-semibold text-accent underline"
+                    >
+                      Tải bộ plugin (.zip)
+                    </a>{' '}
+                    rồi <strong className="text-text">giải nén</strong> ra một thư mục.
+                  </li>
+                  <li>
+                    Phải giải nén, đừng mở trực tiếp trong file zip — thư mục cần có đủ{' '}
+                    <strong className="text-text">3 file</strong>: manifest.json, code.js, ui.html.
+                  </li>
+                  <li>
+                    Cài <strong className="text-text">Figma desktop app</strong> (bản web không
+                    import được plugin).
+                  </li>
+                  <li>
+                    Mở một file Figma, rồi{' '}
+                    <strong className="text-text">
+                      Plugins → Development → Import plugin from manifest…
+                    </strong>{' '}
+                    và chọn <code className="text-text">manifest.json</code> trong thư mục vừa giải nén.
+                  </li>
+                </ol>
+              </details>
+
               <ol className="text-xs text-text-muted space-y-2 list-decimal list-inside">
-                <li>Mở file Figma bất kỳ của bạn (Figma desktop app).</li>
+                <li>Mở file Figma của bạn (Figma desktop app).</li>
                 <li>
-                  Menu <strong className="text-text">Plugins → Development → AdtimaBox Wireframe</strong>.
-                  Lần đầu cần Import plugin from manifest, chọn file{' '}
-                  <code className="text-text">figma-plugin/manifest.json</code>.
+                  Menu{' '}
+                  <strong className="text-text">
+                    Plugins → Development → AdtimaBox Wireframe
+                  </strong>
+                  .
                 </li>
-                <li>Dán mã ở trên vào plugin rồi bấm <strong className="text-text">Vẽ Wireframe</strong>.</li>
+                <li>
+                  Dán mã ở trên vào plugin rồi bấm{' '}
+                  <strong className="text-text">Vẽ Wireframe</strong>.
+                </li>
               </ol>
 
               <p className="text-[11px] text-text-muted mt-4 pt-3 border-t border-border">

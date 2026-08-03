@@ -2446,6 +2446,74 @@ async def get_figma_job(code: str):
     return job
 
 
+# The three files Figma needs to load a development plugin. `manifest.json` names the other
+# two by relative path, so all three have to land in one directory together.
+_PLUGIN_FILES = ("manifest.json", "code.js", "ui.html")
+_PLUGIN_DIR = os.path.join(os.path.dirname(__file__), "figma-plugin")
+# Unzips to a folder rather than loose files — a teammate extracting into Downloads should not
+# have to guess which three of their files belong to this.
+_PLUGIN_ZIP_ROOT = "adtimabox-wireframe-plugin"
+
+
+@app.get("/api/figma/plugin.zip")
+@app.get("/figma/plugin.zip")  # Nginx strips /api/ prefix
+async def download_figma_plugin():
+    """Serve the Figma plugin as a zip, for installing it without a repo checkout.
+
+    Unauthenticated, like `/figma/job/{code}` above but for a plainer reason: this is the
+    plugin's own source, it holds no session data and no secrets, and the person who needs it
+    is often not the rep who generated the code.
+
+    This exists because the instructions used to say "Import plugin from manifest, chọn
+    figma-plugin/manifest.json" — which silently assumes a repo checkout. A BA followed it by
+    downloading the one file its name mentioned, and Figma answered "An error occurred while
+    loading the plugin environment", because `manifest.json` alone cannot resolve `code.js` or
+    `ui.html`. Shipping all three together is what makes the feature installable by the people
+    it is for.
+    """
+    import io
+    import zipfile
+    from fastapi.responses import Response as FastAPIResponse
+
+    def _build() -> bytes:
+        missing = [n for n in _PLUGIN_FILES if not os.path.isfile(os.path.join(_PLUGIN_DIR, n))]
+        if missing:
+            # The directory is a read-only bind mount (docker-compose.prod.yml); if it is absent
+            # the container was started without it, which is a deployment fault worth naming
+            # rather than serving a zip that Figma would reject for the same reason as before.
+            raise FileNotFoundError(f"plugin files missing: {', '.join(missing)}")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name in _PLUGIN_FILES:
+                zf.write(os.path.join(_PLUGIN_DIR, name), f"{_PLUGIN_ZIP_ROOT}/{name}")
+            readme = os.path.join(_PLUGIN_DIR, "README.md")
+            if os.path.isfile(readme):
+                zf.write(readme, f"{_PLUGIN_ZIP_ROOT}/README.md")
+        return buf.getvalue()
+
+    try:
+        # Zipping reads four files off disk and deflates ~50KB — small, but still blocking work
+        # that would otherwise run on the event loop and stall every open SSE stream.
+        data = await asyncio.to_thread(_build)
+    except FileNotFoundError as e:
+        print(f"[figma] plugin zip unavailable: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Chưa có sẵn bộ plugin trên server. Báo team kỹ thuật.",
+        )
+
+    return FastAPIResponse(
+        content=data,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{_PLUGIN_ZIP_ROOT}.zip"',
+            # code.js changes with the block vocabulary and the file name never does, so a
+            # cached copy would keep drawing with an old renderer.
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @app.get("/debug/agents")
 async def debug_agents():
     """Debug endpoint to list all skills."""
