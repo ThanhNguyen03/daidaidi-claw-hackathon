@@ -4,7 +4,7 @@ Adtima corporate-branded PPTX generator.
 Follows the visual skeleton of generation/sample-output.pptx and the more
 thorough spec in agents/adtimabox-proposal-builder/SKILL.md (content rules,
 font metrics, validation checklist merged from there — see
-PPTX_CORPORATE_SCHEMA.md): picture-backed chrome (assets/zbh-*.jpg) and the 5
+PPTX_CORPORATE_SCHEMA.md): picture-backed chrome (assets/zbh-*.jpg) and the 4
 static Zalo/Adtima platform intro slides embedded verbatim, then a fixed
 5-section client-specific scheme (Client Requirements, Solution, Quotation,
 Case Study — compliance folds into Solution). Deliberately NOT 7 sections:
@@ -12,8 +12,9 @@ Executive Summary and Next Steps were tried and reverted — a 7-row agenda
 forces its font below the 11pt floor this module enforces (see
 _render_agenda), and the total-investment figure already surfaces on the
 quotation slide without one. This is independent from html_deck.py's
-14-type/7-section schema, which the HTML deck keeps using unchanged — only
-the downloadable PPTX uses this template.
+14-type/7-section schema; that generator is no longer called by any skill (the
+HTML deck was dropped), and this template is what produces the one downloadable
+deliverable.
 
 Section/page numbering is computed here from the final slide order, never taken
 from the extraction — slide counts vary (e.g. whether an alternative quotation
@@ -59,14 +60,17 @@ _C = {
     "footnote": "9AA6B8",
 }
 
-# The 5 static Zalo/Adtima platform slides always sit at "Slides 03 to 07" — fixed
-# marketing collateral, not derived from any client brief.
+# The static Zalo/Adtima platform slides always sit at "Slides 03 to 06" — fixed
+# marketing collateral, not derived from any client brief. Every page number and
+# agenda range below is computed from len(_STATIC_INTRO), so adding or removing one
+# here is the whole change; validate_pptx.py's check 15 imports this same list.
+# zbh-s05-importance-private.jpg ("The importance of owning Private Traffic") was
+# dropped on request — the asset is still in assets/ but no longer inserted.
 _STATIC_INTRO = [
     "zbh-s01-about-zalo.jpg",
     "zbh-s02-lifecycle-role.jpg",
     "zbh-s03-usp.jpg",
     "zbh-s04-public-to-private.jpg",
-    "zbh-s05-importance-private.jpg",
 ]
 
 # Canonical order for dynamic content slides + which section/eyebrow they belong to.
@@ -86,7 +90,7 @@ _CONTENT_ORDER = [
 ]
 
 _AGENDA_ITEMS = [
-    (1, "About Zalo & Zalo Brand Hub", "Platform scale, the user lifecycle, our USP and why private traffic matters"),
+    (1, "About Zalo & Zalo Brand Hub", "Platform scale, the user lifecycle, our USP and the shift to private traffic"),
     (2, "Client requirements", "Current state, core pain, desired outcome and the gap to close"),
     (3, "Solution", "Package, user journey, solution flow, messaging and launch conditions"),
     (4, "Quotation", "Grouped line items, totals and the alternative option"),
@@ -147,7 +151,7 @@ class CorporatePPTXGenerator:
             if ctype in by_type
         ]
 
-        # Page numbers: 1 for cover, 2 for agenda, 3-7 for the static intro (no
+        # Page numbers: 1 for cover, 2 for agenda, 3-6 for the static intro (no
         # overlay, matching the sample), then sequential for every content slide —
         # i.e. always (index within final slide list) + 1. Cover/closing show none.
         # Bug fixed: this used to start at 2 and increment per content slide,
@@ -179,7 +183,7 @@ class CorporatePPTXGenerator:
         slide = prs.slides.add_slide(blank)
         self._render_agenda(slide, content_entries, len(_STATIC_INTRO))
 
-        # 3-7. Static Zalo/Adtima intro slides, verbatim
+        # 3-6. Static Zalo/Adtima intro slides, verbatim
         for filename in _STATIC_INTRO:
             slide = prs.slides.add_slide(blank)
             self._bg_picture(slide, filename)

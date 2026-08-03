@@ -142,6 +142,12 @@ async def _run_skill(
 # And with LLM_MAX_CONCURRENCY=1 the pair was serialised by the semaphore anyway, so
 # "parallel" was never buying the latency it was justified by.
 _ALWAYS_SEQUENTIAL: set[str] = {"proposal_assembler", "wireframe_designer"}
+# Registered skills that may never appear in a plan group — the rep triggers them directly
+# from the UI, on a proposal that already exists. Hiding one from the planner's catalog is
+# not enough on its own: the planner invents skill names, and "figma_wireframe" is an easy
+# guess on any message mentioning a wireframe. So the name is also subtracted from the
+# validation set in _plan, which is the only place that decides what actually dispatches.
+_ON_DEMAND_ONLY: set[str] = {"figma_wireframe"}
 # The order they run in, one group each. Every code path that arranges the plan must
 # preserve this — the deck is rendered from the assembler's output.
 _SEQUENTIAL_ORDER: list[str] = ["proposal_assembler", "wireframe_designer"]
@@ -150,8 +156,13 @@ _AUTO_AFTER: dict[str, str] = {"proposal_assembler": "wireframe_designer"}
 # The deck group, injected on its own after proposal_assembler.
 _DECK_STEP: dict[str, str] = {
     "skill": "wireframe_designer",
-    "task": "Generate HTML deck + PPTX from the assembled proposal",
+    "task": "Generate the downloadable PPTX from the assembled proposal",
 }
+
+# Characters per SSE frame when replaying an already-finished proposal (see
+# _synthesize). Small enough that the frontend paints it progressively, large enough
+# that a 30KB proposal is ~75 frames rather than ~30,000.
+_PROPOSAL_STREAM_CHUNK = 400
 
 
 def _insert_deck_after_assembler(
@@ -471,8 +482,16 @@ def _build_brief_checkpoint(state, verdict):
     )
 
 
-def _build_solution_checkpoint(state, outputs):
-    """Chốt 2 card: the direction and feasibility verdict, before anything is rendered."""
+def _build_solution_checkpoint(state, outputs, summary_above: bool = True):
+    """Chốt 2 card: the direction and feasibility verdict, before anything is rendered.
+
+    `summary_above` says whether this turn is also streaming the analysis as prose just
+    before the card. It usually is — but not when the plan contained nothing except the
+    render group, which happens on the turn right after the rep approves Chốt 1: the
+    analysis already ran in earlier turns, so the planner goes straight to assembly and
+    this card is the only thing the turn emits. In that case the card has to carry the
+    content, or the rep is asked to approve a direction they cannot see.
+    """
     import uuid as _uuid
 
     from schemas.state import Checkpoint, CheckpointAction
@@ -610,13 +629,27 @@ def _build_solution_checkpoint(state, outputs):
         action=CheckpointAction(
             type="confirm_solution",
             description=(
-                "Đây là hướng giải pháp và phán quyết khả thi. Duyệt thì mình dựng "
-                "proposal đầy đủ; muốn đổi hướng thì nói, phần chiến lược và pháp lý "
-                "vẫn giữ nguyên."
+                (
+                    "Toàn bộ phương án nằm ngay bên trên. "
+                    if summary_above
+                    else "Đây là hướng giải pháp mình đã chốt từ phần phân tích trước đó. "
+                )
+                + "Duyệt để mình dựng proposal đầy đủ và file PPTX. Muốn đổi hướng thì "
+                "bấm Đổi hướng rồi nói rõ cần sửa gì — phần chiến lược và pháp lý vẫn "
+                "giữ nguyên."
             ),
             parameters={},
-            preview=preview_data,
+            # Only when the turn is NOT also streaming the analysis. Normally it is, and
+            # every word of this preview is already on screen as "Tóm tắt đề xuất" right
+            # above the card — repeating it there made the rep read the same three blocks
+            # twice, the second time cut off mid-sentence at 1000 characters. When the
+            # turn emits nothing but this card, the duplication argument disappears and
+            # the opposite problem takes over: an approval request with nothing to read.
+            preview=None if summary_above else preview_data,
         ),
+        # The server-side copy stays: the caller uses it to decide whether there is
+        # anything worth confirming at all (an empty card above three blank rows is
+        # worse than no card), and that check has to see the real text.
         preview=preview_data,
     )
 
@@ -1132,6 +1165,14 @@ class CentralAgent:
 
         skill_registry = get_skill_registry()
         all_outputs: dict[str, SkillOutput] = {}
+        # Set when Chốt 2 stops the turn. A confirmation stop IS the turn's output —
+        # the same rule main.py already applies when deciding whether an assistant
+        # message was emitted. Without this the "no skill returned anything" branch
+        # below fires whenever the stop happens before any skill ran this turn, which
+        # is the normal shape of the turn right after Chốt 1 is approved: the analysis
+        # is already on the session, so the plan is render-only. The rep approved the
+        # brief and got "Xin lỗi, các skill không trả về kết quả" for it.
+        stopped_for_checkpoint = False
 
         # One ledger for the whole turn: a reference read for the strategy agent is not
         # read again for the product agent, and the §14 log can account for the total.
@@ -1183,7 +1224,11 @@ class CentralAgent:
             if is_render_group and not conversational and "confirm_solution" not in state.confirmed_stages:
                 merged_now = dict(state.outputs)
                 merged_now.update(all_outputs)
-                checkpoint = _build_solution_checkpoint(state, merged_now)
+                # `all_outputs` empty means no skill ran this turn, so nothing will be
+                # streamed above the card — see _build_solution_checkpoint.
+                checkpoint = _build_solution_checkpoint(
+                    state, merged_now, summary_above=bool(all_outputs)
+                )
 
                 # Nothing to approve if the analysis produced nothing — which happens
                 # when the skills were rate-limited. An empty card asking "duyệt hướng
@@ -1196,6 +1241,7 @@ class CentralAgent:
                 preview = checkpoint.preview or {}
                 if any((preview.get(k) or "").strip() for k in ("strategy", "solution", "compliance")):
                     state.checkpoint = checkpoint
+                    stopped_for_checkpoint = True
                     print("[checkpoint] CHOT 2 raised — awaiting solution confirmation")
                     yield {"type": "checkpoint", "checkpoint": checkpoint.model_dump(mode="json")}
                     break
@@ -1397,7 +1443,7 @@ class CentralAgent:
                         for k, v in all_outputs.items()
                     })
                     auto_ctx = SkillContext(
-                        task="Generate proposal deck assets (HTML deck + PPTX)",
+                        task="Generate the proposal file (downloadable PPTX)",
                         brief=state.brief,
                         messages=state.messages[-_RECENT_HISTORY_WINDOW:],
                         previous_outputs=merged_auto,
@@ -1455,7 +1501,7 @@ class CentralAgent:
                         for k, v in all_outputs.items()
                     })
                     deck_ctx = SkillContext(
-                        task="Generate proposal deck assets (HTML deck + PPTX)",
+                        task="Generate the proposal file (downloadable PPTX)",
                         brief=state.brief,
                         messages=state.messages[-_RECENT_HISTORY_WINDOW:],
                         previous_outputs=merged_deck,
@@ -1493,7 +1539,7 @@ class CentralAgent:
             }
             async for event in self._synthesize(state, message, all_outputs, prior_skill_names):
                 yield event
-        else:
+        elif not stopped_for_checkpoint:
             yield {"type": "content", "content": "Xin lỗi, các skill không trả về kết quả. Vui lòng thử lại."}
 
         yield {"type": "done"}
@@ -1555,7 +1601,7 @@ class CentralAgent:
 
         # Build a live skill catalog from the registry — no hardcoded skill names.
         # Exclude auto-triggered skills from the LLM's planning catalog.
-        _EXCLUDE_FROM_PLAN = {"wireframe_designer"}
+        _EXCLUDE_FROM_PLAN = {"wireframe_designer"} | _ON_DEMAND_ONLY
         registry = get_skill_registry()
         skill_catalog = "\n".join(
             f"  {name}: {desc}"
@@ -1674,7 +1720,7 @@ class CentralAgent:
 
         # Validate that all skill names in the plan exist in the registry.
         # Drop any hallucinated skill names silently.
-        valid_skill_names = set(registry.all_names())
+        valid_skill_names = set(registry.all_names()) - _ON_DEMAND_ONLY
         if result.get("skill_plan"):
             result["skill_plan"] = [
                 [s for s in group if s.get("skill") in valid_skill_names]
@@ -1891,7 +1937,16 @@ class CentralAgent:
         if proposal_out and proposal_out.content:
             # proposal_assembler ran and produced content → stream it as the full response.
             content = _fix_gantt(proposal_out.content)
-            yield {"type": "content", "content": content}
+            # In chunks, not one frame. The whole 7-section proposal is already in hand
+            # here, so a single event was the obvious thing to send — but the browser
+            # then has to transform and markdown-parse tens of KB in one synchronous
+            # commit, which reads to the rep as the answer freezing and then snapping
+            # into place. Chunked, the frontend's per-frame token buffer reveals it
+            # progressively at the same total cost. The sleep(0) yields the event loop
+            # so the chunks actually leave as separate SSE frames.
+            for i in range(0, len(content), _PROPOSAL_STREAM_CHUNK):
+                yield {"type": "content", "content": content[i:i + _PROPOSAL_STREAM_CHUNK]}
+                await asyncio.sleep(0)
             state.messages.append({
                 "role": "assistant", "content": content,
                 "agent": "central_agent", "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -2014,8 +2069,8 @@ Format rules:
 - Use ## for section headers, ### for sub-sections
 - Be specific to this brief/brand — no generic filler
 - Do NOT mention "skill", "agent", "module", or internal pipeline names
-- This system produces a branded HTML deck and a downloadable PPTX. Never claim it
-  cannot generate files; the only honest limits are Word, Excel and email.
+- This system produces a branded, downloadable PPTX. Never claim it cannot generate
+  files; the only honest limits are Word, Excel and email.
 
 OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
 
@@ -2089,17 +2144,18 @@ Your job: respond ONLY to what they asked about in the Current Request.
 - Language: match the user's language (Vietnamese if they wrote in Vietnamese).
 - Do NOT mention "skill", "agent", "module", or internal pipeline names.
 
-NEVER INVENT SLIDE CONTENTS. If a deck was built, its real slide list is in the
-context under the deck output — describe those slides and no others. If it says DECK
-NOT BUILT, say the deck could not be built yet and to retry shortly; never list slides
-or offer a download for a file that does not exist.
+NEVER INVENT SLIDE CONTENTS. If the proposal file was built, its real slide list is in
+the context under that output — describe those slides and no others. If it says
+PROPOSAL FILE NOT BUILT, say the file could not be built yet and to retry shortly;
+never list slides or offer a download for a file that does not exist.
 
-YOU PRODUCE REAL FILES. This system generates an AdtimaBox-branded HTML deck and a
-downloadable PPTX, delivered as "View Deck" and "Download PPTX" buttons in the chat.
-Claiming "mình là AI chạy trên nền tảng chat nên không xuất được file" is FALSE and a
-rep may repeat it to a client. If asked to export or download in any wording, say you
-build it — and if it does not exist yet, say what triggers it:
-  "**Tiếp theo:** nói *làm proposal* là mình dựng bản đầy đủ kèm deck HTML và file PPTX."
+YOU PRODUCE A REAL FILE. This system generates an Adtima-branded PPTX proposal,
+delivered as a "Download PPTX" button in the chat. There is NO HTML deck and no "View
+Deck" link — never offer one. Claiming "mình là AI chạy trên nền tảng chat nên không
+xuất được file" is FALSE and a rep may repeat it to a client. If asked to export or
+download in any wording, say you build it — and if it does not exist yet, say what
+triggers it:
+  "**Tiếp theo:** nói *làm proposal* là mình dựng bản đầy đủ kèm file PPTX."
 The only honest limits: no Word (.docx), no Excel, no email.
 
 ALWAYS CLOSE WITH WHAT HAPPENS NEXT. Never end on an explanation and leave the rep
@@ -2107,7 +2163,7 @@ guessing whether it is their turn. Finish with a short `**Tiếp theo:**` line t
 either what you need from them to continue, or what you can produce next and how to
 ask for it. One or two sentences — concrete, not "let me know if you need anything".
   Good:  **Tiếp theo:** cho mình ngân sách dự kiến là mình ra được báo giá chi tiết.
-  Good:  **Tiếp theo:** nói "làm proposal" là mình dựng bản đầy đủ kèm deck PPTX.
+  Good:  **Tiếp theo:** nói "làm proposal" là mình dựng bản đầy đủ kèm file PPTX.
   Bad:   Hy vọng thông tin trên hữu ích cho bạn!
 
 OUTPUT FORMAT GUIDE — follow these exactly so the UI renders correctly:
@@ -2132,9 +2188,9 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                     history_lines.append(f"Assistant: {content}")
             history_block = "\n\n".join(history_lines)
 
-            # "Deck có mấy slide?" usually arrives on a turn that runs no skills, so the
-            # only deck facts in the prompt would be whatever the transcript happens to
-            # mention — and the model filled the gap by inventing a table of contents.
+            # "File có mấy slide?" usually arrives on a turn that runs no skills, so the
+            # only facts about it in the prompt would be whatever the transcript happens
+            # to mention — and the model filled the gap by inventing a table of contents.
             # The manifest wireframe_designer wrote is on the session; put it back in.
             deck_block = ""
             if "wireframe_designer" not in skill_outputs:
@@ -2145,7 +2201,7 @@ TIMELINES: ```mermaid gantt block. Every task: Name :id, YYYY-MM-DD, Nd format r
                     else getattr(prior_deck, "content", "")
                 ) or ""
                 if prior_content:
-                    deck_block = f"\n\n## Deck Built Earlier This Session\n{prior_content}"
+                    deck_block = f"\n\n## Proposal File Built Earlier This Session\n{prior_content}"
 
             user_msg = (
                 f"## Conversation So Far\n{history_block}\n\n"

@@ -183,12 +183,24 @@ export interface SessionState {
   summary: string;
 }
 
+/**
+ * What a proposal turn produced. `pptx_url` is the downloadable file; `has_proposal`
+ * says the assembler produced a proposal at all, which is what the Figma wireframe
+ * action needs — it is set even when the PPTX build failed, so the Figma button stays
+ * reachable. A `deck_url` for a separate HTML deck used to live here; that artifact is
+ * no longer built.
+ */
+export interface ProposalAssets {
+  pptx_url?: string;
+  has_proposal?: boolean;
+}
+
 export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   agent?: string;
   timestamp: string;
-  proposalAssets?: { deck_url?: string; pptx_url?: string };
+  proposalAssets?: ProposalAssets;
   thinkingSteps?: ThinkingStep[];
   
   isActionSummary?: boolean;

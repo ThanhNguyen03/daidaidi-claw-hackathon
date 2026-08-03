@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { ChatRequest, Message, Brief, ChatMode, Question, Checkpoint, FeedbackRule, SalespersonProfile, ThinkingStep } from '../lib/types';
+import type { ChatRequest, Message, Brief, ChatMode, Question, Checkpoint, FeedbackRule, SalespersonProfile, ThinkingStep, ProposalAssets } from '../lib/types';
 import { getApiBaseUrl } from '../lib/api';
 
 const BACKEND_URL = getApiBaseUrl();
@@ -35,18 +35,17 @@ interface Artifact {
   artifact_id?: string;    // artifact registry key
 }
 
-// deck_url/pptx_url only ever got attached to a single message bubble — there was
-// no single place listing every file generated across a whole session. Each one
-// also carries a unique artifact id in its URL, so turning them into Artifact
-// entries lets the existing "Generated Artifacts" list in ContextPanel (built for
-// the older checkpoint-approval flow, currently empty because that flow doesn't
-// run any more) double as a running index of every deck/PPTX this conversation
-// has produced, not just the latest one.
+// pptx_url only ever got attached to a single message bubble — there was no single
+// place listing every file generated across a whole session. It carries a unique
+// artifact id in its URL, so turning it into an Artifact entry lets the existing
+// "Generated Artifacts" list in ContextPanel (built for the older checkpoint-approval
+// flow, currently empty because that flow doesn't run any more) double as a running
+// index of every PPTX this conversation has produced, not just the latest one.
 function proposalAssetsToArtifacts(
-  assets: { deck_url?: string; pptx_url?: string },
+  assets: ProposalAssets,
   createdAtIso?: string
 ): Artifact[] {
-  // Every deck this session produces is titled identically ("Đề xuất (HTML)"),
+  // Every file this session produces is titled identically ("Đề xuất (PPTX)"),
   // so two real, distinct proposals (e.g. rebuilt after a follow-up edit) were
   // indistinguishable in the list — a rep had no way to tell which entry was
   // which before clicking. A time suffix is enough to tell them apart without
@@ -56,14 +55,6 @@ function proposalAssetsToArtifacts(
     minute: '2-digit',
   });
   const out: Artifact[] = [];
-  if (assets.deck_url) {
-    out.push({
-      id: assets.deck_url,
-      type: 'wireframe',
-      title: `Đề xuất (HTML) — ${stamp}`,
-      download_url: assets.deck_url,
-    });
-  }
   if (assets.pptx_url) {
     out.push({
       id: assets.pptx_url,
@@ -91,7 +82,7 @@ function checkpointTitle(checkpoint: Checkpoint): string {
   return checkpoint.action.type === 'confirm_brief'
     ? 'Chốt — Xác nhận cách hiểu brief'
     : checkpoint.action.type === 'confirm_solution'
-      ? 'Chốt — Duyệt hướng giải pháp'
+      ? 'Xác nhận phương án'
       : 'Đã duyệt bước này';
 }
 
@@ -193,7 +184,7 @@ interface UseChatReturn {
   profile: SalespersonProfile | null;  // Day 4: User profile
   brief: Brief | null;  // Day 4: Current brief
   artifacts: Artifact[];  // Day 6: Generated artifacts
-  proposalAssets: { deck_url?: string; pptx_url?: string } | null;
+  proposalAssets: ProposalAssets | null;
   thinkingSteps: ThinkingStep[];  // Live thinking trace for current turn
 
   // Actions
@@ -251,13 +242,15 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   // Day 6: Artifacts state
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
 
-  // Proposal deck assets — set when wireframe_designer completes after proposal_assembler
-  const [proposalAssets, setProposalAssets] = useState<{ deck_url?: string; pptx_url?: string } | null>(null);
+  // Proposal deliverables — the PPTX when wireframe_designer built one, plus the
+  // has_proposal flag that keeps the Figma action available on its own.
+  const [proposalAssets, setProposalAssets] = useState<ProposalAssets | null>(null);
 
   // Thinking trace — accumulated steps for the current turn, shown live in the chat
   const [thinkingSteps, setThinkingSteps] = useState<ThinkingStep[]>([]);
   // Ref mirrors the state so SSE callbacks can read the latest value without stale closures
   const thinkingStepsRef = useRef<ThinkingStep[]>([]);
+
   // --- Mode isolation: save/restore state per mode ---
   const prevModeRef = useRef<string>(mode);
   type ModeSnapshot = {
@@ -267,13 +260,111 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     pendingQuestions: Question[];
     activeCheckpoint: Checkpoint | null;
     artifacts: Artifact[];
+    // Travels with the snapshot for the same reason artifacts does: it is per-conversation,
+    // and the pinned deliverables bar reads it.
+    proposalAssets: ProposalAssets | null;
     isLoading: boolean;
     isThinking: boolean;
   };
   const savedModeStates = useRef<Record<string, ModeSnapshot>>({});
 
-  // Always reflects the currently-active mode. 
+  // Always reflects the currently-active mode.
   const currentModeRef = useRef<string>(mode);
+
+  // --- Streaming token buffer -------------------------------------------------
+  // The backend emits one SSE frame per LLM token (central_agent/agent.py's synthesis
+  // loop), and each `reader.read()` resolution is its own macrotask — so React 18's
+  // auto-batching does not merge them and every token used to cost a full commit:
+  // the whole message list re-rendered and the streaming bubble re-ran its transform
+  // chain and re-parsed its markdown over the entire accumulated answer. That is
+  // O(N^2) work spread across thousands of commits, and it is what the jitter was.
+  //
+  // Tokens now land in a ref and are applied once per animation frame. The screen
+  // cannot show more than one frame's worth anyway, so nothing visible is lost —
+  // only the commits that were never going to be painted.
+  const pendingContentRef = useRef('');
+  const flushRafRef = useRef<number | null>(null);
+  // The mode this buffer belongs to. sendMessage captures `myMode`, but flushes also
+  // happen from unmount and from the finally block, so the target has to be recorded
+  // with the text rather than inferred at flush time.
+  const pendingModeRef = useRef<string | null>(null);
+  // Set by the first token after a thinking stretch. `setIsThinking(false)` used to
+  // run on every single token even though it is already false after the first. Reset
+  // on each `thinking_start` and at the top of every turn.
+  const thinkingClearedRef = useRef(false);
+
+  /**
+   * Apply every buffered token in one setMessages call.
+   *
+   * MUST run before any other event that reads or rewrites the last message —
+   * `assistant_message`, `agent_message`, `proposal_assets`, checkpoints, question
+   * cards — or that event would act on a message missing its most recent tokens.
+   * MUST also run when the stream ends (normally, on error, or on abort), or the
+   * tail of the answer is silently dropped.
+   */
+  const flushPendingContent = useCallback(() => {
+    if (flushRafRef.current !== null) {
+      cancelAnimationFrame(flushRafRef.current);
+      flushRafRef.current = null;
+    }
+    const chunk = pendingContentRef.current;
+    if (!chunk) return;
+    pendingContentRef.current = '';
+
+    const targetMode = pendingModeRef.current;
+    const streamAgent = targetMode === 'cs' ? 'cs_agent' : 'sales_orchestrator';
+
+    // The rep switched mode while these tokens were buffered. React state now belongs
+    // to a different conversation, so write into that mode's snapshot instead — the
+    // same thing the reader loop does for tokens that arrive after a switch. Without
+    // this the tail of one mode's answer would be appended to the other mode's chat.
+    if (targetMode !== null && targetMode !== currentModeRef.current) {
+      const saved = savedModeStates.current[targetMode];
+      if (saved) {
+        const lastMsg = saved.messages[saved.messages.length - 1];
+        saved.messages =
+          lastMsg && lastMsg.role === 'assistant'
+            ? [...saved.messages.slice(0, -1), { ...lastMsg, content: lastMsg.content + chunk }]
+            : [
+                ...saved.messages,
+                {
+                  role: 'assistant' as const,
+                  content: chunk,
+                  agent: streamAgent,
+                  timestamp: new Date().toISOString(),
+                },
+              ];
+        savedModeStates.current[targetMode] = { ...saved };
+      }
+      return;
+    }
+
+    // Thinking steps accumulated before the first token belong on the message this
+    // flush may be creating — same rule as the per-token version it replaces.
+    const steps = thinkingStepsRef.current.length > 0 ? [...thinkingStepsRef.current] : undefined;
+    if (steps) {
+      thinkingStepsRef.current = [];
+      setThinkingSteps([]);
+    }
+
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === 'assistant') {
+        // Append to the existing assistant message (any agent — same streaming turn)
+        return [...prev.slice(0, -1), { ...last, content: last.content + chunk }];
+      }
+      return [
+        ...prev,
+        {
+          role: 'assistant',
+          content: chunk,
+          agent: streamAgent,
+          timestamp: new Date().toISOString(),
+          thinkingSteps: steps,
+        },
+      ];
+    });
+  }, []);
 
   useEffect(() => {
     // Always sync ref first — SSE callbacks read this to know the live mode.
@@ -290,6 +381,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       pendingQuestions,
       activeCheckpoint,
       artifacts,
+      proposalAssets,
       isLoading,
       isThinking,
     };
@@ -303,6 +395,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       setPendingQuestions(saved.pendingQuestions);
       setActiveCheckpoint(saved.activeCheckpoint);
       setArtifacts(saved.artifacts);
+      setProposalAssets(saved.proposalAssets);
       setIsLoading(saved.isLoading);
       setIsThinking(saved.isThinking);
     } else {
@@ -312,6 +405,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       setPendingQuestions([]);
       setActiveCheckpoint(null);
       setArtifacts([]);
+      setProposalAssets(null);
       setIsLoading(false);
       setIsThinking(false);
     }
@@ -364,6 +458,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     setPendingQuestions([]);
     setActiveCheckpoint(null);
     setArtifacts([]);
+    // Was missed here as well as in loadSession: a new conversation starting with the
+    // previous one's deck and PPTX offered on the pinned bar is a cross-client leak, not
+    // just stale UI.
+    setProposalAssets(null);
   }, [mode]);
 
   // Per-mode abort controllers so cancelling one mode's stream never kills another.
@@ -380,7 +478,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       // Capture origin mode first — everything below is scoped to this mode.
       const myMode = mode;
 
-      // Cancel any existing request for THIS mode only
+      // Cancel any existing request for THIS mode only. Flush first: the aborted
+      // stream may have tokens still sitting in the buffer, and they belong to the
+      // message above the one this turn is about to add.
+      flushPendingContent();
+      thinkingClearedRef.current = false;
       modeAbortControllers.current[myMode]?.abort();
       const controller = new AbortController();
       modeAbortControllers.current[myMode] = controller;
@@ -506,6 +608,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           );
         }
       } finally {
+        // The last frame's worth of tokens has no `done` event guaranteed to follow
+        // it — without this the tail of every answer would be dropped.
+        flushPendingContent();
         modeAbortControllers.current[myMode] = null;
         if (currentModeRef.current === myMode) {
           // Still on our mode — clear live state
@@ -528,6 +633,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   // Handle SSE events
   const handleSSEEvent = useCallback(
     (data: { type: string; [key: string]: unknown }) => {
+      // Any event that is not a token has to see the message list as the tokens so
+      // far left it — several of them append after, or rewrite, the last message.
+      // Flushing here once covers all of them, including ones added later.
+      if (data.type !== 'content') {
+        flushPendingContent();
+      }
+
       switch (data.type) {
         case 'session':
           // Session confirmed — persist id and sync brief from BE
@@ -576,6 +688,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           break;
 
         case 'thinking_start':
+          // Re-arm the once-per-stretch guard below: a turn can enter thinking more
+          // than once, and the next content token has to be able to clear it again.
+          thinkingClearedRef.current = false;
           setIsThinking(true);
           break;
 
@@ -584,37 +699,23 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           break;
 
         case 'content':
-          // Streaming content chunk
-          setIsThinking(false);
+          // Streaming content chunk — buffered, applied once per animation frame.
+          // See flushPendingContent above for why this is not a setState per token.
           {
             const content = data.content as string;
-            // Determine agent name for this streaming turn
-            const streamAgent = currentModeRef.current === 'cs' ? 'cs_agent' : 'sales_orchestrator';
-            // Attach accumulated thinking steps to the first assistant message of this turn
-            const steps = thinkingStepsRef.current.length > 0 ? [...thinkingStepsRef.current] : undefined;
-            if (steps) {
-              thinkingStepsRef.current = [];
-              setThinkingSteps([]);
+            if (!content) break;
+            if (!thinkingClearedRef.current) {
+              thinkingClearedRef.current = true;
+              setIsThinking(false);
             }
-            setMessages((prev) => {
-              const last = prev[prev.length - 1];
-              if (last && last.role === 'assistant') {
-                // Append to existing assistant message (any agent - within same streaming turn)
-                return [...prev.slice(0, -1), { ...last, content: last.content + content }];
-              } else {
-                // Create new assistant message — attach thinking steps
-                return [
-                  ...prev,
-                  {
-                    role: 'assistant',
-                    content,
-                    agent: streamAgent,
-                    timestamp: new Date().toISOString(),
-                    thinkingSteps: steps,
-                  },
-                ];
-              }
-            });
+            pendingContentRef.current += content;
+            pendingModeRef.current = currentModeRef.current;
+            if (flushRafRef.current === null) {
+              flushRafRef.current = requestAnimationFrame(() => {
+                flushRafRef.current = null;
+                flushPendingContent();
+              });
+            }
           }
           break;
 
@@ -752,11 +853,12 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           break;
 
         case 'proposal_assets':
-          // PPTX + HTML deck generated after proposal_assembler
+          // The downloadable PPTX (if it was built) plus has_proposal, emitted after
+          // proposal_assembler. There is no HTML deck any more.
           {
-            const assets: { deck_url?: string; pptx_url?: string } = {};
-            if (data.deck_url) assets.deck_url = data.deck_url as string;
+            const assets: ProposalAssets = {};
             if (data.pptx_url) assets.pptx_url = data.pptx_url as string;
+            if (data.has_proposal) assets.has_proposal = true;
             if (Object.keys(assets).length > 0) {
               setProposalAssets(assets);
               // Attach to last assistant message for scoped rendering
@@ -777,9 +879,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           console.log('Unknown SSE event:', data);
       }
     },
-    // Every value read above is a ref or a setState function — both stable
-    // identities — so this callback never needs to change.
-    []
+    // Every value read above is a ref, a setState function, or flushPendingContent
+    // (itself a []-dep useCallback) — all stable identities — so this callback never
+    // needs to change.
+    [flushPendingContent]
   );
 
   // Answer a pending question
@@ -1122,7 +1225,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       setActiveCheckpoint(null);
 
       const clarifyingMsg =
-        data.clarifying_question || 'Action rejected. How would you like to adjust?';
+        data.clarifying_question || 'Mình đã dừng bước này. Bạn muốn điều chỉnh gì?';
       const msg: Message = {
         role: 'assistant',
         content: clarifyingMsg,
@@ -1211,6 +1314,12 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     const controllers = modeAbortControllers.current;
     return () => {
       Object.values(controllers).forEach((c) => c?.abort());
+      // Drop the pending frame rather than flushing it — the component is going away,
+      // so a setMessages here would only warn about updating an unmounted component.
+      if (flushRafRef.current !== null) {
+        cancelAnimationFrame(flushRafRef.current);
+        flushRafRef.current = null;
+      }
     };
   }, []);
 
@@ -1259,6 +1368,12 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           ? proposalAssetsToArtifacts(data.proposal_assets, lastAssistantTimestamp)
           : []
       );
+      // Same reset-not-merge rule as the artifact list above, and for a sharper reason: this
+      // state drives the deliverables bar pinned above the composer, so leaving the previous
+      // conversation's value in place offers the rep another client's deck and PPTX on this
+      // one. Only the SSE handler used to set it, so a resumed session showed no bar at all
+      // while a session switch showed the wrong one.
+      setProposalAssets(data.proposal_assets ?? null);
       if (data.brief) setBrief(data.brief);
       setPendingQuestions([]);
       setActiveCheckpoint(null);

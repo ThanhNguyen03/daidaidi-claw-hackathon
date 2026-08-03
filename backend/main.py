@@ -6,6 +6,7 @@ Provides REST API and SSE streaming endpoints.
 """
 
 import asyncio
+import hashlib
 import os
 import json
 import uuid
@@ -30,6 +31,7 @@ load_dotenv()
 from schemas.state import (
     SalesCaseState,
     Brief,
+    AgentOutput,
 )
 
 # Import repositories
@@ -269,25 +271,39 @@ async def get_session_detail(session_id: str, authorization: Optional[str] = Hea
     if session["user_id"] and payload and session["user_id"] != payload["user_id"]:
         raise HTTPException(status_code=403, detail="Không có quyền truy cập")
 
-    # The deck/PPTX links only ever came down as a one-off SSE event on the turn
-    # that built them (main.py's chat_stream, "proposal_assets") — nothing wrote
-    # them into the transcript this endpoint reads (app.db). So opening a past
-    # conversation from the sidebar, without sending a new message, showed no way
-    # to re-download a deck that was very much still sitting in ARTIFACTS_DIR. The
-    # artifact ids live in the wireframe_designer payload, which is only in the
-    # *other* database (sales_assistant.db, via memory_repo) — so fetch that too.
+    # The PPTX link only ever came down as a one-off SSE event on the turn that
+    # built it (main.py's chat_stream, "proposal_assets") — nothing wrote it into
+    # the transcript this endpoint reads (app.db). So opening a past conversation
+    # from the sidebar, without sending a new message, showed no way to re-download
+    # a file that was very much still sitting in ARTIFACTS_DIR. The artifact id
+    # lives in the wireframe_designer payload, which is only in the *other* database
+    # (sales_assistant.db, via memory_repo) — so fetch that too.
+    #
+    # deck_artifact_id is deliberately not read: the HTML deck is no longer built or
+    # offered. A session from before that change still has the id and the file, and
+    # /artifact/{id} still serves it — it just is not advertised any more.
     try:
         state = await get_memory_repo().load_session(session_id)
-        wf = (state.outputs or {}).get("wireframe_designer") if state else None
+        outputs = (state.outputs or {}) if state else {}
+        wf = outputs.get("wireframe_designer")
         wp = wf.payload if wf is not None and isinstance(wf.payload, dict) else None
-        if wp:
-            assets: dict = {}
-            if _artifact_available(wp.get("deck_artifact_id")):
-                assets["deck_url"] = f"/artifact/{wp['deck_artifact_id']}"
-            if _artifact_available(wp.get("pptx_artifact_id")):
-                assets["pptx_url"] = f"/artifact/{wp['pptx_artifact_id']}"
-            if assets:
-                session["proposal_assets"] = assets
+        assets: dict = {}
+        if wp and _artifact_available(wp.get("pptx_artifact_id")):
+            assets["pptx_url"] = f"/artifact/{wp['pptx_artifact_id']}"
+        # Same reason as the live emit in chat_stream: the Figma button rides on this
+        # object, and it needs the assembler's proposal, not the PPTX. Outputs come back
+        # from memory_repo either as SkillOutput objects or as plain dicts depending on
+        # how the row was written, so read both shapes.
+        assembler = outputs.get("proposal_assembler")
+        assembler_content = (
+            assembler.get("content", "")
+            if isinstance(assembler, dict)
+            else getattr(assembler, "content", "")
+        ) if assembler is not None else ""
+        if assembler_content:
+            assets["has_proposal"] = True
+        if assets:
+            session["proposal_assets"] = assets
     except Exception as e:
         print(f"[main] proposal_assets lookup failed for {session_id} (non-fatal): {e}")
 
@@ -314,6 +330,7 @@ async def _purge_session_everywhere(session_id: str) -> None:
             state = None
 
     artifact_ids: list[str] = []
+    figma_codes: list[str] = []
     if state is not None:
         wf = (state.outputs or {}).get("wireframe_designer")
         payload = getattr(wf, "payload", None) if wf is not None else None
@@ -323,6 +340,12 @@ async def _purge_session_everywhere(session_id: str) -> None:
                 for k in ("deck_artifact_id", "pptx_artifact_id")
                 if payload.get(k)
             ]
+        # A parked wireframe spec carries the client's brand, prices and journey, so it is
+        # part of the conversation and goes with it.
+        fw = (state.outputs or {}).get("figma_wireframe")
+        fw_payload = getattr(fw, "payload", None) if fw is not None else None
+        if isinstance(fw_payload, dict) and fw_payload.get("job_code"):
+            figma_codes = [fw_payload["job_code"]]
 
     await asyncio.to_thread(db_delete_session, session_id)
 
@@ -347,6 +370,10 @@ async def _purge_session_everywhere(session_id: str) -> None:
                     os.remove(path)
             except OSError as e:
                 print(f"[main] could not remove artifact {path}: {e}")
+
+    if figma_codes:
+        from figma.jobs import purge_jobs
+        await asyncio.to_thread(purge_jobs, figma_codes)
 
 
 async def _reclaim_space() -> None:
@@ -1202,57 +1229,24 @@ async def chat_stream(request: Request, payload: ChatRequest):
 
             # Checkpoint/approval flow disabled — diagrams are generated inline by skills
 
-            # Emit proposal assets (HTML deck + PPTX) if wireframe_designer ran
+            # Emit proposal assets (the downloadable PPTX) if wireframe_designer ran
+            assets: dict = {}
             wireframe_out = state.outputs.get("wireframe_designer")
             if wireframe_out and getattr(wireframe_out, "status", "") == "COMPLETE":
                 wp = wireframe_out.payload if isinstance(wireframe_out.payload, dict) else {}
-                assets: dict = {}
 
-                # Re-emit artifacts produced on an earlier turn. Without this, the
-                # buttons only ever appeared on the turn that built the deck — and
-                # since the PPTX bytes are dropped from state right after being stored
-                # (they break JSON persistence), a later "tải file" produced a deck
-                # link and no PPTX at all. Remembering the ids costs nothing.
-                if _artifact_available(wp.get("deck_artifact_id")):
-                    assets["deck_url"] = f"/artifact/{wp['deck_artifact_id']}"
+                # Re-emit an artifact produced on an earlier turn. Without this, the
+                # download button only ever appeared on the turn that built the file —
+                # the PPTX bytes are dropped from state right after being stored (they
+                # break JSON persistence), so a later "tải file" had nothing to offer.
+                # Remembering the id costs nothing.
+                #
+                # No deck_url any more: wireframe_designer builds only the PPTX. Old
+                # sessions may still carry a deck_artifact_id and the file may still be
+                # on disk — /artifact/{id} keeps serving it so shared links do not 404,
+                # but nothing offers it in the UI.
                 if _artifact_available(wp.get("pptx_artifact_id")):
                     assets["pptx_url"] = f"/artifact/{wp['pptx_artifact_id']}"
-
-                html_content = "" if assets.get("deck_url") else wp.get("html_content", "")
-                if html_content:
-                    deck_id = f"deck_{uuid.uuid4().hex[:10]}"
-                    # To disk, like the PPTX beside it. Held in memory the deck was
-                    # lost on every restart, and the copy left behind in the payload
-                    # was re-serialised into the state row on every subsequent turn —
-                    # a few hundred KB of HTML rewritten per message, for a string
-                    # nothing reads again.
-                    try:
-                        os.makedirs(ARTIFACTS_DIR, exist_ok=True)
-                        deck_path = os.path.join(ARTIFACTS_DIR, f"{deck_id}.html")
-                        with open(deck_path, "w", encoding="utf-8") as _f:
-                            _f.write(html_content)
-                        _artifact_store[deck_id] = {
-                            "storage": "file",
-                            "path": deck_path,
-                            "filename": "proposal_deck.html",
-                            "media_type": "text/html",
-                            "type": "deck",
-                            "title": "Proposal Deck (HTML)",
-                        }
-                        # Only safe to drop once the file is actually on disk.
-                        wp.pop("html_content", None)
-                    except Exception as _e:
-                        print(f"[main] deck disk save failed, using in-memory: {_e}")
-                        _artifact_store[deck_id] = {
-                            "storage": "memory",
-                            "content": html_content.encode("utf-8"),
-                            "filename": "proposal_deck.html",
-                            "media_type": "text/html",
-                            "type": "deck",
-                            "title": "Proposal Deck (HTML)",
-                        }
-                    wp["deck_artifact_id"] = deck_id
-                    assets["deck_url"] = f"/artifact/{deck_id}"
 
                 pptx_bytes = None if assets.get("pptx_url") else wp.get("pptx_bytes")
                 if pptx_bytes:
@@ -1285,15 +1279,24 @@ async def chat_stream(request: Request, payload: ChatRequest):
                     wp["pptx_artifact_id"] = pptx_id
                     assets["pptx_url"] = f"/artifact/{pptx_id}"
 
-                if assets:
-                    yield _sse_data({"type": "proposal_assets", **assets})
-
                 # The raw PPTX has been copied into the artifact store; drop it from
                 # session state. It is binary, and SalesCaseState is serialised to JSON
                 # on every save — leaving it there failed persistence outright with
                 # "invalid utf-8 sequence", so any session that produced a deck silently
                 # stopped being saved from that point on.
                 wp.pop("pptx_bytes", None)
+
+            # `has_proposal` is what keeps the Figma button reachable. The deliverables
+            # bar is the only place that button lives, and the bar only renders when this
+            # event has been seen — so while there were two artifacts, a failed PPTX still
+            # left a deck_url to carry the event. Now there is only one, and POST
+            # /figma/wireframe needs the assembler's proposal, not the PPTX. Emit on the
+            # assembler so a PPTX that could not be built never takes Figma down with it.
+            _assembler_out = state.outputs.get("proposal_assembler")
+            if _assembler_out and getattr(_assembler_out, "content", ""):
+                assets["has_proposal"] = True
+            if assets:
+                yield _sse_data({"type": "proposal_assets", **assets})
 
             # Save final state to in-memory store — unless the rep deleted this
             # conversation while the turn was running, in which case every write
@@ -2263,6 +2266,250 @@ async def download_artifact(artifact_id: str):
         media_type=entry.get("media_type", "text/plain"),
         headers={
             "Content-Disposition": f'attachment; filename="{entry.get("filename", artifact_id)}"'
+        },
+    )
+
+
+# =============================================================================
+# Figma wireframe — on-demand, pull-based
+# =============================================================================
+#
+# Figma has no REST API for creating nodes, and OAuth grants no Plugin-API access, so a
+# server cannot draw into a rep's file however many scopes they grant. Drawing only happens
+# inside a running Figma session. Hence: the rep presses the button, this endpoint builds a
+# spec and parks it under a short code, and the AdtimaBox Figma plugin pulls that code from
+# inside their own file. Do not replace this with a "connect Figma via OAuth and draw
+# automatically" flow — the capability does not exist to build it on.
+
+
+class FigmaWireframeRequest(BaseModel):
+    session_id: str
+
+
+def _unmask_spec(masker, value: Any) -> Any:
+    """Restore real values through the spec tree before it leaves for the plugin.
+
+    The proposal in state is masked (pii/masking.py runs before anything reads a message), so
+    the spec the skill wrote off it carries aliases. Drawing "[CONTACT-1]" into a wireframe a
+    rep shows a client is worse than not drawing at all. Walked per-string rather than by
+    unmasking the serialised JSON: a restored value containing a quote or a backslash would
+    break the document if substituted into JSON text.
+    """
+    if isinstance(value, str):
+        return masker.unmask(value)
+    if isinstance(value, list):
+        return [_unmask_spec(masker, v) for v in value]
+    if isinstance(value, dict):
+        return {k: _unmask_spec(masker, v) for k, v in value.items()}
+    return value
+
+
+@app.post("/api/figma/wireframe")
+@app.post("/figma/wireframe")  # Nginx strips /api/ prefix
+async def create_figma_wireframe(
+    body: FigmaWireframeRequest, authorization: Optional[str] = Header(None)
+):
+    """Build a wireframe spec from this session's proposal and park it under a job code."""
+    payload = _get_current_user(authorization)
+    session_id = body.session_id
+
+    from database import db_get_session_owner
+
+    try:
+        owner_id = await asyncio.to_thread(db_get_session_owner, session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại")
+    if owner_id is not None and (not payload or owner_id != payload["user_id"]):
+        raise HTTPException(status_code=403, detail="Không có quyền truy cập hội thoại này")
+
+    state = _session_store.get(session_id)
+    if state is None:
+        try:
+            state = await get_memory_repo().load_session(session_id)
+        except Exception as e:
+            print(f"[figma] state load failed for {session_id}: {e}")
+            state = None
+    if state is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại")
+
+    from figma.jobs import create_job, load_job
+
+    assembler = (state.outputs or {}).get("proposal_assembler")
+    proposal = getattr(assembler, "content", "") if assembler is not None else ""
+    if not proposal:
+        raise HTTPException(
+            status_code=409,
+            detail="Chưa có proposal trong hội thoại này — tạo proposal trước khi vẽ wireframe.",
+        )
+
+    # Re-pressing the button must not spend another LLM call — but only while both the proposal
+    # and the generator are unchanged. A later turn can rebuild proposal_assembler
+    # (`desired_outputs` is sticky), and reusing the code across that would hand the rep a
+    # wireframe of the proposal they just replaced. SPEC_VERSION covers the other half: a
+    # skill upgrade has to invalidate parked specs too, or every existing session keeps
+    # serving the spec its old vocabulary produced. Fingerprint, not a boolean.
+    from skills.figma_wireframe.skill import SPEC_VERSION
+
+    proposal_fp = hashlib.sha256(
+        f"v{SPEC_VERSION}:{proposal}".encode("utf-8")
+    ).hexdigest()[:16]
+    existing = (state.outputs or {}).get("figma_wireframe")
+    existing_payload = getattr(existing, "payload", None) if existing is not None else None
+    if isinstance(existing_payload, dict) and existing_payload.get("proposal_fp") == proposal_fp:
+        code = existing_payload.get("job_code")
+        if code and await asyncio.to_thread(load_job, code):
+            return {
+                "job_code": code,
+                "screen_count": existing_payload.get("screen_count", 0),
+                "reused": True,
+            }
+
+    skill = get_skill_registry().get("figma_wireframe")
+    if skill is None:
+        raise HTTPException(status_code=503, detail="Skill figma_wireframe chưa được nạp")
+
+    from skills.base import SkillContext
+
+    context = SkillContext(
+        task=(
+            "Build the low-fidelity Figma wireframe spec for the user-facing screens and "
+            "messaging templates described in this proposal."
+        ),
+        brief=state.brief,
+        messages=[],
+        previous_outputs={"proposal_assembler": {"content": proposal}},
+        constraints=list(state.constraints or []),
+        session_id=session_id,
+    )
+
+    out = await skill.execute(context)
+    if out.status == "FAILED":
+        # The skill's summary already says which failure this was (no proposal detail, no
+        # drawable screens, model truncated) in Vietnamese — pass it through rather than
+        # flattening every cause into one message.
+        raise HTTPException(status_code=422, detail=out.summary)
+
+    spec = out.payload.get("spec") or {}
+    masker = get_masker(session_id)
+    if masker.has_aliases():
+        spec = _unmask_spec(masker, spec)
+
+    code = await asyncio.to_thread(create_job, spec)
+
+    # The superseded spec is now unreachable — nothing holds its code — so it would otherwise
+    # sit on disk until its TTL, carrying the client's brand and prices.
+    if isinstance(existing_payload, dict) and existing_payload.get("job_code"):
+        from figma.jobs import purge_jobs
+        await asyncio.to_thread(purge_jobs, [existing_payload["job_code"]])
+
+    state.outputs["figma_wireframe"] = AgentOutput(
+        agent="figma_wireframe",
+        status=out.status,
+        # The spec itself is deliberately not kept here: it is on disk under the job code,
+        # and SalesCaseState is re-serialised into sqlite on every later turn — the same
+        # shape of waste the deck's html_content used to cause.
+        payload={
+            "job_code": code,
+            "screen_count": out.payload.get("screen_count", 0),
+            "proposal_fp": proposal_fp,
+        },
+        summary=out.summary,
+        content=out.content,
+    )
+    update_session(state)
+    try:
+        await get_memory_repo().save_session(state)
+    except Exception as e:
+        print(f"[figma] state save failed for {session_id} (non-fatal): {e}")
+
+    return {
+        "job_code": code,
+        "screen_count": out.payload.get("screen_count", 0),
+        "reused": False,
+    }
+
+
+@app.get("/api/figma/job/{code}")
+@app.get("/figma/job/{code}")  # Nginx strips /api/ prefix
+async def get_figma_job(code: str):
+    """Serve a parked spec to the Figma plugin.
+
+    Unauthenticated by necessity — the request comes from a plugin sandbox inside Figma,
+    which carries none of this app's auth. The code is the credential: 40 bits from `secrets`,
+    valid for 24 hours, and it names nothing about the session it came from.
+    """
+    from figma.jobs import load_job
+
+    job = await asyncio.to_thread(load_job, code.upper())
+    if not job:
+        raise HTTPException(status_code=404, detail="Mã không hợp lệ hoặc đã hết hạn")
+    return job
+
+
+# The three files Figma needs to load a development plugin. `manifest.json` names the other
+# two by relative path, so all three have to land in one directory together.
+_PLUGIN_FILES = ("manifest.json", "code.js", "ui.html")
+_PLUGIN_DIR = os.path.join(os.path.dirname(__file__), "figma-plugin")
+# Unzips to a folder rather than loose files — a teammate extracting into Downloads should not
+# have to guess which three of their files belong to this.
+_PLUGIN_ZIP_ROOT = "adtimabox-wireframe-plugin"
+
+
+@app.get("/api/figma/plugin.zip")
+@app.get("/figma/plugin.zip")  # Nginx strips /api/ prefix
+async def download_figma_plugin():
+    """Serve the Figma plugin as a zip, for installing it without a repo checkout.
+
+    Unauthenticated, like `/figma/job/{code}` above but for a plainer reason: this is the
+    plugin's own source, it holds no session data and no secrets, and the person who needs it
+    is often not the rep who generated the code.
+
+    This exists because the instructions used to say "Import plugin from manifest, chọn
+    figma-plugin/manifest.json" — which silently assumes a repo checkout. A BA followed it by
+    downloading the one file its name mentioned, and Figma answered "An error occurred while
+    loading the plugin environment", because `manifest.json` alone cannot resolve `code.js` or
+    `ui.html`. Shipping all three together is what makes the feature installable by the people
+    it is for.
+    """
+    import io
+    import zipfile
+    from fastapi.responses import Response as FastAPIResponse
+
+    def _build() -> bytes:
+        missing = [n for n in _PLUGIN_FILES if not os.path.isfile(os.path.join(_PLUGIN_DIR, n))]
+        if missing:
+            # The directory is a read-only bind mount (docker-compose.prod.yml); if it is absent
+            # the container was started without it, which is a deployment fault worth naming
+            # rather than serving a zip that Figma would reject for the same reason as before.
+            raise FileNotFoundError(f"plugin files missing: {', '.join(missing)}")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name in _PLUGIN_FILES:
+                zf.write(os.path.join(_PLUGIN_DIR, name), f"{_PLUGIN_ZIP_ROOT}/{name}")
+            readme = os.path.join(_PLUGIN_DIR, "README.md")
+            if os.path.isfile(readme):
+                zf.write(readme, f"{_PLUGIN_ZIP_ROOT}/README.md")
+        return buf.getvalue()
+
+    try:
+        # Zipping reads four files off disk and deflates ~50KB — small, but still blocking work
+        # that would otherwise run on the event loop and stall every open SSE stream.
+        data = await asyncio.to_thread(_build)
+    except FileNotFoundError as e:
+        print(f"[figma] plugin zip unavailable: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Chưa có sẵn bộ plugin trên server. Báo team kỹ thuật.",
+        )
+
+    return FastAPIResponse(
+        content=data,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{_PLUGIN_ZIP_ROOT}.zip"',
+            # code.js changes with the block vocabulary and the file name never does, so a
+            # cached copy would keep drawing with an old renderer.
+            "Cache-Control": "no-store",
         },
     )
 

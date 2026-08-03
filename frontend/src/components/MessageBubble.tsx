@@ -12,6 +12,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { tryRenderAsciiChart, wrapAsciiBoxes } from './AsciiChartRenderer';
 import { ImageLightbox } from './ImageLightbox';
+import { ProposalActionsBar } from './ProposalActionsBar';
 
 // Render-invariant — a fresh array literal here forces ReactMarkdown to treat
 // the plugin list as changed on every render, which defeats its internal memo.
@@ -581,10 +582,25 @@ export function splitContentIntoBlocks(content: string): ContentBlock[] {
   return blocks;
 }
 
-// Memoized: `headers`/`rows` keep their identity across re-renders once
-// contentBlocks is memoized on processedContent (see MessageBubbleInner), so
-// this now actually re-renders only when its own data changes instead of on
-// every streamed token of the message it belongs to.
+/**
+ * Stable key for an array-of-arrays table, for the memo comparison below.
+ *
+ * Separators are control characters rather than '' or ',' — cell text routinely
+ * contains commas, and joining with nothing would make ["ab","c"] and ["a","bc"]
+ * compare equal, which is exactly the kind of edit that must not be memoized away.
+ */
+function tableSignature(headers: string[], rows: string[][]): string {
+  return headers.join('\u0001') + '\u0002' + rows.map((r) => r.join('\u0001')).join('\u0003');
+}
+
+// Memoized BY VALUE, not by identity. The original comment here claimed
+// `headers`/`rows` keep their identity across re-renders because contentBlocks is
+// memoized — but that memo is keyed on the message content, which changes on every
+// streamed token, so during streaming it misses every time and hands this component
+// brand-new arrays. Default shallow comparison then failed on every token and each
+// table re-rendered in full, `renderInlineMarkdown` per cell included. Comparing the
+// flattened content is far cheaper than re-rendering a 40-cell ratecard, and it is
+// the only comparison that actually holds while the message above is still growing.
 export const TableBlock = React.memo(function TableBlock({
   headers,
   rows,
@@ -642,6 +658,34 @@ export const TableBlock = React.memo(function TableBlock({
         </tbody>
       </table>
     </div>
+  );
+}, (prev, next) =>
+  tableSignature(prev.headers, prev.rows) === tableSignature(next.headers, next.rows)
+);
+
+/**
+ * One markdown block, memoized on its own text.
+ *
+ * react-markdown has no internal memo, so every re-render of the bubble re-ran the
+ * full remark/rehype pipeline for EVERY block — including the N-1 blocks whose text
+ * was byte-identical to the frame before. While a message streams, only the last
+ * block ever changes; this is what stops the rest from re-parsing with it.
+ *
+ * `components` is memoized upstream on [isStreaming], so its identity is stable for
+ * the whole stream and the default shallow comparison is enough.
+ */
+const MarkdownBlock = React.memo(function MarkdownBlock({
+  content,
+  components,
+}: {
+  content: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  components: any;
+}) {
+  return (
+    <ReactMarkdown components={components} remarkPlugins={REMARK_PLUGINS}>
+      {content}
+    </ReactMarkdown>
   );
 });
 
@@ -744,6 +788,8 @@ interface MessageBubbleProps {
   message: Message;
   isGrouped?: boolean;
   isStreaming?: boolean;
+  /** Needed by the Figma CTA, which asks the backend to build a spec for this conversation. */
+  sessionId?: string | null;
 }
 
 // ── Phone screen wireframe renderer ─────────────────────────────────────────
@@ -972,7 +1018,7 @@ function preserveLineBreaks(content: string): string {
   return out.join('\n');
 }
 
-function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }: MessageBubbleProps) {
+function MessageBubbleInner({ message, isGrouped = false, isStreaming = false, sessionId = null }: MessageBubbleProps) {
   const [selectedImageSrc, setSelectedImageSrc] = useState<string | null>(null);
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
@@ -1266,7 +1312,10 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
       {isGrouped && <div className="w-7 sm:w-8" />}
 
       {/* Message content - tech card style */}
-      <div className="flex flex-col items-start flex-1 glass-panel glow-border p-4 sm:p-5 rounded-2xl" style={{ maxWidth: '100%' }}>
+      {/* .message-panel, not .glass-panel: same look, no backdrop-filter. See the
+          rule in globals.css — blurring a bubble that grows on every streamed frame
+          is a per-frame compositor cost for an effect the flat page never showed. */}
+      <div className="flex flex-col items-start flex-1 message-panel glow-border p-4 sm:p-5 rounded-2xl" style={{ maxWidth: '100%' }}>
         {/* Agent name */}
         {showHeader && (
           <span className="text-[12px] sm:text-sm font-medium mb-1.5 sm:mb-2 ml-1 text-accent" >
@@ -1288,76 +1337,24 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
             }
 
             return (
-              <ReactMarkdown key={`markdown-${index}`} components={markdownComponents} remarkPlugins={REMARK_PLUGINS}>
-                {block.content}
-              </ReactMarkdown>
+              <MarkdownBlock
+                key={`markdown-${index}`}
+                content={block.content}
+                components={markdownComponents}
+              />
             );
           })}
         </div>
 
-        {/* Proposal deck assets — shown when wireframe_designer completed */}
-        {message.proposalAssets && (message.proposalAssets.deck_url || message.proposalAssets.pptx_url) && (
-          <div
-            style={{
-              marginTop: '16px',
-              padding: '14px 18px',
-              borderRadius: '10px',
-              border: '1.5px solid rgba(0,104,255,0.35)',
-              background: 'var(--color-surface)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-              flexWrap: 'wrap',
-            }}
-          >
-            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text)', flexShrink: 0 }}>
-              📊 Proposal Deck
-            </span>
-            {message.proposalAssets.deck_url && (
-              <a
-                href={`${typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') : ''}${message.proposalAssets.deck_url}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '7px 16px',
-                  borderRadius: '6px',
-                  background: '#0068ff',
-                  color: '#fff',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  textDecoration: 'none',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                🖥️ View Deck
-              </a>
-            )}
-            {message.proposalAssets.pptx_url && (
-              <a
-                href={`${typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') : ''}${message.proposalAssets.pptx_url}`}
-                download
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '7px 16px',
-                  borderRadius: '6px',
-                  background: 'transparent',
-                  border: '1.5px solid #0068ff',
-                  color: 'var(--color-accent)',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  textDecoration: 'none',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                ⬇️ Download PPTX
-              </a>
-            )}
-          </div>
+        {/* Proposal file — shown when wireframe_designer completed. The pinned copy
+            above the composer (ChatWindow) is the one a rep actually finds; this one marks
+            which turn produced the file. */}
+        {message.proposalAssets && (
+          <ProposalActionsBar
+            assets={message.proposalAssets}
+            sessionId={sessionId}
+            variant="inline"
+          />
         )}
 
         {/* Timestamp */}
@@ -1374,6 +1371,7 @@ function MessageBubbleInner({ message, isGrouped = false, isStreaming = false }:
         isOpen={!!selectedImageSrc}
         onClose={() => setSelectedImageSrc(null)}
       />
+
     </div>
   );
 }
@@ -1391,6 +1389,7 @@ export const MessageBubble = React.memo(
   (prev, next) =>
     prev.isGrouped === next.isGrouped &&
     prev.isStreaming === next.isStreaming &&
+    prev.sessionId === next.sessionId &&
     (prev.message === next.message ||
       (prev.message.content === next.message.content &&
         prev.message.role === next.message.role &&
@@ -1509,9 +1508,7 @@ export function AgentRichContent({ content }: { content: string }) {
         block.kind === 'table' ? (
           <TableBlock key={`table-${index}`} headers={block.headers} rows={block.rows} />
         ) : (
-          <ReactMarkdown key={`markdown-${index}`} components={components} remarkPlugins={REMARK_PLUGINS}>
-            {block.content}
-          </ReactMarkdown>
+          <MarkdownBlock key={`markdown-${index}`} content={block.content} components={components} />
         )
       )}
     </>

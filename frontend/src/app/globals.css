@@ -1302,6 +1302,20 @@ html {
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1), inset 0 0 0 1px rgba(61, 148, 255, 0.05);
 }
 
+/* Same look as .glass-panel, without the backdrop blur — for chat message bubbles.
+   A blurred backdrop has to be re-sampled whenever the element's geometry or the
+   content behind it changes, and a streaming assistant bubble changes geometry on
+   every frame while sitting inside a scrolling container. One per message, that was
+   a per-frame compositor cost that grew with the length of the answer. The surface
+   here is opaque, so nothing behind it needs sampling at all, and the panels sit on
+   a flat page background where the blur was never visible in the first place. */
+.message-panel {
+  background: var(--color-surface-solid);
+}
+.dark .message-panel {
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1), inset 0 0 0 1px rgba(61, 148, 255, 0.05);
+}
+
 /* Glow Utilities */
 .glow-border {
   border: 1px solid rgba(0, 104, 255, 0.3);

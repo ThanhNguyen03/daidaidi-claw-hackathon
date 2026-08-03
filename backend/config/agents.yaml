@@ -65,7 +65,17 @@ agents:
   wireframe_designer:
     name: "Wireframe Designer"
     model: MODEL_WIREFRAME_DESIGNER
-    role: "Generates AdtimaBox-branded HTML deck and PPTX from proposal — auto-triggered after proposal_assembler"
+    role: "Generates the Adtima-branded downloadable PPTX from the proposal — auto-triggered after proposal_assembler"
+    enabled: true
+    kind: generator
+    critical: false
+
+  # On-demand only: excluded from every plan (central_agent's _EXCLUDE_FROM_PLAN), invoked
+  # by POST /figma/wireframe when the rep presses the Figma button on a finished proposal.
+  figma_wireframe:
+    name: "Figma Wireframe"
+    model: MODEL_FIGMA_WIREFRAME
+    role: "Builds a low-fi Zalo Mini App / ZNS / OA wireframe spec from a proposal, for the AdtimaBox Figma plugin to draw"
     enabled: true
     kind: generator
     critical: false
